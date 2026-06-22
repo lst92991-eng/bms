@@ -103,7 +103,8 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ExitConfigUpdate(void);
   - read 后续数据字节 CRC 只覆盖该数据字节。
 - Data Memory 写入必须先写 `0x3E/0x3F + data`，再写 `0x60/0x61`，其中 length 为 data length + 4。
 - subcommand/data memory read 读取时必须验证 transfer buffer checksum。
-- 子命令完成等待采用轮询 `0x3E/0x3F` echo，超时返回 `INT_BQ76952_ERROR_TIMEOUT`。
+- 只有需要读回数据的 subcommand/data memory read 采用轮询 `0x3E/0x3F` echo；command-only subcommand 只写 `0x3E/0x3F`，不强制等待 echo。
+- 读取 transfer buffer 时先读 `0x61` length，再读 `0x40-0x5F` buffer，最后读 `0x60` checksum；避免在读 buffer 前把 `0x60/0x61` 一起读出。
 - 所有 public API 检查空指针和长度。
 - 不默认启用 CRC，bring-up 初期由上层调用 `SetCrcEnabled` 决定。
 
@@ -136,6 +137,6 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ExitConfigUpdate(void);
 
 - `.h` 不包含 HAL 头。
 - `.c` 不包含 FreeRTOS，不调用 printf。
-- 所有 public API 返回状态。
+- 除 CRC 配置接口 `SetCrcEnabled()`/`IsCrcEnabled()` 外，通信/读取类 public API 返回状态。
 - 无业务策略。
 - 不写 `BQ76952_CELL_MASK_6S_HW_DRAFT` 到芯片。
