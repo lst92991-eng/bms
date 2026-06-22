@@ -1,0 +1,13 @@
+{
+    "files.associations": {
+        "main.h": "c",
+        "int_bq769.h": "c",
+        "app_upsman.h": "c",
+        "gpio.h": "c",
+        "app_main.h": "c",
+        "app_batman.h": "c",
+        "math.h": "c",
+        "com_bq769.h": "c"
+    },
+    "C_Cpp.default.cStandard": "c99"
+}

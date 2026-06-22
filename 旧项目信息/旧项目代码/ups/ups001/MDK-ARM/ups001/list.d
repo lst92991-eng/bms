@@ -1,0 +1,12 @@
+ups001\list.o: FreeRTOS\source\list.c
+ups001\list.o: D:\App\Keil\ARM\ARMCC\Bin\..\include\stdlib.h
+ups001\list.o: ./FreeRTOS/include/FreeRTOS.h
+ups001\list.o: D:\App\Keil\ARM\ARMCC\Bin\..\include\stddef.h
+ups001\list.o: D:\App\Keil\ARM\ARMCC\Bin\..\include\stdint.h
+ups001\list.o: ./FreeRTOS/include/FreeRTOSConfig.h
+ups001\list.o: ./FreeRTOS/include/projdefs.h
+ups001\list.o: ./FreeRTOS/include/portable.h
+ups001\list.o: ./FreeRTOS/include/deprecated_definitions.h
+ups001\list.o: ./FreeRTOS/portable/RVDS/portmacro.h
+ups001\list.o: ./FreeRTOS/include/mpu_wrappers.h
+ups001\list.o: ./FreeRTOS/include/list.h
