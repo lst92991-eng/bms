@@ -65,6 +65,8 @@ void Int_BQ76952_SetCrcEnabled(bool enabled);
  * @brief 读取当前驱动是否按 I2C CRC 模式收发。
  */
 bool Int_BQ76952_IsCrcEnabled(void);
+Int_BQ76952_StatusTypeDef Int_BQ76952_ProbeDevice(uint32_t *hal_error);
+uint32_t Int_BQ76952_GetLastHalError(void);
 
 /**
  * @brief 读取 direct command。

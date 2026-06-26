@@ -5,6 +5,7 @@
 #include "Com_BQ76952.h"
 #include "Int_BQ76952.h"
 #include "Int_BQ76952_BSP.h"
+#include "main.h"
 
 /*
  * 这一版 App_BatMan.c 的目标很简单：
@@ -13,7 +14,8 @@
  * 3. BQ 相关业务全部放在这个文件里，便于教学和带新人。
  */
 
-#define APP_BATMAN_CRC_BOOT_ENABLE          (1u)
+#define APP_BATMAN_CRC_BOOT_ENABLE          (0u)
+#define APP_BATMAN_BQ_RESET_SETTLE_MS       (200u)
 #define APP_BATMAN_MAX_DEBUG_LINES          (6u)
 #define APP_BATMAN_SOC_BLEND_ALPHA_CHG      (0.25f)
 #define APP_BATMAN_SOC_BLEND_ALPHA_DSG      (0.12f)
@@ -32,7 +34,8 @@
 #define APP_BATMAN_DM_DSG_FET_PROTECTIONS_B_DEFAULT         (0xE6u)
 #define APP_BATMAN_DM_DSG_FET_PROTECTIONS_C_DEFAULT         (0xE2u)
 #define APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT            (0xF800u)
-#define APP_BATMAN_DM_FET_OPTIONS_DEFAULT                   (0x0Du)
+#define APP_BATMAN_DM_FET_OPTIONS_DEFAULT                   (BQ76952_FET_OPTIONS_FET_CTRL_EN_MASK | \
+                                                             BQ76952_FET_OPTIONS_SFET_MASK)
 #define APP_BATMAN_DM_CHG_PUMP_CONTROL_DEFAULT              (0x01u)
 #define APP_BATMAN_DM_BALANCING_CONFIGURATION_HOST_ONLY     (0x08u)
 #define APP_BATMAN_DM_CB_MAX_CELLS_DEFAULT                  (1u)
@@ -72,7 +75,6 @@ bool discharge_allowed;
 float soc_percent;
 float display_soc_percent;
 
-static uint8_t s_fet_off_mask = 0u;
 static bool s_charge_request = true;
 static bool s_discharge_request = true;
 static bool s_comm_fault = false;
@@ -124,6 +126,47 @@ static Int_BQ76952_StatusTypeDef App_BatMan_SetBalanceMask(uint16_t bq_mask)
 static Int_BQ76952_StatusTypeDef App_BatMan_StopBalancing(void)
 {
     return App_BatMan_SetBalanceMask(0u);
+}
+
+static Int_BQ76952_StatusTypeDef App_BatMan_EnableBqFetControl(void)
+{
+    uint8_t data[2];
+    uint16_t manufacturing_status;
+    Int_BQ76952_StatusTypeDef ret;
+
+    ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_MANUFACTURING_STATUS, data, 2u);
+    if (ret != INT_BQ76952_OK)
+    {
+        return ret;
+    }
+
+    manufacturing_status = App_BatMan_ReadU16Le(data);
+    printf("mfg_status before fet_enable:0x%04x\r\n", (unsigned int)manufacturing_status);
+    if ((manufacturing_status & BQ76952_MFG_STATUS_FET_EN_MASK) != 0u)
+    {
+        return INT_BQ76952_OK;
+    }
+
+    ret = Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_FET_ENABLE);
+    if (ret != INT_BQ76952_OK)
+    {
+        return ret;
+    }
+
+    ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_MANUFACTURING_STATUS, data, 2u);
+    if (ret != INT_BQ76952_OK)
+    {
+        return ret;
+    }
+
+    manufacturing_status = App_BatMan_ReadU16Le(data);
+    printf("mfg_status after fet_enable:0x%04x\r\n", (unsigned int)manufacturing_status);
+    if ((manufacturing_status & BQ76952_MFG_STATUS_FET_EN_MASK) == 0u)
+    {
+        return INT_BQ76952_ERROR;
+    }
+
+    return INT_BQ76952_OK;
 }
 
 static void App_BatMan_PrintBringupConfig(void)
@@ -267,15 +310,12 @@ static void App_BatMan_ConfigProtectSet(void)
     (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_DSG_FET_PROTECTIONS_C, &data_u8, 1u);
 }
 
-static void App_BatMan_WriteFetControl(uint8_t fet_off_mask)
-{
-    (void)Int_BQ76952_WriteSubcommandData(BQ76952_SUBCMD_FET_CONTROL, &fet_off_mask, 1u);
-}
-
 void App_BatMan_Init(void)
 {
     uint16_t device_number = 0u;
     uint8_t data[2];
+    uint32_t bq_hal_error = 0u;
+    Int_BQ76952_StatusTypeDef bq_ret;
 
     printf("batman init start\r\n");
     printf("battery:6S Li-ion pack:%u mv target:%u mv shunt:%u uohm balance:%u ohm\r\n",
@@ -322,7 +362,6 @@ void App_BatMan_Init(void)
     s_coulomb_mah = (float)APP_BATMAN_CAPACITY_MAH * 0.5f;
     soc_percent = APP_BATMAN_DEFAULT_SOC_PERCENT;
     display_soc_percent = APP_BATMAN_DEFAULT_SOC_PERCENT;
-    s_fet_off_mask = 0u;
     s_debug_ms = 0u;
 
     /*
@@ -332,23 +371,41 @@ void App_BatMan_Init(void)
      *    - 不在这里直接写业务寄存器。
      */
     Int_BQ76952_InitBoard();
+    Int_BQ76952_SetCrcEnabled(APP_BATMAN_CRC_BOOT_ENABLE != 0u);
+    printf("bq i2c crc:%u\r\n", Int_BQ76952_IsCrcEnabled() ? 1u : 0u);
+    if (Int_BQ76952_ProbeDevice(&bq_hal_error) == INT_BQ76952_OK)
+    {
+        printf("bq i2c probe ok\r\n");
+    }
+    else
+    {
+        printf("bq i2c probe fail hal_error:0x%08lx\r\n",
+               (unsigned long)bq_hal_error);
+    }
 
     /*
      * 2. 先做一次板级唤醒和协议复位
      *    旧项目风格是“先让芯片醒，再开始问它话”。
      */
-    if (Int_BQ76952_Reset() != INT_BQ76952_OK)
+    bq_ret = Int_BQ76952_Reset();
+    if (bq_ret != INT_BQ76952_OK)
     {
-        printf("bq reset fail\r\n");
+        printf("bq reset fail ret:%d hal_error:0x%08lx\r\n",
+               (int)bq_ret,
+               (unsigned long)Int_BQ76952_GetLastHalError());
         return;
     }
+    HAL_Delay(APP_BATMAN_BQ_RESET_SETTLE_MS);
 
     /*
      * 3. 读 Device Number，确认总线和 BQ76952 响应正确。
      */
-    if (Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_DEVICE_NUMBER, data, 2u) != INT_BQ76952_OK)
+    bq_ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_DEVICE_NUMBER, data, 2u);
+    if (bq_ret != INT_BQ76952_OK)
     {
-        printf("bq read device number fail\r\n");
+        printf("bq read device number fail ret:%d hal_error:0x%08lx\r\n",
+               (int)bq_ret,
+               (unsigned long)Int_BQ76952_GetLastHalError());
         return;
     }
     device_number = App_BatMan_ReadU16Le(data);
@@ -402,9 +459,9 @@ void App_BatMan_Init(void)
 
     /*
      * 7. 允许 BQ 按保护条件自己管理 FET。
-     *    APP 只下发“允许/禁止”的意图，不做强制硬拉高拉低。
+     *    APP 不再写 FET_CONTROL，只读取状态并由 BQ 保护策略决定开关。
      */
-    if (Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_FET_ENABLE) != INT_BQ76952_OK)
+    if (App_BatMan_EnableBqFetControl() != INT_BQ76952_OK)
     {
         printf("bq fet enable fail\r\n");
         return;
@@ -430,8 +487,6 @@ void App_BatMan_Init(void)
         s_soc_seeded = true;
     }
 
-    charge_allowed = true;
-    discharge_allowed = true;
     App_BatMan_ApplyPolicy();
 
     printf("batman init success\r\n");
@@ -922,37 +977,21 @@ void App_BatMan_CellBalance(void)
 
 void App_BatMan_ApplyPolicy(void)
 {
-    uint8_t new_fet_off_mask = 0u;
-
+    /*
+     * FET 控制权交给 BQ76952：
+     * - APP 不再写 FET_CONTROL / ALL_FETS_OFF；
+     * - charge_allowed / discharge_allowed 只用于状态汇报；
+     * - 发生故障时只停均衡，功率 FET 由 BQ 保护矩阵处理。
+     */
     if (fault_active)
     {
-        new_fet_off_mask = (BQ76952_FET_CONTROL_PCHG_OFF_MASK |
-                            BQ76952_FET_CONTROL_CHG_OFF_MASK |
-                            BQ76952_FET_CONTROL_PDSG_OFF_MASK |
-                            BQ76952_FET_CONTROL_DSG_OFF_MASK);
-    }
-    else
-    {
-        if (!charge_allowed)
+        if (s_balance_active || (balance_mask != 0u))
         {
-            new_fet_off_mask |= (BQ76952_FET_CONTROL_PCHG_OFF_MASK |
-                                  BQ76952_FET_CONTROL_CHG_OFF_MASK);
-        }
-
-        if (!discharge_allowed)
-        {
-            new_fet_off_mask |= (BQ76952_FET_CONTROL_PDSG_OFF_MASK |
-                                  BQ76952_FET_CONTROL_DSG_OFF_MASK);
+            s_balance_active = false;
+            balance_mask = 0u;
+            (void)App_BatMan_StopBalancing();
         }
     }
-
-    if (new_fet_off_mask == s_fet_off_mask)
-    {
-        return;
-    }
-
-    s_fet_off_mask = new_fet_off_mask;
-    App_BatMan_WriteFetControl(s_fet_off_mask);
 }
 
 void App_BatMan_PrintDebug(void)

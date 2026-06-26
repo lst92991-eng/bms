@@ -28,7 +28,7 @@
 #define BQ76952_I2C_7BIT_ADDR_DEFAULT           (0x08u)   /* 默认 7-bit I2C 地址；若底层 API 要 7-bit 地址则传此值。 */
 #define BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT     (0x10u)   /* 默认 8-bit 写地址；STM32 HAL 常用左移地址参数通常传此值。 */
 #define BQ76952_I2C_8BIT_READ_ADDR_DEFAULT      (0x11u)   /* 默认 8-bit 读地址；不要误当 7-bit 地址使用。 */
-#define BQ76952_I2C_CRC_DEFAULT_ENABLED         (1u)      /* 本项目硬件信息确认默认 I2C CRC 开启；INT 层仍保留开关。 */
+#define BQ76952_I2C_CRC_DEFAULT_ENABLED         (0u)      /* Bring-up default: current BQ board is responding in non-CRC I2C mode. */
 #define BQ76952_I2C_STANDARD_MODE_HZ            (100000u) /* 支持 100 kHz I2C；上拉和线长需硬件确认。 */
 #define BQ76952_I2C_FAST_MODE_HZ                (400000u) /* 默认 fast mode 可用 400 kHz；bring-up 阶段可先降速。 */
 
@@ -149,6 +149,14 @@
 #define BQ76952_FET_STATUS_PCHG_FET_MASK        (0x02u)   /* bit1，PCHG FET 状态。 */
 #define BQ76952_FET_STATUS_CHG_FET_MASK         (0x01u)   /* bit0，CHG FET 状态。 */
 
+#define BQ76952_MFG_STATUS_OTPW_EN_MASK         (0x0080u) /* bit7，允许运行中写 OTP。 */
+#define BQ76952_MFG_STATUS_PF_EN_MASK           (0x0040u) /* bit6，Permanent Fail 使能。 */
+#define BQ76952_MFG_STATUS_PDSG_TEST_MASK       (0x0020u) /* bit5，FET Test 模式下 PDSG 使能。 */
+#define BQ76952_MFG_STATUS_FET_EN_MASK          (0x0010u) /* bit4，1=Firmware FET Control，0=FET Test Mode。 */
+#define BQ76952_MFG_STATUS_DSG_TEST_MASK        (0x0004u) /* bit2，FET Test 模式下 DSG 使能。 */
+#define BQ76952_MFG_STATUS_CHG_TEST_MASK        (0x0002u) /* bit1，FET Test 模式下 CHG 使能。 */
+#define BQ76952_MFG_STATUS_PCHG_TEST_MASK       (0x0001u) /* bit0，FET Test 模式下 PCHG 使能。 */
+
 /*---------------------------------------------------------------------------
  * Command-only Subcommands
  *---------------------------------------------------------------------------*/
@@ -226,6 +234,7 @@
 #define BQ76952_DM_CB_MIN_CELL_V_CHARGE         (0x933Bu) /* I2，默认 3900 mV，充电均衡电压门限。 */
 #define BQ76952_DM_CB_MIN_DELTA_CHARGE          (0x933Du) /* U1，默认 40 mV，充电均衡开启压差。 */
 #define BQ76952_DM_CB_STOP_DELTA_CHARGE         (0x933Eu) /* U1，默认 20 mV，充电均衡停止压差。 */
+#define BQ76952_DM_MFG_STATUS_INIT              (0x9343u) /* H2，默认 0x0040，Manufacturing Status 上电初值。 */
 
 /*---------------------------------------------------------------------------
  * Data Memory bit mask

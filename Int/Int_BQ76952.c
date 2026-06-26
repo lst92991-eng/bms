@@ -1,6 +1,7 @@
 #include "Int_BQ76952.h"
 
 #include <stddef.h>
+#include <stdio.h>
 
 #include "Int_BQ76952_BSP.h"
 #include "i2c.h"
@@ -39,12 +40,19 @@
 #define INT_BQ76952_ECHO_POLL_COUNT      (100u)
 #define INT_BQ76952_CFG_POLL_COUNT       (100u)
 #define INT_BQ76952_POLL_DELAY_MS        (1u)
+#define INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS (2u)
 #define INT_BQ76952_DIRECT_MAX_LEN       (34u)
 #define INT_BQ76952_TRANSFER_MAX_LEN     BQ76952_TRANSFER_BUFFER_SIZE
 
 extern I2C_HandleTypeDef INT_BQ76952_I2C_HANDLE;
 
 static bool s_bq76952_crc_enabled = false;
+static uint32_t s_bq76952_last_hal_error = 0u;
+
+static void Int_BQ76952_RecordHalError(void)
+{
+    s_bq76952_last_hal_error = HAL_I2C_GetError(&INT_BQ76952_I2C_HANDLE);
+}
 
 static uint8_t Int_BQ76952_Crc8Update(uint8_t crc, uint8_t data)
 {
@@ -152,40 +160,65 @@ static Int_BQ76952_StatusTypeDef Int_BQ76952_ReadTransfer(uint16_t command_or_ad
     ret = Int_BQ76952_WaitEcho(command_or_address);
     if (ret != INT_BQ76952_OK)
     {
+        printf("bq transfer echo fail cmd:0x%04x ret:%d\r\n",
+               (unsigned int)command_or_address,
+               (int)ret);
         return ret;
     }
 
     ret = Int_BQ76952_ReadDirect(BQ76952_TRANSFER_LENGTH, &length, 1u);
     if (ret != INT_BQ76952_OK)
     {
+        printf("bq transfer length fail cmd:0x%04x ret:%d\r\n",
+               (unsigned int)command_or_address,
+               (int)ret);
         return ret;
     }
 
     if (length < BQ76952_TRANSFER_LENGTH_OVERHEAD)
     {
+        printf("bq transfer length short cmd:0x%04x len:%u\r\n",
+               (unsigned int)command_or_address,
+               (unsigned int)length);
         return INT_BQ76952_ERROR_LENGTH;
     }
 
     data_len = (uint8_t)(length - BQ76952_TRANSFER_LENGTH_OVERHEAD);
     if ((data_len == 0u) || (data_len > INT_BQ76952_TRANSFER_MAX_LEN) || (len > data_len))
     {
+        printf("bq transfer data length bad cmd:0x%04x len:%u data_len:%u want:%u\r\n",
+               (unsigned int)command_or_address,
+               (unsigned int)length,
+               (unsigned int)data_len,
+               (unsigned int)len);
         return INT_BQ76952_ERROR_LENGTH;
     }
 
     ret = Int_BQ76952_ReadDirect(BQ76952_TRANSFER_BUFFER_START, raw, data_len);
     if (ret != INT_BQ76952_OK)
     {
+        printf("bq transfer buffer fail cmd:0x%04x ret:%d\r\n",
+               (unsigned int)command_or_address,
+               (int)ret);
         return ret;
     }
 
     ret = Int_BQ76952_ReadDirect(BQ76952_TRANSFER_CHECKSUM, &checksum, 1u);
     if (ret != INT_BQ76952_OK)
     {
+        printf("bq transfer checksum read fail cmd:0x%04x ret:%d\r\n",
+               (unsigned int)command_or_address,
+               (int)ret);
         return ret;
     }
 
     if (Int_BQ76952_BufferChecksum(command_or_address, raw, data_len) != checksum)
     {
+        printf("bq transfer checksum bad cmd:0x%04x got:0x%02x exp:0x%02x len:%u\r\n",
+               (unsigned int)command_or_address,
+               (unsigned int)checksum,
+               (unsigned int)Int_BQ76952_BufferChecksum(command_or_address, raw, data_len),
+               (unsigned int)data_len);
         return INT_BQ76952_ERROR_CHECKSUM;
     }
 
@@ -264,6 +297,38 @@ bool Int_BQ76952_IsCrcEnabled(void)
     return s_bq76952_crc_enabled;
 }
 
+Int_BQ76952_StatusTypeDef Int_BQ76952_ProbeDevice(uint32_t *hal_error)
+{
+    HAL_StatusTypeDef hal_status;
+
+    s_bq76952_last_hal_error = 0u;
+    hal_status = HAL_I2C_IsDeviceReady(&INT_BQ76952_I2C_HANDLE,
+                                       INT_BQ76952_I2C_ADDR,
+                                       3u,
+                                       INT_BQ76952_I2C_TIMEOUT_MS);
+    if (hal_status != HAL_OK)
+    {
+        Int_BQ76952_RecordHalError();
+        if (hal_error != NULL)
+        {
+            *hal_error = s_bq76952_last_hal_error;
+        }
+        return INT_BQ76952_ERROR_HAL;
+    }
+
+    if (hal_error != NULL)
+    {
+        *hal_error = 0u;
+    }
+
+    return INT_BQ76952_OK;
+}
+
+uint32_t Int_BQ76952_GetLastHalError(void)
+{
+    return s_bq76952_last_hal_error;
+}
+
 Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data, uint8_t len)
 {
     if (data == NULL)
@@ -286,30 +351,25 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data,
                              len,
                              INT_BQ76952_I2C_TIMEOUT_MS) != HAL_OK)
         {
+            Int_BQ76952_RecordHalError();
             return INT_BQ76952_ERROR_HAL;
         }
 
         return INT_BQ76952_OK;
     }
 
-    if (HAL_I2C_Master_Transmit(&INT_BQ76952_I2C_HANDLE,
-                                INT_BQ76952_I2C_ADDR,
-                                &command,
-                                1u,
-                                INT_BQ76952_I2C_TIMEOUT_MS) != HAL_OK)
-    {
-        return INT_BQ76952_ERROR_HAL;
-    }
-
     {
         uint8_t rx[INT_BQ76952_DIRECT_MAX_LEN * 2u];
 
-        if (HAL_I2C_Master_Receive(&INT_BQ76952_I2C_HANDLE,
-                                   INT_BQ76952_I2C_ADDR,
-                                   rx,
-                                   (uint16_t)(len * 2u),
-                                   INT_BQ76952_I2C_TIMEOUT_MS) != HAL_OK)
+        if (HAL_I2C_Mem_Read(&INT_BQ76952_I2C_HANDLE,
+                             INT_BQ76952_I2C_ADDR,
+                             command,
+                             I2C_MEMADD_SIZE_8BIT,
+                             rx,
+                             (uint16_t)(len * 2u),
+                             INT_BQ76952_I2C_TIMEOUT_MS) != HAL_OK)
         {
+            Int_BQ76952_RecordHalError();
             return INT_BQ76952_ERROR_HAL;
         }
 
@@ -333,6 +393,23 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data,
 
             if (crc != rx[(i * 2u) + 1u])
             {
+                uint8_t raw_len = (uint8_t)(len * 2u);
+                if (raw_len > 8u)
+                {
+                    raw_len = 8u;
+                }
+
+                printf("bq crc fail cmd:0x%02x idx:%u data:0x%02x got:0x%02x exp:0x%02x raw:",
+                       (unsigned int)command,
+                       (unsigned int)i,
+                       (unsigned int)rx[i * 2u],
+                       (unsigned int)rx[(i * 2u) + 1u],
+                       (unsigned int)crc);
+                for (uint8_t j = 0u; j < raw_len; j++)
+                {
+                    printf("%02x", (unsigned int)rx[j]);
+                }
+                printf("\r\n");
                 return INT_BQ76952_ERROR_CRC;
             }
 
@@ -365,6 +442,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDirect(uint8_t command, const uint8_t
                               len,
                               INT_BQ76952_I2C_TIMEOUT_MS) != HAL_OK)
         {
+            Int_BQ76952_RecordHalError();
             return INT_BQ76952_ERROR_HAL;
         }
 
@@ -400,6 +478,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDirect(uint8_t command, const uint8_t
                                     (uint16_t)(1u + (len * 2u)),
                                     INT_BQ76952_I2C_TIMEOUT_MS) != HAL_OK)
         {
+            Int_BQ76952_RecordHalError();
             return INT_BQ76952_ERROR_HAL;
         }
     }
@@ -435,6 +514,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadSubcommand(uint16_t subcommand, uint8_
     {
         return ret;
     }
+    HAL_Delay(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS);
 
     return Int_BQ76952_ReadTransfer(subcommand, data, len);
 }
@@ -496,6 +576,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDataMemory(uint16_t address, uint8_t *
     {
         return ret;
     }
+    HAL_Delay(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS);
 
     return Int_BQ76952_ReadTransfer(address, data, len);
 }
