@@ -91,6 +91,7 @@ extern int16_t temp_fet_c;
 extern uint16_t alarm_status;
 extern uint16_t alarm_raw;
 extern uint16_t battery_status;
+extern uint16_t power_config;
 extern uint16_t balance_mask;
 extern uint8_t fet_status;
 extern uint8_t safety_status_a;

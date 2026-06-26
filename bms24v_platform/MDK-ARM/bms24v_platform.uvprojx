@@ -459,6 +459,16 @@
               <FileType>5</FileType>
               <FilePath>../../App/App_BatMan.h</FilePath>
             </File>
+            <File>
+              <FileName>App_OLED.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../App/App_OLED.c</FilePath>
+            </File>
+            <File>
+              <FileName>App_OLED.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../App/App_OLED.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -493,6 +503,21 @@
               <FileName>Int_BQ76952_BSP.h</FileName>
               <FileType>5</FileType>
               <FilePath>../../Int/Int_BQ76952_BSP.h</FilePath>
+            </File>
+            <File>
+              <FileName>Int_OLED.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Int/Int_OLED.c</FilePath>
+            </File>
+            <File>
+              <FileName>Int_OLED.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../Int/Int_OLED.h</FilePath>
+            </File>
+            <File>
+              <FileName>Int_font.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../Int/Int_font.h</FilePath>
             </File>
           </Files>
         </Group>

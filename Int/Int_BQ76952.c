@@ -256,18 +256,14 @@ static Int_BQ76952_StatusTypeDef Int_BQ76952_ReadCfgUpdateBit(bool *is_set)
 void Int_BQ76952_InitBoard(void)
 {
     s_bq76952_crc_enabled = (BQ76952_I2C_CRC_DEFAULT_ENABLED != 0u);
-    HAL_GPIO_WritePin(INT_BQ76952_WAKE_GPIO_PORT, INT_BQ76952_WAKE_PIN, GPIO_PIN_RESET);
 }
 
 void Int_BQ76952_WakeUp(void)
 {
     /*
-     * MCU 侧 PB3 拉高，经 2N7002 反相后把 BQ 的 BMS_WAKE 拉低。
-     * 这段时序只负责“唤醒”，不负责业务复位。
+     * PB3 当前按硬件排查要求保持浮空输入，不主动驱动 BMS_WAKE。
+     * 这里仅保留等待窗口，避免上层流程依赖唤醒函数时序时行为突变。
      */
-    HAL_GPIO_WritePin(INT_BQ76952_WAKE_GPIO_PORT, INT_BQ76952_WAKE_PIN, GPIO_PIN_SET);
-    HAL_Delay(INT_BQ76952_WAKE_PULSE_MS);
-    HAL_GPIO_WritePin(INT_BQ76952_WAKE_GPIO_PORT, INT_BQ76952_WAKE_PIN, GPIO_PIN_RESET);
     HAL_Delay(INT_BQ76952_WAKE_SETTLE_MS);
 }
 

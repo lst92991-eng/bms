@@ -29,6 +29,7 @@
 #include <string.h>
 
 #include "App_BatMan.h"
+#include "App_OLED.h"
 
 /* USER CODE END Includes */
 
@@ -118,6 +119,7 @@ int main(void)
   Bringup_UartPrint("SC8815 disabled: CE_N=1 PSTOP=1, no SC test\r\n");
   Bringup_UartPrint("USART1 115200 8N1\r\n");
   Bringup_UartPrint("run root App_BatMan upper logic\r\n");
+  App_OLED_Init();
   App_BatMan_Init();
   last_batman_task_tick = HAL_GetTick();
 

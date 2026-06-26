@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "Com_BQ76952.h"
+#include "App_OLED.h"
 #include "Int_BQ76952.h"
 #include "Int_BQ76952_BSP.h"
 #include "main.h"
@@ -64,6 +65,7 @@ int16_t temp_fet_c;
 uint16_t alarm_status;
 uint16_t alarm_raw;
 uint16_t battery_status;
+uint16_t power_config;
 uint16_t balance_mask;
 uint8_t fet_status;
 uint8_t safety_status_a;
@@ -346,6 +348,7 @@ void App_BatMan_Init(void)
     alarm_status = 0u;
     alarm_raw = 0u;
     battery_status = 0u;
+    power_config = 0u;
     balance_mask = 0u;
     fet_status = 0u;
     safety_status_a = 0u;
@@ -363,6 +366,7 @@ void App_BatMan_Init(void)
     soc_percent = APP_BATMAN_DEFAULT_SOC_PERCENT;
     display_soc_percent = APP_BATMAN_DEFAULT_SOC_PERCENT;
     s_debug_ms = 0u;
+    App_OLED_ShowIicStatus(false);
 
     /*
      * 1. 板级 BQ 假设初始化
@@ -410,18 +414,32 @@ void App_BatMan_Init(void)
     }
     device_number = App_BatMan_ReadU16Le(data);
     printf("bq device number:0x%04x\r\n", (unsigned int)device_number);
+    App_OLED_ShowIicStatus(true);
 
     /*
      * 4. 进入 ConfigUpdate，写本项目默认 Data Memory。
      */
     if (Int_BQ76952_EnterConfigUpdate() != INT_BQ76952_OK)
     {
+        App_OLED_ShowIicStatus(false);
         printf("bq enter config fail\r\n");
         return;
     }
 
     App_BatMan_ConfigParameters();
     App_BatMan_ConfigProtectSet();
+
+    if (Int_BQ76952_ReadDataMemory(BQ76952_DM_POWER_CONFIG, data, 2u) != INT_BQ76952_OK)
+    {
+        App_OLED_ShowIicStatus(false);
+        printf("bq read power config fail\r\n");
+    }
+    else
+    {
+        power_config = App_BatMan_ReadU16Le(data);
+        printf("power_config:0x%04x\r\n", (unsigned int)power_config);
+        App_OLED_ShowBqIicPowerConfig(true, power_config);
+    }
 
     /*
      * 5. 回读关键配置，尽量在 bring-up 阶段早一点发现写错地址或 CRC 问题。
@@ -437,6 +455,7 @@ void App_BatMan_Init(void)
 
     if (Int_BQ76952_ExitConfigUpdate() != INT_BQ76952_OK)
     {
+        App_OLED_ShowIicStatus(false);
         printf("bq exit config fail\r\n");
         return;
     }
@@ -463,6 +482,7 @@ void App_BatMan_Init(void)
      */
     if (App_BatMan_EnableBqFetControl() != INT_BQ76952_OK)
     {
+        App_OLED_ShowIicStatus(false);
         printf("bq fet enable fail\r\n");
         return;
     }
@@ -476,6 +496,7 @@ void App_BatMan_Init(void)
     App_BatMan_LoadTemperature();
     App_BatMan_LoadBqStatus();
     App_BatMan_UpdateFaultState();
+    App_OLED_ShowIicStatus(!s_comm_fault);
 
     if (cell_avg_mv > 0u)
     {
@@ -502,6 +523,7 @@ void App_BatMan_Task(uint16_t interval_ms)
     App_BatMan_LoadTemperature();
     App_BatMan_LoadBqStatus();
     App_BatMan_UpdateFaultState();
+    App_OLED_ShowIicStatus(!s_comm_fault);
     App_BatMan_CalcCoulomb(interval_ms);
     App_BatMan_CalcSoc(interval_ms);
     App_BatMan_CellBalance();

@@ -29,8 +29,8 @@ void Int_BQ76952_InitBoard(void);
 /**
  * @brief 拉起 BQ76952 唤醒脚。
  *
- * 本项目硬件里 MCU 侧用 PB3 经 2N7002 反相驱动 BMS_WAKE，
- * 所以这里的“唤醒”是 MCU 输出高电平一小段时间，让 BQ 侧看到低有效唤醒。
+ * 当前 bring-up 阶段 PB3 保持浮空输入，不主动驱动 BMS_WAKE。
+ * 如后续恢复 MCU 唤醒控制，再在 BSP/GPIO 中重新打开驱动。
  */
 void Int_BQ76952_WakeUp(void);
 
