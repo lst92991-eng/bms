@@ -17,17 +17,23 @@
 #define BQ76952_SHUNT_RESISTOR_UOHM             (500u)    /* 低边采样电阻 0.5 mΩ/6W；电流换算需按实际校准确认。 */
 #define BQ76952_FULL_CHARGE_MV                  (25200u)  /* 6S 满充 25.2V；这是系统参数，不是 BQ 保护阈值。 */
 
+#define BQ76952_PROJECT_CELL_FULL_MV            (4200u)   /* 6S ternary Li-ion: one cell full voltage is 4.2V. */
+#define BQ76952_SC8815_TARGET_CHARGE_MV         (24730u)  /* SC8815 target charge voltage: about 24.73V. */
+#define BQ76952_BALANCE_RESISTOR_OHM            (62u)     /* Passive balance bleed resistor on each cell branch. */
+#define BQ76952_BALANCE_RESISTOR_POWER_MW       (1000u)   /* Balance resistor rated power: 1W. */
+
 /*---------------------------------------------------------------------------
  * I2C / CRC / transfer buffer
  *---------------------------------------------------------------------------*/
 #define BQ76952_I2C_7BIT_ADDR_DEFAULT           (0x08u)   /* 默认 7-bit I2C 地址；若底层 API 要 7-bit 地址则传此值。 */
 #define BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT     (0x10u)   /* 默认 8-bit 写地址；STM32 HAL 常用左移地址参数通常传此值。 */
 #define BQ76952_I2C_8BIT_READ_ADDR_DEFAULT      (0x11u)   /* 默认 8-bit 读地址；不要误当 7-bit 地址使用。 */
+#define BQ76952_I2C_CRC_DEFAULT_ENABLED         (1u)      /* 本项目硬件信息确认默认 I2C CRC 开启；INT 层仍保留开关。 */
 #define BQ76952_I2C_STANDARD_MODE_HZ            (100000u) /* 支持 100 kHz I2C；上拉和线长需硬件确认。 */
 #define BQ76952_I2C_FAST_MODE_HZ                (400000u) /* 默认 fast mode 可用 400 kHz；bring-up 阶段可先降速。 */
 
-#define BQ76952_CRC8_POLY                       (0x07u)   /* I2C CRC 多项式 x^8+x^2+x+1；是否启用由 Comm Type 决定。 */
-#define BQ76952_CRC8_INIT                       (0x00u)   /* I2C CRC 初始值 0x00；BSP 只给常量，不默认启用 CRC。 */
+#define BQ76952_CRC8_POLY                       (0x07u)   /* I2C CRC 多项式 x^8+x^2+x+1；是否启用由 COM 按项目通信格式设置。 */
+#define BQ76952_CRC8_INIT                       (0x00u)   /* I2C CRC 初始值 0x00；本项目默认启用，INT 层仍保留开关。 */
 
 #define BQ76952_SUBCMD_ADDR_LSB                 (0x3Eu)   /* 子命令或 Data Memory 地址低字节窗口。 */
 #define BQ76952_SUBCMD_ADDR_MSB                 (0x3Fu)   /* 子命令或 Data Memory 地址高字节窗口。 */
@@ -41,7 +47,7 @@
 /*---------------------------------------------------------------------------
  * Direct Commands
  *---------------------------------------------------------------------------*/
-#define BQ76952_CMD_CONTROL_STATUS              (0x00u)   /* H2，只读设备状态；不要当控制寄存器写入。 */
+#define BQ76952_CMD_CONTROL_STATUS              (0x00u)   /* H2，推荐只读设备状态；不要当控制寄存器写入。 */
 #define BQ76952_CMD_SAFETY_ALERT_A              (0x02u)   /* H1，保护告警 A；bit 与 Safety A mask 对齐。 */
 #define BQ76952_CMD_SAFETY_STATUS_A             (0x03u)   /* H1，保护故障 A；读取故障锁存/当前状态。 */
 #define BQ76952_CMD_SAFETY_ALERT_B              (0x04u)   /* H1，保护告警 B；温度类告警入口。 */
@@ -83,9 +89,9 @@
 #define BQ76952_CMD_ALARM_RAW_STATUS            (0x64u)   /* H2，未锁存告警源；用于判断实时告警。 */
 #define BQ76952_CMD_ALARM_ENABLE                (0x66u)   /* H2，Alarm Status 使能掩码；写错会丢 ALERT 中断。 */
 #define BQ76952_CMD_INT_TEMPERATURE             (0x68u)   /* I2，内部温度，单位 0.1 K；换算摄氏度需减 273.15。 */
-#define BQ76952_CMD_TS1_TEMPERATURE             (0x70u)   /* I2，TS1 温度，单位 0.1 K；实际传感器接法待确认。 */
-#define BQ76952_CMD_TS2_TEMPERATURE             (0x72u)   /* I2，TS2 温度，单位 0.1 K；实际传感器接法待确认。 */
-#define BQ76952_CMD_TS3_TEMPERATURE             (0x74u)   /* I2，TS3 温度，单位 0.1 K；实际传感器接法待确认。 */
+#define BQ76952_CMD_TS1_TEMPERATURE             (0x70u)   /* I2，TS1 温度，单位 0.1 K；本项目为靠近采样电阻的热敏电阻。 */
+#define BQ76952_CMD_TS2_TEMPERATURE             (0x72u)   /* I2，TS2 温度，单位 0.1 K；本项目主要走 BMS_WAKE 唤醒路径。 */
+#define BQ76952_CMD_TS3_TEMPERATURE             (0x74u)   /* I2，TS3 温度，单位 0.1 K；本项目为靠近采样电阻的热敏电阻。 */
 #define BQ76952_CMD_FET_STATUS                  (0x7Fu)   /* H1，FET 与 ALERT 引脚状态；只反映状态，不等价于控制命令。 */
 
 /*---------------------------------------------------------------------------
@@ -197,7 +203,7 @@
 #define BQ76952_DM_COMM_TYPE                    (0x9239u) /* U1，默认 0x00，I2C/SPI/HDQ/CRC 配置；误写可能断开通信。 */
 #define BQ76952_DM_I2C_ADDRESS                  (0x923Au) /* U1，默认 0x00，I2C 地址配置；改写前必须准备恢复方案。 */
 #define BQ76952_DM_DA_CONFIGURATION             (0x9303u) /* H1，默认 0x05，DA/温度配置入口；影响采样解释。 */
-#define BQ76952_DM_VCELL_MODE                   (0x9304u) /* H2，默认 0x0000，有效 cell mask；6S 最终运行值尚未冻结。 */
+#define BQ76952_DM_VCELL_MODE                   (0x9304u) /* H2，默认 0x0000，有效 cell mask；本项目 6S 使用 0x8923。 */
 #define BQ76952_DM_PROTECTION_CONFIGURATION     (0x925Fu) /* H2，默认 0x0002，保护总配置；误写可能关闭关键保护。 */
 #define BQ76952_DM_ENABLED_PROTECTIONS_A        (0x9261u) /* U1，默认 0x88，A 类保护使能；bit 与 Safety A 对齐。 */
 #define BQ76952_DM_ENABLED_PROTECTIONS_B        (0x9262u) /* U1，默认 0x00，温度类保护使能；需确认 TS 接法。 */
@@ -281,17 +287,18 @@
  *---------------------------------------------------------------------------*/
 #define BQ76952_CELL_MASK_NONE                  (0x0000u) /* 无 cell mask；用于初始化局部变量。 */
 #define BQ76952_CELL_MASK_ALL_16S               (0xFFFFu) /* 16S 全 cell mask；本项目 6S 不能直接使用。 */
-#define BQ76952_CELL_MASK_6S_HW_CELL1_DRAFT     BQ76952_VCELL_MODE_CELL1_MASK  /* 当前硬件推导：物理第 1 串对应 Cell 1，待复核。 */
-#define BQ76952_CELL_MASK_6S_HW_CELL2_DRAFT     BQ76952_VCELL_MODE_CELL2_MASK  /* 当前硬件推导：物理第 2 串对应 Cell 2，待复核。 */
-#define BQ76952_CELL_MASK_6S_HW_CELL3_DRAFT     BQ76952_VCELL_MODE_CELL6_MASK  /* 当前硬件推导：物理第 3 串对应 Cell 6，待复核。 */
-#define BQ76952_CELL_MASK_6S_HW_CELL4_DRAFT     BQ76952_VCELL_MODE_CELL9_MASK  /* 当前硬件推导：物理第 4 串对应 Cell 9，待复核。 */
-#define BQ76952_CELL_MASK_6S_HW_CELL5_DRAFT     BQ76952_VCELL_MODE_CELL12_MASK /* 当前硬件推导：物理第 5 串对应 Cell 12，待复核。 */
-#define BQ76952_CELL_MASK_6S_HW_CELL6_DRAFT     BQ76952_VCELL_MODE_CELL16_MASK /* 当前硬件推导：物理第 6 串对应 Cell 16，待复核。 */
-#define BQ76952_CELL_MASK_6S_HW_DRAFT           (BQ76952_CELL_MASK_6S_HW_CELL1_DRAFT | \
-                                                 BQ76952_CELL_MASK_6S_HW_CELL2_DRAFT | \
-                                                 BQ76952_CELL_MASK_6S_HW_CELL3_DRAFT | \
-                                                 BQ76952_CELL_MASK_6S_HW_CELL4_DRAFT | \
-                                                 BQ76952_CELL_MASK_6S_HW_CELL5_DRAFT | \
-                                                 BQ76952_CELL_MASK_6S_HW_CELL6_DRAFT) /* 当前 6S Vcell Mode 推导草案，最终运行值未冻结，禁止当作已确认配置值写芯片。 */
+#define BQ76952_CELL_MASK_6S_HW_CELL1           BQ76952_VCELL_MODE_CELL1_MASK  /* physical Cell1 -> BQ Cell1 -> 0x14 -> CB bit0. */
+#define BQ76952_CELL_MASK_6S_HW_CELL2           BQ76952_VCELL_MODE_CELL2_MASK  /* physical Cell2 -> BQ Cell2 -> 0x16 -> CB bit1. */
+#define BQ76952_CELL_MASK_6S_HW_CELL3           BQ76952_VCELL_MODE_CELL6_MASK  /* physical Cell3 -> BQ Cell6 -> 0x1E -> CB bit5. */
+#define BQ76952_CELL_MASK_6S_HW_CELL4           BQ76952_VCELL_MODE_CELL9_MASK  /* physical Cell4 -> BQ Cell9 -> 0x24 -> CB bit8. */
+#define BQ76952_CELL_MASK_6S_HW_CELL5           BQ76952_VCELL_MODE_CELL12_MASK /* physical Cell5 -> BQ Cell12 -> 0x2A -> CB bit11. */
+#define BQ76952_CELL_MASK_6S_HW_CELL6           BQ76952_VCELL_MODE_CELL16_MASK /* physical Cell6 -> BQ Cell16 -> 0x32 -> CB bit15. */
+#define BQ76952_CELL_MASK_6S_HW                 (BQ76952_CELL_MASK_6S_HW_CELL1 | \
+                                                 BQ76952_CELL_MASK_6S_HW_CELL2 | \
+                                                 BQ76952_CELL_MASK_6S_HW_CELL3 | \
+                                                 BQ76952_CELL_MASK_6S_HW_CELL4 | \
+                                                 BQ76952_CELL_MASK_6S_HW_CELL5 | \
+                                                 BQ76952_CELL_MASK_6S_HW_CELL6)
+#define BQ76952_CELL_MASK_6S_HW_CONFIRMED       BQ76952_CELL_MASK_6S_HW
 
 #endif /* INT_BQ76952_BSP_H */

@@ -322,8 +322,6 @@ void App_Batman_CalcSocByCC(void)
     soc_percent = cur_coulomb_mas / default_coulomb_mas;
 }
 
-
-
 // 电量百分比滤波 IIR滤波
 void App_Batman_SocFilter(void)
 {

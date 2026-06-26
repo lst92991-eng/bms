@@ -2,6 +2,12 @@
 
 记录日期：2026-06-22
 
+更新日期：2026-06-23
+
+本版按最新边界收敛：业务逻辑在 APP，组合逻辑在 COM，INT 只保留“直接操作 SC8815 硬件能力”的接口。SC8815 的充电管理由芯片硬件自动完成，软件只负责安全态、使能/待机、状态读取、ADC 监测和限流边界，不写微观充电状态机。
+
+2026-06-23 用户已与硬件确认电池侧充电电流 `5A` 可以；为保险，软件初期运行先按 `3A`。该结论只更新电池侧 `IBAT` 目标和上限，不改变输入侧 `IBUS=3A` 上限。
+
 ## 1. 本轮目标
 
 生成 SC8815 INT 通信层首版：
@@ -9,7 +15,7 @@
 - `Int/Int_SC8815.h`
 - `Int/Int_SC8815.c`
 
-本轮只实现 PA6/PA7 GPIO 软件 IIC、SC8815 寄存器读写、写寄存器 guard、无业务策略的 ADC/状态/限流辅助函数。不实现 COM/APP，不实现充电业务流程，不实现 FreeRTOS task。
+本轮只实现 PA6/PA7 GPIO 软件 IIC、SC8815 私有寄存器访问、写寄存器 guard、无业务策略的 ADC/状态/限流硬件操作函数。不实现 COM/APP，不实现充电业务流程，不实现 FreeRTOS task。原始寄存器读写不作为正式最小 public API 暴露。
 
 ## 2. 输入文件
 
@@ -29,6 +35,9 @@
 - `#CE=PB1`，低有效；安全态为高电平 disable。
 - `PSTOP=PB0`，高电平 standby；配置关键寄存器前应保持 standby。
 - ISR 不在本轮实现；后续 ISR 只允许置标志，不允许访问 IIC。
+- 输入采样 `R5=10mΩ`、`IBUS_RATIO=3`，输入侧寄存器量程约 `3A`，项目输入侧软件上限保持 `3000mA`。
+- 电池采样 `R14=10mΩ`、`IBAT_RATIO=6`，电池侧寄存器量程约 `6A`，项目电池侧目标 `5000mA` 在量程内。
+- 电池侧充电限流策略：bring-up 仍从 `300mA` 或 `500mA` 开始；初期运行默认 `3000mA`；最终软件上限 `5000mA`。
 
 ## 4. 软件 IIC 六个底层方法
 
@@ -47,15 +56,12 @@ static bool Int_SC8815_IicSdaRead(void);
 
 ## 5. Public API
 
-首版 public API 控制在 12 个：
+### 5.1 正式最小 public API
 
 ```c
 Int_SC8815_StatusTypeDef Int_SC8815_InitSafe(void);
 Int_SC8815_StatusTypeDef Int_SC8815_SetChipEnabled(bool enabled);
 Int_SC8815_StatusTypeDef Int_SC8815_SetStandby(bool standby);
-Int_SC8815_StatusTypeDef Int_SC8815_ReadReg(uint8_t reg, uint8_t *value);
-Int_SC8815_StatusTypeDef Int_SC8815_WriteReg(uint8_t reg, uint8_t value);
-Int_SC8815_StatusTypeDef Int_SC8815_UpdateReg(uint8_t reg, uint8_t clear_mask, uint8_t set_mask);
 Int_SC8815_StatusTypeDef Int_SC8815_ReadStatus(Int_SC8815_StatusFlagsTypeDef *status);
 Int_SC8815_StatusTypeDef Int_SC8815_SetAdcEnabled(bool enabled);
 Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcRaw(Int_SC8815_AdcChannelTypeDef channel, uint16_t *raw);
@@ -64,7 +70,41 @@ Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentMa(Int_SC8815_CurrentChannelTy
 Int_SC8815_StatusTypeDef Int_SC8815_SetCurrentLimitMa(Int_SC8815_CurrentLimitTypeDef type, uint16_t current_ma);
 ```
 
-不提供 OTG、反向输出、FB 设置、关闭保护、关闭涓流、关闭自动终止等 API。
+保留理由：
+
+- `InitSafe`：建立硬件安全态，确保 `PSTOP=high`、`#CE=high`，不启动充电。
+- `SetChipEnabled`：只控制 `#CE` 这个硬件使能脚，不决定充电策略。
+- `SetStandby`：只控制 `PSTOP` 这个硬件待机脚，用于配置前后的硬件状态切换。
+- `ReadStatus`：读取芯片状态位，供 COM/APP 判断；INT 不解释成业务动作。
+- `SetAdcEnabled`、`ReadAdcRaw`：直接控制/读取芯片 ADC 能力。
+- `ReadAdcVoltageMv`、`ReadAdcCurrentMa`：保留在 INT，因为换算依赖本板硬件比例、电流采样电阻和 BSP 常量，仍属于硬件适配，不是业务策略。
+- `SetCurrentLimitMa`：设置硬件限流阈值，必须经过 guard；具体限流值策略由上层决定。
+
+### 5.2 bring-up/debug 可选 API
+
+默认不启用，仅在 `INT_SC8815_ENABLE_BRINGUP_API` 打开时允许出现：
+
+```c
+Int_SC8815_StatusTypeDef Int_SC8815_ReadReg(uint8_t reg, uint8_t *value);
+Int_SC8815_StatusTypeDef Int_SC8815_WriteReg(uint8_t reg, uint8_t value);
+Int_SC8815_StatusTypeDef Int_SC8815_UpdateReg(uint8_t reg, uint8_t clear_mask, uint8_t set_mask);
+```
+
+限制：
+
+- `ReadReg` 可用于 bring-up 查看寄存器，但正式业务不应直接依赖寄存器地址。
+- `WriteReg`/`UpdateReg` 即使处于 debug 宏下，也必须经过 guard。
+- debug 宏默认关闭，正式构建不暴露这三个接口。
+
+不作为正式 public API 的原因：
+
+- 原始寄存器写接口会让上层绕过“SC 由硬件自动充电、软件只做安全边界”的设计意图。
+- 即使有 guard，`WriteReg/UpdateReg` 仍会鼓励 APP 直接编码寄存器位，导致业务策略下沉到 INT/寄存器层。
+- 正式接口应按硬件操作意图命名，例如使能、待机、状态、ADC、限流，而不是按寄存器读写命名。
+
+### 5.3 明确不提供的接口
+
+不提供 OTG、反向输出、FB 设置、关闭保护、关闭涓流、关闭自动终止、微观充电状态机等 API。
 
 ## 6. 错误码
 
@@ -79,7 +119,7 @@ Int_SC8815_StatusTypeDef Int_SC8815_SetCurrentLimitMa(Int_SC8815_CurrentLimitTyp
 
 ## 7. 写寄存器 guard
 
-所有写寄存器路径必须经过 guard，包括 `WriteReg`、`UpdateReg` 和限流设置函数。
+所有写寄存器路径必须经过 guard，包括私有 `WriteRegRaw`、私有寄存器更新 helper、debug 条件下的 `WriteReg/UpdateReg` 和正式 `SetCurrentLimitMa`。
 
 必须拦截：
 
@@ -94,6 +134,8 @@ Int_SC8815_StatusTypeDef Int_SC8815_SetCurrentLimitMa(Int_SC8815_CurrentLimitTyp
 - `CTRL3.DIS_ShortFoldBack=1`。
 - `CTRL3.EN_PFM=1`。
 - 电流限流低于 `300mA`。
+- 输入侧限流高于 `3000mA`。
+- 电池侧充电限流高于 `5000mA`。
 - `RATIO` 中 `IBUS_RATIO` 为 `00/11`，或偏离本项目 `IBUS_RATIO=3x`、`IBAT_RATIO=6x`。
 - `VBAT_SET` 中 `VBAT_SEL` 被清零。
 - 需要 PSTOP 高电平配置的关键字段，在当前记录状态不是 standby 时写入。
@@ -104,12 +146,14 @@ Int_SC8815_StatusTypeDef Int_SC8815_SetCurrentLimitMa(Int_SC8815_CurrentLimitTyp
 - 禁止使用 FreeRTOS、printf、动态内存。
 - 禁止写 COM/APP 业务逻辑。
 - 禁止启动充电流程；`InitSafe` 只进入安全态。
+- 禁止在 INT 内根据状态位推进充电阶段。
 - 禁止在本轮处理中断回调。
 - 禁止把 `VBUSREF_*` 作为可用输出电压配置。
+- 禁止在正式 public API 暴露 `ReadReg`、`WriteReg`、`UpdateReg`。
 
 ## 9. 任务卡
 
-任务卡编号：`SC8815_COMM_001`
+任务卡编号：`SC8815_COMM_MIN_API_002`
 
 允许读取：
 
@@ -140,5 +184,7 @@ Int_SC8815_StatusTypeDef Int_SC8815_SetCurrentLimitMa(Int_SC8815_CurrentLimitTyp
 - `.c` 不包含 HAL I2C、FreeRTOS、printf。
 - 软件 IIC 底层 GPIO 原语正好六个。
 - 所有 public API 返回状态。
+- 正式 public API 不暴露 `ReadReg`、`WriteReg`、`UpdateReg`。
+- `ReadReg`、`WriteReg`、`UpdateReg` 若保留，必须受 `INT_SC8815_ENABLE_BRINGUP_API` 保护且默认关闭。
 - 所有写寄存器路径经过 guard。
 - 不提供 OTG/反向输出 API。
