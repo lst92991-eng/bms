@@ -2,52 +2,103 @@
 
 #include <stdio.h>
 
-#include "Com_BQ76952.h"
 #include "App_OLED.h"
+#include "Com_BQ76952.h"
+#include "Com_SOC.h"
+#include "Com_SOH.h"
 #include "Int_BQ76952.h"
 #include "Int_BQ76952_BSP.h"
 #include "main.h"
 
-/*
- * 这一版 App_BatMan.c 的目标很简单：
- * 1. 结构尽量像旧项目，逻辑顺序一眼能读懂；
- * 2. APP 直接调 INT，不再经由厚 COM wrapper；
- * 3. BQ 相关业务全部放在这个文件里，便于教学和带新人。
+/**
+ * @file App_BatMan.c
+ * @brief BQ76952 电池监控 APP 层。
+ *
+ * 本文件只做“初始化 + 监控 + 估算”，不再作为功率策略执行器。
+ * BQ76952 在 `FET_ENABLE` 后负责 CHG/DSG MOS 的保护与开关判定；
+ * MCU 只写入项目确认过的 Data Memory 基线配置，随后周期采样电压、
+ * 电流、温度、告警、FET 状态，并给上层日志/OLED 提供 SOC/SOH 估算。
+ *
+ * 维护边界：
+ * - 不在 APP 层直接写 FET 控制命令强制开关 MOS。
+ * - 不在 APP 层计算并写入 host cell-balance mask。
+ * - `fault_active` 只用于监控和日志，不替代 BQ 的硬件保护动作。
  */
 
-#define APP_BATMAN_CRC_BOOT_ENABLE          (0u)
-#define APP_BATMAN_BQ_RESET_SETTLE_MS       (200u)
-#define APP_BATMAN_MAX_DEBUG_LINES          (6u)
-#define APP_BATMAN_SOC_BLEND_ALPHA_CHG      (0.25f)
-#define APP_BATMAN_SOC_BLEND_ALPHA_DSG      (0.12f)
-#define APP_BATMAN_SOC_BLEND_ALPHA_IDLE     (0.18f)
+/*
+ * Bring-up 配置项。
+ * 当前实板通信按 non-CRC 模式验证通过；若重新启用 CRC，需要同时确认
+ * BQ 侧协议模式、读写帧格式和串口日志结果。
+ */
+#define APP_BATMAN_CRC_BOOT_ENABLE              (0u)
+#define APP_BATMAN_BQ_RESET_SETTLE_MS           (200u)
 
-/* BQ Data Memory 默认值只保留当前项目已经确认的最小集合。 */
-#define APP_BATMAN_DM_DA_CONFIGURATION_DEFAULT              (0x05u)
-#define APP_BATMAN_DM_PROTECTION_CONFIGURATION_DEFAULT      (0x0002u)
-#define APP_BATMAN_DM_ENABLED_PROTECTIONS_A_DEFAULT         (0x88u)
-#define APP_BATMAN_DM_ENABLED_PROTECTIONS_B_DEFAULT         (0x00u)
-#define APP_BATMAN_DM_ENABLED_PROTECTIONS_C_DEFAULT         (0x00u)
-#define APP_BATMAN_DM_CHG_FET_PROTECTIONS_A_DEFAULT         (0x98u)
-#define APP_BATMAN_DM_CHG_FET_PROTECTIONS_B_DEFAULT         (0xD5u)
-#define APP_BATMAN_DM_CHG_FET_PROTECTIONS_C_DEFAULT         (0x56u)
-#define APP_BATMAN_DM_DSG_FET_PROTECTIONS_A_DEFAULT         (0xE4u)
-#define APP_BATMAN_DM_DSG_FET_PROTECTIONS_B_DEFAULT         (0xE6u)
-#define APP_BATMAN_DM_DSG_FET_PROTECTIONS_C_DEFAULT         (0xE2u)
-#define APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT            (0xF800u)
-#define APP_BATMAN_DM_FET_OPTIONS_DEFAULT                   (BQ76952_FET_OPTIONS_FET_CTRL_EN_MASK | \
-                                                             BQ76952_FET_OPTIONS_SFET_MASK)
-#define APP_BATMAN_DM_CHG_PUMP_CONTROL_DEFAULT              (0x01u)
-#define APP_BATMAN_DM_BALANCING_CONFIGURATION_HOST_ONLY     (0x08u)
-#define APP_BATMAN_DM_CB_MAX_CELLS_DEFAULT                  (1u)
-#define APP_BATMAN_DM_CB_INTERVAL_DEFAULT_S                 (20u)
-#define APP_BATMAN_DM_CB_MIN_CELL_TEMP_DEFAULT              (0u)
-#define APP_BATMAN_DM_CB_MAX_CELL_TEMP_DEFAULT              (45u)
-#define APP_BATMAN_DM_CB_MAX_INTERNAL_TEMP_DEFAULT          (70u)
-#define APP_BATMAN_DM_CB_MIN_CELL_V_CHARGE_DEFAULT          (3900u)
-#define APP_BATMAN_DM_CB_MIN_DELTA_CHARGE_DEFAULT           (40u)
-#define APP_BATMAN_DM_CB_STOP_DELTA_CHARGE_DEFAULT          (20u)
+/*
+ * 显示 SOC 滤波系数。
+ * 充电响应略快，放电响应略慢，静置时只轻微引入 OCV 校正，避免显示跳变。
+ */
+#define APP_BATMAN_SOC_REST_NEED_MS             (600000u)
+#define APP_BATMAN_SOC_CURRENT_DEADBAND_MA      (30)
+#define APP_BATMAN_SOC_REST_CURRENT_MA          (100)
+#define APP_BATMAN_SOC_REST_STABLE_MV           (3u)
+#define APP_BATMAN_SOC_R0_OHM                   (0.012f)
+#define APP_BATMAN_SOC_R1_OHM                   (0.006f)
+#define APP_BATMAN_SOC_C1_F                     (8000.0f)
+#define APP_BATMAN_SOC_R2_OHM                   (0.003f)
+#define APP_BATMAN_SOC_C2_F                     (60000.0f)
+#define APP_BATMAN_SOC_PROCESS_Q_SOC            (0.00000001f)
+#define APP_BATMAN_SOC_PROCESS_Q_V1             (0.0000001f)
+#define APP_BATMAN_SOC_PROCESS_Q_V2             (0.0000001f)
+#define APP_BATMAN_SOC_MEASURE_R_MV             (25.0f)
+#define APP_BATMAN_SOC_MEASURE_R_DYN_MV         (80.0f)
+#define APP_BATMAN_SOC_RESIDUAL_REJECT_MV       (300.0f)
+#define APP_BATMAN_SOC_DYN_CURR_DELTA_MA        (300)
+#define APP_BATMAN_SOC_DYN_CURR_STABLE_MS       (5000u)
+#define APP_BATMAN_SOC_FULL_CURRENT_MA          (250)
+#define APP_BATMAN_SOC_EMPTY_CURRENT_MA         (250)
+#define APP_BATMAN_SOC_FULL_ANCHOR_HOLD_MS      (5000u)
+#define APP_BATMAN_SOC_EMPTY_ANCHOR_HOLD_MS     (5000u)
+#define APP_BATMAN_SOC_DISPLAY_RISE_PER_S       (1.5f)
+#define APP_BATMAN_SOC_DISPLAY_FALL_PER_S       (2.5f)
+#define APP_BATMAN_SOC_DYNAMIC_EKF_ENABLE       (0u)
 
+/*
+ * 早期 SOH 提醒因子。
+ * 这不是最终老化模型，只给 Linux 记录健康趋势和异常提醒使用。
+ */
+#define APP_BATMAN_HEALTH_DELTA_WARN_MV         (80u)
+#define APP_BATMAN_HEALTH_TEMP_WARN_C           (55)
+
+/*
+ * 项目 Data Memory 基线值。
+ * 这里只保留已经和硬件/bring-up 目标绑定的最小集合：6S 映射、FET 托管、
+ * 告警掩码、保护路由和均衡模式。最终阈值必须来自实验标定，不在 APP
+ * 层凭经验补齐。
+ */
+#define APP_BATMAN_DM_DA_CONFIGURATION_DEFAULT          (0x05u)
+#define APP_BATMAN_DM_PROTECTION_CONFIGURATION_DEFAULT  (0x0002u)
+#define APP_BATMAN_DM_ENABLED_PROTECTIONS_A_DEFAULT     (0x88u)
+#define APP_BATMAN_DM_ENABLED_PROTECTIONS_B_DEFAULT     (0x00u)
+#define APP_BATMAN_DM_ENABLED_PROTECTIONS_C_DEFAULT     (0x00u)
+#define APP_BATMAN_DM_CHG_FET_PROTECTIONS_A_DEFAULT     (0x98u)
+#define APP_BATMAN_DM_CHG_FET_PROTECTIONS_B_DEFAULT     (0xD5u)
+#define APP_BATMAN_DM_CHG_FET_PROTECTIONS_C_DEFAULT     (0x56u)
+#define APP_BATMAN_DM_DSG_FET_PROTECTIONS_A_DEFAULT     (0xE4u)
+#define APP_BATMAN_DM_DSG_FET_PROTECTIONS_B_DEFAULT     (0xE6u)
+#define APP_BATMAN_DM_DSG_FET_PROTECTIONS_C_DEFAULT     (0xE2u)
+#define APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT        (0xF800u)
+#define APP_BATMAN_DM_FET_OPTIONS_DEFAULT               (BQ76952_FET_OPTIONS_FET_CTRL_EN_MASK | \
+                                                         BQ76952_FET_OPTIONS_SFET_MASK)
+#define APP_BATMAN_DM_CHG_PUMP_CONTROL_DEFAULT          (0x01u)
+#define APP_BATMAN_DM_BALANCING_CONFIGURATION_DEFAULT   (BQ76952_BALANCING_CB_CHG_MASK | \
+                                                         BQ76952_BALANCING_CB_NOSLEEP_MASK)
+
+/*
+ * 对外遥测快照。
+ * 保留旧项目的全局变量风格，便于 CAN、OLED、Linux 日志直接读取最新值。
+ * 当前只在主循环任务中更新，不需要 volatile。若后续接入 BQ_INT/SC_INT，
+ * ISR 只应置位 volatile pending flag，不应直接改这些快照字段。
+ */
 uint16_t cell_mv[APP_BATMAN_CELL_COUNT];
 uint32_t stack_mv;
 uint32_t pack_mv;
@@ -65,269 +116,65 @@ int16_t temp_fet_c;
 uint16_t alarm_status;
 uint16_t alarm_raw;
 uint16_t battery_status;
-uint16_t power_config;
-uint16_t balance_mask;
 uint8_t fet_status;
 uint8_t safety_status_a;
 uint8_t safety_status_b;
 uint8_t safety_status_c;
 bool fault_active;
-bool charge_allowed;
-bool discharge_allowed;
 float soc_percent;
 float display_soc_percent;
+uint8_t soc_confidence_percent;
+float soc_residual_mv;
+float soc_kalman_gain;
+float soc_p;
+float soc_active_capacity_mah;
+uint32_t charge_throughput_mah;
+uint32_t discharge_throughput_mah;
+uint32_t cycle_count;
+uint8_t soh_percent;
+uint8_t soh_confidence_percent;
 
-static bool s_charge_request = true;
-static bool s_discharge_request = true;
+/*
+ * 文件内运行状态。
+ * 这些字段不对外暴露，避免上层绕过 APP 接口修改 SOC/SOH 或通信状态。
+ */
 static bool s_comm_fault = false;
-static bool s_balance_active = false;
-static bool s_soc_seeded = false;
-static float s_coulomb_mah = (float)APP_BATMAN_CELL_CAP_TYP_MAH * 0.5f;
-static uint16_t s_debug_ms = 0u;
+static bool s_cells_sample_valid = false;
+static bool s_current_sample_valid = false;
+static bool s_temp_ts1_sample_valid = false;
+static bool s_temp_ts3_sample_valid = false;
+static bool s_temp_cell_sample_valid = false;
+static uint32_t s_debug_ms = 0u;
+static uint16_t s_power_config = 0u;
 
+/**
+ * @brief 按 BQ76952 little-endian 格式读取 16-bit 值。
+ */
 static uint16_t App_BatMan_ReadU16Le(const uint8_t data[2])
 {
     return (uint16_t)(((uint16_t)data[1] << 8u) | data[0]);
 }
 
-static uint16_t App_BatMan_PhysicalBalanceMaskToBqMask(const uint8_t cell_to_balance[APP_BATMAN_CELL_COUNT])
+/**
+ * @brief 按 BQ76952 little-endian 格式写入 16-bit 值。
+ */
+static void App_BatMan_WriteU16Le(uint16_t value, uint8_t data[2])
 {
-    static const uint16_t bq_balance_bit_map[APP_BATMAN_CELL_COUNT] =
-    {
-        0x0001u, /* physical cell 0 -> BQ Cell1  -> bit0  */
-        0x0002u, /* physical cell 1 -> BQ Cell2  -> bit1  */
-        0x0020u, /* physical cell 2 -> BQ Cell6  -> bit5  */
-        0x0100u, /* physical cell 3 -> BQ Cell9  -> bit8  */
-        0x0800u, /* physical cell 4 -> BQ Cell12 -> bit11 */
-        0x8000u  /* physical cell 5 -> BQ Cell16 -> bit15 */
-    };
-    uint16_t bq_mask = 0u;
+    data[0] = (uint8_t)(value & 0xFFu);
+    data[1] = (uint8_t)(value >> 8u);
+}
+
+/**
+ * @brief 复位 APP 层公开快照和内部估算状态。
+ *
+ * 即使 BQ 初始化中途失败，OLED、串口或后续 CAN 输出也能看到确定的
+ * 初始值，而不是残留上一次运行的状态。
+ */
+static void App_BatMan_ResetState(void)
+{
     uint8_t i;
 
     for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
-    {
-        if (cell_to_balance[i] != 0u)
-        {
-            bq_mask |= bq_balance_bit_map[i];
-        }
-    }
-
-    return bq_mask;
-}
-
-static Int_BQ76952_StatusTypeDef App_BatMan_SetBalanceMask(uint16_t bq_mask)
-{
-    uint8_t data[2];
-
-    data[0] = (uint8_t)(bq_mask & 0xFFu);
-    data[1] = (uint8_t)(bq_mask >> 8u);
-
-    return Int_BQ76952_WriteSubcommandData(BQ76952_SUBCMD_CB_ACTIVE_CELLS, data, 2u);
-}
-
-static Int_BQ76952_StatusTypeDef App_BatMan_StopBalancing(void)
-{
-    return App_BatMan_SetBalanceMask(0u);
-}
-
-static Int_BQ76952_StatusTypeDef App_BatMan_EnableBqFetControl(void)
-{
-    uint8_t data[2];
-    uint16_t manufacturing_status;
-    Int_BQ76952_StatusTypeDef ret;
-
-    ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_MANUFACTURING_STATUS, data, 2u);
-    if (ret != INT_BQ76952_OK)
-    {
-        return ret;
-    }
-
-    manufacturing_status = App_BatMan_ReadU16Le(data);
-    printf("mfg_status before fet_enable:0x%04x\r\n", (unsigned int)manufacturing_status);
-    if ((manufacturing_status & BQ76952_MFG_STATUS_FET_EN_MASK) != 0u)
-    {
-        return INT_BQ76952_OK;
-    }
-
-    ret = Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_FET_ENABLE);
-    if (ret != INT_BQ76952_OK)
-    {
-        return ret;
-    }
-
-    ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_MANUFACTURING_STATUS, data, 2u);
-    if (ret != INT_BQ76952_OK)
-    {
-        return ret;
-    }
-
-    manufacturing_status = App_BatMan_ReadU16Le(data);
-    printf("mfg_status after fet_enable:0x%04x\r\n", (unsigned int)manufacturing_status);
-    if ((manufacturing_status & BQ76952_MFG_STATUS_FET_EN_MASK) == 0u)
-    {
-        return INT_BQ76952_ERROR;
-    }
-
-    return INT_BQ76952_OK;
-}
-
-static void App_BatMan_PrintBringupConfig(void)
-{
-    printf("bq bringup config only, not final safety release\r\n");
-    printf("cell_map:0x%04x phys_to_bq:0->1 1->2 2->6 3->9 4->12 5->16\r\n",
-           (unsigned int)BQ76952_CELL_MASK_6S_HW_CONFIRMED);
-    printf("dm da:0x%02x prot_cfg:0x%04x alarm_mask:0x%04x fet_opt:0x%02x pump:0x%02x\r\n",
-           (unsigned int)APP_BATMAN_DM_DA_CONFIGURATION_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_PROTECTION_CONFIGURATION_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_FET_OPTIONS_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_CHG_PUMP_CONTROL_DEFAULT);
-    printf("enabled_prot A:0x%02x B:0x%02x C:0x%02x\r\n",
-           (unsigned int)APP_BATMAN_DM_ENABLED_PROTECTIONS_A_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_ENABLED_PROTECTIONS_B_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_ENABLED_PROTECTIONS_C_DEFAULT);
-    printf("fet_prot chg:%02x/%02x/%02x dsg:%02x/%02x/%02x\r\n",
-           (unsigned int)APP_BATMAN_DM_CHG_FET_PROTECTIONS_A_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_CHG_FET_PROTECTIONS_B_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_CHG_FET_PROTECTIONS_C_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_DSG_FET_PROTECTIONS_A_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_DSG_FET_PROTECTIONS_B_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_DSG_FET_PROTECTIONS_C_DEFAULT);
-    printf("balance cfg:0x%02x max_cells:%u interval:%us temp:%d..%dC int_max:%dC vmin:%umV delta:%u/%umV\r\n",
-           (unsigned int)APP_BATMAN_DM_BALANCING_CONFIGURATION_HOST_ONLY,
-           (unsigned int)APP_BATMAN_DM_CB_MAX_CELLS_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_CB_INTERVAL_DEFAULT_S,
-           (int)APP_BATMAN_DM_CB_MIN_CELL_TEMP_DEFAULT,
-           (int)APP_BATMAN_DM_CB_MAX_CELL_TEMP_DEFAULT,
-           (int)APP_BATMAN_DM_CB_MAX_INTERNAL_TEMP_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_CB_MIN_CELL_V_CHARGE_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_CB_MIN_DELTA_CHARGE_DEFAULT,
-           (unsigned int)APP_BATMAN_DM_CB_STOP_DELTA_CHARGE_DEFAULT);
-}
-
-static void App_BatMan_ConfigParameters(void)
-{
-    uint8_t data_u8;
-    uint8_t data_u16[2];
-
-    /*
-     * 这一段只写“项目默认且已经明确”的参数：
-     * - 6S cell mapping；
-     * - 默认告警掩码；
-     * - host balancing 模式；
-     * - 充电泵/FET 相关默认值。
-     * 阈值编码、保护细节不在这里臆造。
-     */
-    data_u8 = APP_BATMAN_DM_DA_CONFIGURATION_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_DA_CONFIGURATION, &data_u8, 1u);
-
-    data_u16[0] = (uint8_t)(BQ76952_CELL_MASK_6S_HW_CONFIRMED & 0xFFu);
-    data_u16[1] = (uint8_t)(BQ76952_CELL_MASK_6S_HW_CONFIRMED >> 8u);
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_VCELL_MODE, data_u16, 2u);
-
-    data_u16[0] = (uint8_t)(APP_BATMAN_DM_PROTECTION_CONFIGURATION_DEFAULT & 0xFFu);
-    data_u16[1] = (uint8_t)(APP_BATMAN_DM_PROTECTION_CONFIGURATION_DEFAULT >> 8u);
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_PROTECTION_CONFIGURATION, data_u16, 2u);
-
-    /* APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT = 0xF800 -> little-endian {0x00, 0xF8}. */
-    data_u16[0] = 0x00u;
-    data_u16[1] = 0xF8u;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_DEFAULT_ALARM_MASK, data_u16, 2u);
-
-    data_u8 = APP_BATMAN_DM_FET_OPTIONS_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_FET_OPTIONS, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_CHG_PUMP_CONTROL_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_CHG_PUMP_CONTROL, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_BALANCING_CONFIGURATION_HOST_ONLY;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_BALANCING_CONFIGURATION, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_CB_MIN_CELL_TEMP_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_CB_MIN_CELL_TEMP, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_CB_MAX_CELL_TEMP_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_CB_MAX_CELL_TEMP, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_CB_MAX_INTERNAL_TEMP_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_CB_MAX_INTERNAL_TEMP, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_CB_INTERVAL_DEFAULT_S;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_CB_INTERVAL, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_CB_MAX_CELLS_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_CB_MAX_CELLS, &data_u8, 1u);
-
-    data_u16[0] = (uint8_t)(APP_BATMAN_DM_CB_MIN_CELL_V_CHARGE_DEFAULT & 0xFFu);
-    data_u16[1] = (uint8_t)(APP_BATMAN_DM_CB_MIN_CELL_V_CHARGE_DEFAULT >> 8u);
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_CB_MIN_CELL_V_CHARGE, data_u16, 2u);
-
-    data_u8 = APP_BATMAN_DM_CB_MIN_DELTA_CHARGE_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_CB_MIN_DELTA_CHARGE, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_CB_STOP_DELTA_CHARGE_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_CB_STOP_DELTA_CHARGE, &data_u8, 1u);
-}
-
-static void App_BatMan_ConfigProtectSet(void)
-{
-    uint8_t data_u8;
-    uint8_t data_u16[2];
-
-    /*
-     * 这里保留旧项目那种“先写默认保护再看回读”的风格。
-     * 目的是 bring-up 阶段尽早确认寄存器写入是否正常，
-     * 不是在这里做完整保护阈值编码。
-     */
-    data_u8 = APP_BATMAN_DM_PROTECTION_CONFIGURATION_DEFAULT;
-    data_u16[0] = (uint8_t)(data_u8 & 0xFFu);
-    data_u16[1] = (uint8_t)(data_u8 >> 8u);
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_PROTECTION_CONFIGURATION, data_u16, 2u);
-
-    data_u8 = APP_BATMAN_DM_ENABLED_PROTECTIONS_A_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_ENABLED_PROTECTIONS_A, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_ENABLED_PROTECTIONS_B_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_ENABLED_PROTECTIONS_B, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_ENABLED_PROTECTIONS_C_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_ENABLED_PROTECTIONS_C, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_CHG_FET_PROTECTIONS_A_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_CHG_FET_PROTECTIONS_A, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_CHG_FET_PROTECTIONS_B_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_CHG_FET_PROTECTIONS_B, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_CHG_FET_PROTECTIONS_C_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_CHG_FET_PROTECTIONS_C, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_DSG_FET_PROTECTIONS_A_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_DSG_FET_PROTECTIONS_A, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_DSG_FET_PROTECTIONS_B_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_DSG_FET_PROTECTIONS_B, &data_u8, 1u);
-
-    data_u8 = APP_BATMAN_DM_DSG_FET_PROTECTIONS_C_DEFAULT;
-    (void)Int_BQ76952_WriteDataMemory(BQ76952_DM_DSG_FET_PROTECTIONS_C, &data_u8, 1u);
-}
-
-void App_BatMan_Init(void)
-{
-    uint16_t device_number = 0u;
-    uint8_t data[2];
-    uint32_t bq_hal_error = 0u;
-    Int_BQ76952_StatusTypeDef bq_ret;
-
-    printf("batman init start\r\n");
-    printf("battery:6S Li-ion pack:%u mv target:%u mv shunt:%u uohm balance:%u ohm\r\n",
-           (unsigned int)APP_BATMAN_PACK_FULL_MV,
-           (unsigned int)APP_BATMAN_PACK_CHG_5A_MV,
-           (unsigned int)BQ76952_SHUNT_RESISTOR_UOHM,
-           (unsigned int)APP_BATMAN_BALANCE_RESISTOR_OHM);
-    App_BatMan_PrintBringupConfig();
-
-    for (uint8_t i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
     {
         cell_mv[i] = 0u;
     }
@@ -348,200 +195,303 @@ void App_BatMan_Init(void)
     alarm_status = 0u;
     alarm_raw = 0u;
     battery_status = 0u;
-    power_config = 0u;
-    balance_mask = 0u;
     fet_status = 0u;
     safety_status_a = 0u;
     safety_status_b = 0u;
     safety_status_c = 0u;
     fault_active = false;
-    charge_allowed = false;
-    discharge_allowed = false;
-    s_charge_request = true;
-    s_discharge_request = true;
-    s_comm_fault = false;
-    s_balance_active = false;
-    s_soc_seeded = false;
-    s_coulomb_mah = (float)APP_BATMAN_CAPACITY_MAH * 0.5f;
     soc_percent = APP_BATMAN_DEFAULT_SOC_PERCENT;
     display_soc_percent = APP_BATMAN_DEFAULT_SOC_PERCENT;
+    soc_confidence_percent = 0u;
+    soc_residual_mv = 0.0f;
+    soc_kalman_gain = 0.0f;
+    soc_p = 0.0f;
+    soc_active_capacity_mah = (float)APP_BATMAN_CAPACITY_MAH;
+    charge_throughput_mah = 0u;
+    discharge_throughput_mah = 0u;
+    cycle_count = 0u;
+    soh_percent = 100u;
+    soh_confidence_percent = 0u;
+
+    s_comm_fault = false;
+    s_cells_sample_valid = false;
+    s_current_sample_valid = false;
+    s_temp_ts1_sample_valid = false;
+    s_temp_ts3_sample_valid = false;
+    s_temp_cell_sample_valid = false;
     s_debug_ms = 0u;
-    App_OLED_ShowIicStatus(false);
+    s_power_config = 0u;
+}
 
+/**
+ * @brief 写入 1 字节 Data Memory 配置。
+ *
+ * APP 层只表达业务配置项，I2C、Data Memory 校验和及时序细节由 INT 层负责。
+ */
+static bool App_BatMan_WriteConfigU8(uint16_t address, uint8_t value)
+{
+    if (Int_BQ76952_WriteDataMemory(address, &value, 1u) == INT_BQ76952_OK)
+    {
+        return true;
+    }
+
+    s_comm_fault = true;
+    printf("bq dm write8 fail addr:0x%04x\r\n", (unsigned int)address);
+    return false;
+}
+
+/**
+ * @brief 写入 2 字节 Data Memory 配置。
+ */
+static bool App_BatMan_WriteConfigU16(uint16_t address, uint16_t value)
+{
+    uint8_t data[2];
+
+    App_BatMan_WriteU16Le(value, data);
+    if (Int_BQ76952_WriteDataMemory(address, data, 2u) == INT_BQ76952_OK)
+    {
+        return true;
+    }
+
+    s_comm_fault = true;
+    printf("bq dm write16 fail addr:0x%04x\r\n", (unsigned int)address);
+    return false;
+}
+
+/**
+ * @brief 写入 BQ76952 bring-up 阶段的项目基线配置。
+ *
+ * 与旧 APP 的关键区别：这里配置 BQ 的 FET/保护/均衡能力，但不再由
+ * APP 选择 MOS 状态或指定某一串均衡。函数保持短而直，是为了让每个
+ * Data Memory 写入在审阅时都能被快速定位。
+ */
+static bool App_BatMan_ConfigBq(void)
+{
     /*
-     * 1. 板级 BQ 假设初始化
-     *    - CRC 模式按项目默认打开；
-     *    - WAKE 脚回到安全初值；
-     *    - 不在这里直接写业务寄存器。
+     * 真实 6S 采样并不是连续接在 BQ Cell1..Cell6：
+     * 物理 cell0..5 对应 BQ Cell1/2/6/9/12/16。
      */
-    Int_BQ76952_InitBoard();
-    Int_BQ76952_SetCrcEnabled(APP_BATMAN_CRC_BOOT_ENABLE != 0u);
-    printf("bq i2c crc:%u\r\n", Int_BQ76952_IsCrcEnabled() ? 1u : 0u);
-    if (Int_BQ76952_ProbeDevice(&bq_hal_error) == INT_BQ76952_OK)
+    if (!App_BatMan_WriteConfigU8(BQ76952_DM_DA_CONFIGURATION,
+                                  APP_BATMAN_DM_DA_CONFIGURATION_DEFAULT) ||
+        !App_BatMan_WriteConfigU16(BQ76952_DM_VCELL_MODE,
+                                   BQ76952_CELL_MASK_6S_HW_CONFIRMED))
     {
-        printf("bq i2c probe ok\r\n");
-    }
-    else
-    {
-        printf("bq i2c probe fail hal_error:0x%08lx\r\n",
-               (unsigned long)bq_hal_error);
-    }
-
-    /*
-     * 2. 先做一次板级唤醒和协议复位
-     *    旧项目风格是“先让芯片醒，再开始问它话”。
-     */
-    bq_ret = Int_BQ76952_Reset();
-    if (bq_ret != INT_BQ76952_OK)
-    {
-        printf("bq reset fail ret:%d hal_error:0x%08lx\r\n",
-               (int)bq_ret,
-               (unsigned long)Int_BQ76952_GetLastHalError());
-        return;
-    }
-    HAL_Delay(APP_BATMAN_BQ_RESET_SETTLE_MS);
-
-    /*
-     * 3. 读 Device Number，确认总线和 BQ76952 响应正确。
-     */
-    bq_ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_DEVICE_NUMBER, data, 2u);
-    if (bq_ret != INT_BQ76952_OK)
-    {
-        printf("bq read device number fail ret:%d hal_error:0x%08lx\r\n",
-               (int)bq_ret,
-               (unsigned long)Int_BQ76952_GetLastHalError());
-        return;
-    }
-    device_number = App_BatMan_ReadU16Le(data);
-    printf("bq device number:0x%04x\r\n", (unsigned int)device_number);
-    App_OLED_ShowIicStatus(true);
-
-    /*
-     * 4. 进入 ConfigUpdate，写本项目默认 Data Memory。
-     */
-    if (Int_BQ76952_EnterConfigUpdate() != INT_BQ76952_OK)
-    {
-        App_OLED_ShowIicStatus(false);
-        printf("bq enter config fail\r\n");
-        return;
-    }
-
-    App_BatMan_ConfigParameters();
-    App_BatMan_ConfigProtectSet();
-
-    if (Int_BQ76952_ReadDataMemory(BQ76952_DM_POWER_CONFIG, data, 2u) != INT_BQ76952_OK)
-    {
-        App_OLED_ShowIicStatus(false);
-        printf("bq read power config fail\r\n");
-    }
-    else
-    {
-        power_config = App_BatMan_ReadU16Le(data);
-        printf("power_config:0x%04x\r\n", (unsigned int)power_config);
-        App_OLED_ShowBqIicPowerConfig(true, power_config);
+        return false;
     }
 
     /*
-     * 5. 回读关键配置，尽量在 bring-up 阶段早一点发现写错地址或 CRC 问题。
+     * 保护配置与告警掩码决定 BQ 上报哪些事件，以及哪些事件进入
+     * BQ 自己的保护/FET 判定路径。
      */
-    if (Int_BQ76952_ReadDataMemory(BQ76952_DM_VCELL_MODE, data, 2u) != INT_BQ76952_OK)
+    if (!App_BatMan_WriteConfigU16(BQ76952_DM_PROTECTION_CONFIGURATION,
+                                   APP_BATMAN_DM_PROTECTION_CONFIGURATION_DEFAULT) ||
+        !App_BatMan_WriteConfigU16(BQ76952_DM_DEFAULT_ALARM_MASK,
+                                   APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT))
     {
-        /* bring-up optional readback: keep init path running even if this read fails */
-    }
-    else
-    {
-        printf("vcell_mode:0x%04x\r\n", (unsigned int)App_BatMan_ReadU16Le(data));
-    }
-
-    if (Int_BQ76952_ExitConfigUpdate() != INT_BQ76952_OK)
-    {
-        App_OLED_ShowIicStatus(false);
-        printf("bq exit config fail\r\n");
-        return;
+        return false;
     }
 
     /*
-     * 6. 清理启动期告警，关闭均衡，读取一次状态。
+     * FET_CTRL_EN 是 FET 托管的核心开关。APP 后续只发送一次
+     * FET_ENABLE，不再强制 CHG/DSG MOS 状态。
      */
-    data[0] = (uint8_t)(BQ76952_ALARM_INITSTART_MASK |
-                        BQ76952_ALARM_INITCOMP_MASK |
-                        BQ76952_ALARM_FULLSCAN_MASK |
-                        BQ76952_ALARM_ADSCAN_MASK |
-                        BQ76952_ALARM_WAKE_MASK);
-    data[1] = (uint8_t)(((BQ76952_ALARM_INITSTART_MASK |
+    if (!App_BatMan_WriteConfigU8(BQ76952_DM_FET_OPTIONS,
+                                  APP_BATMAN_DM_FET_OPTIONS_DEFAULT) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_CHG_PUMP_CONTROL,
+                                  APP_BATMAN_DM_CHG_PUMP_CONTROL_DEFAULT))
+    {
+        return false;
+    }
+
+    /*
+     * 均衡不再由 host mask 驱动。APP 不写 CB_ACTIVE_CELLS，只保留
+     * BQ 自主管理所需的项目模式配置。
+     */
+    if (!App_BatMan_WriteConfigU8(BQ76952_DM_BALANCING_CONFIGURATION,
+                                  APP_BATMAN_DM_BALANCING_CONFIGURATION_DEFAULT))
+    {
+        return false;
+    }
+
+    /*
+     * FET protection routing 决定哪些安全事件会关断 CHG/DSG。
+     * 这些值和 FET_OPTIONS 放在同一段，便于上板前整体审查 FET 托管。
+     */
+    if (!App_BatMan_WriteConfigU8(BQ76952_DM_ENABLED_PROTECTIONS_A,
+                                  APP_BATMAN_DM_ENABLED_PROTECTIONS_A_DEFAULT) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_ENABLED_PROTECTIONS_B,
+                                  APP_BATMAN_DM_ENABLED_PROTECTIONS_B_DEFAULT) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_ENABLED_PROTECTIONS_C,
+                                  APP_BATMAN_DM_ENABLED_PROTECTIONS_C_DEFAULT) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_CHG_FET_PROTECTIONS_A,
+                                  APP_BATMAN_DM_CHG_FET_PROTECTIONS_A_DEFAULT) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_CHG_FET_PROTECTIONS_B,
+                                  APP_BATMAN_DM_CHG_FET_PROTECTIONS_B_DEFAULT) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_CHG_FET_PROTECTIONS_C,
+                                  APP_BATMAN_DM_CHG_FET_PROTECTIONS_C_DEFAULT) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_DSG_FET_PROTECTIONS_A,
+                                  APP_BATMAN_DM_DSG_FET_PROTECTIONS_A_DEFAULT) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_DSG_FET_PROTECTIONS_B,
+                                  APP_BATMAN_DM_DSG_FET_PROTECTIONS_B_DEFAULT) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_DSG_FET_PROTECTIONS_C,
+                                  APP_BATMAN_DM_DSG_FET_PROTECTIONS_C_DEFAULT))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+/**
+ * @brief 确保 BQ 的 FET 控制状态机已允许运行。
+ *
+ * `FET_ENABLE` 是允许 BQ FET 逻辑工作的 manufacturing subcommand，
+ * 不是强制 MOS 导通命令。执行后 BQ 仍会根据 safety/FET status
+ * 自己决定 CHG/DSG 是否打开。
+ */
+static Int_BQ76952_StatusTypeDef App_BatMan_EnableBqFetControl(void)
+{
+    uint8_t data[2];
+    uint16_t mfg_status;
+    Int_BQ76952_StatusTypeDef ret;
+
+    ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_MANUFACTURING_STATUS, data, 2u);
+    if (ret != INT_BQ76952_OK)
+    {
+        return ret;
+    }
+
+    mfg_status = App_BatMan_ReadU16Le(data);
+    if ((mfg_status & BQ76952_MFG_STATUS_FET_EN_MASK) != 0u)
+    {
+        return INT_BQ76952_OK;
+    }
+
+    return Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_FET_ENABLE);
+}
+
+/**
+ * @brief 清除启动阶段预期出现的告警位。
+ *
+ * INIT/SCAN/WAKE 类告警在启动中很常见，只清这些位可以降低串口噪声，
+ * 同时避免掩盖真正的 safety status。
+ */
+static void App_BatMan_ClearStartupAlarms(void)
+{
+    uint8_t data[2];
+    const uint16_t mask = BQ76952_ALARM_INITSTART_MASK |
                           BQ76952_ALARM_INITCOMP_MASK |
                           BQ76952_ALARM_FULLSCAN_MASK |
                           BQ76952_ALARM_ADSCAN_MASK |
-                          BQ76952_ALARM_WAKE_MASK) >> 8u) & 0xFFu);
+                          BQ76952_ALARM_WAKE_MASK;
+
+    App_BatMan_WriteU16Le(mask, data);
     (void)Int_BQ76952_WriteDirect(BQ76952_CMD_ALARM_STATUS, data, 2u);
-    (void)App_BatMan_StopBalancing();
-
-    /*
-     * 7. 允许 BQ 按保护条件自己管理 FET。
-     *    APP 不再写 FET_CONTROL，只读取状态并由 BQ 保护策略决定开关。
-     */
-    if (App_BatMan_EnableBqFetControl() != INT_BQ76952_OK)
-    {
-        App_OLED_ShowIicStatus(false);
-        printf("bq fet enable fail\r\n");
-        return;
-    }
-
-    /*
-     * 8. 初次采样，给 SOC 和调试变量一个真实起点。
-     */
-    App_BatMan_LoadCellsVoltage();
-    App_BatMan_LoadBatVoltage();
-    App_BatMan_LoadCurrent();
-    App_BatMan_LoadTemperature();
-    App_BatMan_LoadBqStatus();
-    App_BatMan_UpdateFaultState();
-    App_OLED_ShowIicStatus(!s_comm_fault);
-
-    if (cell_avg_mv > 0u)
-    {
-        uint8_t seed_soc = Com_BQ76952_GetPercentByVoltage(cell_avg_mv);
-
-        soc_percent = (float)seed_soc;
-        display_soc_percent = soc_percent;
-        s_coulomb_mah = ((float)APP_BATMAN_CAPACITY_MAH * soc_percent) / 100.0f;
-        s_soc_seeded = true;
-    }
-
-    App_BatMan_ApplyPolicy();
-
-    printf("batman init success\r\n");
 }
 
-void App_BatMan_Task(uint16_t interval_ms)
+/**
+ * @brief 读取 BQ direct command 的 1 字节数据。
+ *
+ * 单次失败只标记当前采样周期通信异常，下一次任务周期会重新尝试。
+ */
+static bool App_BatMan_ReadDirectU8(uint8_t command, uint8_t *value)
 {
-    s_comm_fault = false;
-
-    App_BatMan_LoadCellsVoltage();
-    App_BatMan_LoadBatVoltage();
-    App_BatMan_LoadCurrent();
-    App_BatMan_LoadTemperature();
-    App_BatMan_LoadBqStatus();
-    App_BatMan_UpdateFaultState();
-    App_OLED_ShowIicStatus(!s_comm_fault);
-    App_BatMan_CalcCoulomb(interval_ms);
-    App_BatMan_CalcSoc(interval_ms);
-    App_BatMan_CellBalance();
-    App_BatMan_ApplyPolicy();
-
-    s_debug_ms = (uint16_t)(s_debug_ms + interval_ms);
-    if (s_debug_ms >= APP_BATMAN_DEBUG_PERIOD_MS)
+    if (Int_BQ76952_ReadDirect(command, value, 1u) == INT_BQ76952_OK)
     {
-        s_debug_ms = 0u;
-        App_BatMan_PrintDebug();
+        return true;
     }
+
+    s_comm_fault = true;
+    return false;
 }
 
-void App_BatMan_LoadCellsVoltage(void)
+/**
+ * @brief 读取 BQ direct command 的 2 字节 little-endian 数据。
+ */
+static bool App_BatMan_ReadDirectU16(uint8_t command, uint16_t *value)
 {
-    uint32_t cell_sum_mv = 0u;
     uint8_t data[2];
-    const uint8_t commands[APP_BATMAN_CELL_COUNT] =
+
+    if (Int_BQ76952_ReadDirect(command, data, 2u) == INT_BQ76952_OK)
+    {
+        *value = App_BatMan_ReadU16Le(data);
+        return true;
+    }
+
+    s_comm_fault = true;
+    return false;
+}
+
+/**
+ * @brief 判断温度值是否适合作为 APP 层温度输入。
+ *
+ * TS 通道未接或未正确配置时可能读到极端值。这里过滤掉明显异常值，
+ * 后续用 IC 温度兜底，避免 SOC/SOH 或日志出现 -273C 一类假数据。
+ */
+static bool App_BatMan_IsTempValid(int16_t temp_c)
+{
+    return (temp_c >= -40) && (temp_c <= 100);
+}
+
+/**
+ * @brief 初始化 SOC/SOH 纯算法模块。
+ *
+ * 参数仍放在 APP 层集中表达，便于现场按电芯和热敏实测结果调参。
+ * COM 层只保存算法状态，不知道 BQ、SC 或 OLED 的存在。
+ */
+static void App_BatMan_InitAlgorithms(void)
+{
+    Com_SOC_ConfigTypeDef soc_config = {0};
+    Com_SOH_ConfigTypeDef soh_config = {0};
+
+    soc_config.capacity_mah = APP_BATMAN_CAPACITY_MAH;
+    soc_config.default_soc_percent = APP_BATMAN_DEFAULT_SOC_PERCENT;
+    soc_config.current_sign = COM_SOC_CURRENT_POS_CHARGE;
+    soc_config.current_deadband_ma = APP_BATMAN_SOC_CURRENT_DEADBAND_MA;
+    soc_config.rest_need_ms = APP_BATMAN_SOC_REST_NEED_MS;
+    soc_config.rest_current_ma = APP_BATMAN_SOC_REST_CURRENT_MA;
+    soc_config.rest_voltage_stable_mv = APP_BATMAN_SOC_REST_STABLE_MV;
+    soc_config.r0_ohm = APP_BATMAN_SOC_R0_OHM;
+    soc_config.r1_ohm = APP_BATMAN_SOC_R1_OHM;
+    soc_config.c1_f = APP_BATMAN_SOC_C1_F;
+    soc_config.r2_ohm = APP_BATMAN_SOC_R2_OHM;
+    soc_config.c2_f = APP_BATMAN_SOC_C2_F;
+    soc_config.process_q_soc = APP_BATMAN_SOC_PROCESS_Q_SOC;
+    soc_config.process_q_v = APP_BATMAN_SOC_PROCESS_Q_V1;
+    soc_config.process_q_v1 = APP_BATMAN_SOC_PROCESS_Q_V1;
+    soc_config.process_q_v2 = APP_BATMAN_SOC_PROCESS_Q_V2;
+    soc_config.measure_r_mv = APP_BATMAN_SOC_MEASURE_R_MV;
+    soc_config.dynamic_ekf_enable = (APP_BATMAN_SOC_DYNAMIC_EKF_ENABLE != 0u);
+    soc_config.measure_r_dynamic_mv = APP_BATMAN_SOC_MEASURE_R_DYN_MV;
+    soc_config.residual_reject_mv = APP_BATMAN_SOC_RESIDUAL_REJECT_MV;
+    soc_config.dynamic_current_delta_limit_ma = APP_BATMAN_SOC_DYN_CURR_DELTA_MA;
+    soc_config.dynamic_current_stable_ms = APP_BATMAN_SOC_DYN_CURR_STABLE_MS;
+    soc_config.full_cell_mv = APP_BATMAN_CELL_FULL_MV;
+    soc_config.empty_cell_mv = 3000u;
+    soc_config.full_current_ma = APP_BATMAN_SOC_FULL_CURRENT_MA;
+    soc_config.empty_current_ma = APP_BATMAN_SOC_EMPTY_CURRENT_MA;
+    soc_config.full_anchor_hold_ms = APP_BATMAN_SOC_FULL_ANCHOR_HOLD_MS;
+    soc_config.empty_anchor_hold_ms = APP_BATMAN_SOC_EMPTY_ANCHOR_HOLD_MS;
+    soc_config.display_rise_percent_per_s = APP_BATMAN_SOC_DISPLAY_RISE_PER_S;
+    soc_config.display_fall_percent_per_s = APP_BATMAN_SOC_DISPLAY_FALL_PER_S;
+    Com_SOC_Init(&soc_config);
+
+    soh_config.capacity_mah = APP_BATMAN_CAPACITY_MAH;
+    soh_config.delta_warn_mv = APP_BATMAN_HEALTH_DELTA_WARN_MV;
+    soh_config.temp_warn_c = APP_BATMAN_HEALTH_TEMP_WARN_C;
+    soh_config.cycle_warn_count = 300u;
+    Com_SOH_Init(&soh_config);
+}
+
+/**
+ * @brief 读取 6 串实际电芯电压并计算 min/max/avg/delta。
+ *
+ * 命令表体现了本硬件的稀疏采样映射；维护时不要按连续 Cell1..Cell6
+ * 直觉改写。
+ */
+static void App_BatMan_LoadCellsVoltage(void)
+{
+    static const uint8_t commands[APP_BATMAN_CELL_COUNT] =
     {
         BQ76952_CMD_CELL1_VOLTAGE,
         BQ76952_CMD_CELL2_VOLTAGE,
@@ -550,32 +500,28 @@ void App_BatMan_LoadCellsVoltage(void)
         BQ76952_CMD_CELL12_VOLTAGE,
         BQ76952_CMD_CELL16_VOLTAGE
     };
+    uint8_t i;
+    uint16_t mv;
+    uint32_t sum_mv = 0u;
+    uint8_t valid_count = 0u;
 
+    s_cells_sample_valid = false;
     cell_min_mv = 0xFFFFu;
     cell_max_mv = 0u;
 
-    for (uint8_t i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
+    for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
     {
-        if (Int_BQ76952_ReadDirect(commands[i], data, 2u) != INT_BQ76952_OK)
+        if (!App_BatMan_ReadDirectU16(commands[i], &mv))
         {
-            s_comm_fault = true;
-            printf("load cell voltage fail index:%u\r\n", (unsigned int)i);
             cell_mv[i] = 0u;
             continue;
         }
 
-        cell_mv[i] = App_BatMan_ReadU16Le(data);
-        cell_sum_mv += cell_mv[i];
-
-        if (cell_mv[i] < cell_min_mv)
-        {
-            cell_min_mv = cell_mv[i];
-        }
-
-        if (cell_mv[i] > cell_max_mv)
-        {
-            cell_max_mv = cell_mv[i];
-        }
+        cell_mv[i] = mv;
+        sum_mv += mv;
+        valid_count++;
+        cell_min_mv = (mv < cell_min_mv) ? mv : cell_min_mv;
+        cell_max_mv = (mv > cell_max_mv) ? mv : cell_max_mv;
     }
 
     if (cell_min_mv == 0xFFFFu)
@@ -583,491 +529,480 @@ void App_BatMan_LoadCellsVoltage(void)
         cell_min_mv = 0u;
     }
 
-    cell_avg_mv = (uint16_t)(cell_sum_mv / APP_BATMAN_CELL_COUNT);
+    if (valid_count == APP_BATMAN_CELL_COUNT)
+    {
+        cell_avg_mv = (uint16_t)(sum_mv / valid_count);
+        s_cells_sample_valid = true;
+    }
+    else
+    {
+        cell_avg_mv = 0u;
+    }
     cell_delta_mv = (uint16_t)(cell_max_mv - cell_min_mv);
 }
 
-void App_BatMan_LoadBatVoltage(void)
+/**
+ * @brief 读取电池总压快照。
+ *
+ * 当前 `pack_mv` 暂时镜像 `stack_mv`。若后续需要 PACK/LD pin 电压，
+ * 应新增独立字段，避免复用 `stack_mv` 造成语义混淆。
+ */
+static void App_BatMan_LoadBatVoltage(void)
 {
-    uint8_t data[2];
-    uint16_t raw = 0u;
+    uint16_t raw;
 
-    if (Int_BQ76952_ReadDirect(BQ76952_CMD_STACK_VOLTAGE, data, 2u) != INT_BQ76952_OK)
+    if (App_BatMan_ReadDirectU16(BQ76952_CMD_STACK_VOLTAGE, &raw))
     {
-        s_comm_fault = true;
-        printf("load stack voltage fail\r\n");
-        return;
+        stack_mv = raw;
+        pack_mv = stack_mv;
     }
-
-    raw = App_BatMan_ReadU16Le(data);
-    stack_mv = raw;
-    pack_mv = stack_mv;
-    printf("stack_mv:%lu mv\r\n", (unsigned long)stack_mv);
 }
 
-void App_BatMan_LoadCurrent(void)
+/**
+ * @brief 读取 CC2 电流并转换为 APP 约定方向。
+ *
+ * 当前约定：`current_ma > 0` 表示充电，`current_ma < 0` 表示放电。
+ * 若实测方向相反，只改 `APP_BATMAN_CC2_RAW_POLARITY`。
+ */
+static void App_BatMan_LoadCurrent(void)
 {
-    uint8_t data[2];
-    int16_t raw;
+    uint16_t raw_u16;
 
-    if (Int_BQ76952_ReadDirect(BQ76952_CMD_CC2_CURRENT, data, 2u) != INT_BQ76952_OK)
+    s_current_sample_valid = false;
+    if (App_BatMan_ReadDirectU16(BQ76952_CMD_CC2_CURRENT, &raw_u16))
     {
-        s_comm_fault = true;
-        printf("load current fail\r\n");
-        return;
+        current_ma = (int32_t)((int16_t)raw_u16) * APP_BATMAN_CC2_RAW_POLARITY;
+        current_a = (float)current_ma / 1000.0f;
+        s_current_sample_valid = true;
     }
-
-    raw = (int16_t)App_BatMan_ReadU16Le(data);
-    current_ma = (int32_t)raw * APP_BATMAN_CC2_RAW_POLARITY;
-    current_a = (float)current_ma / 1000.0f;
-
-    printf("current_ma:%ld current_a:%.3f\r\n", (long)current_ma, (double)current_a);
 }
 
-void App_BatMan_LoadTemperature(void)
+/**
+ * @brief 读取 IC/TS 温度并生成 APP 层温度快照。
+ *
+ * TS1/TS3 有效时用于估算 cell temperature；无效时降级为 IC 温度，
+ * 这样 SOH 和日志仍保持可读。
+ */
+static void App_BatMan_LoadTemperature(void)
 {
-    uint8_t data[2];
-    int16_t temp_0p1k;
+    uint16_t raw;
+    int16_t temp;
 
-    if (Int_BQ76952_ReadDirect(BQ76952_CMD_INT_TEMPERATURE, data, 2u) != INT_BQ76952_OK)
+    s_temp_ts1_sample_valid = false;
+    s_temp_ts3_sample_valid = false;
+    s_temp_cell_sample_valid = false;
+
+    if (App_BatMan_ReadDirectU16(BQ76952_CMD_INT_TEMPERATURE, &raw))
     {
-        s_comm_fault = true;
-        printf("load ic temp fail\r\n");
-        return;
+        temp_ic_c = Com_BQ76952_Temp0p1KToC((int16_t)raw);
     }
-    temp_0p1k = (int16_t)App_BatMan_ReadU16Le(data);
-    temp_ic_c = Com_BQ76952_Temp0p1KToC(temp_0p1k);
-
-    if (Int_BQ76952_ReadDirect(BQ76952_CMD_TS1_TEMPERATURE, data, 2u) != INT_BQ76952_OK)
+    if (App_BatMan_ReadDirectU16(BQ76952_CMD_TS1_TEMPERATURE, &raw))
     {
-        s_comm_fault = true;
-        temp_ts1_c = temp_ic_c;
-        printf("load ts1 temp fail\r\n");
+        temp = Com_BQ76952_Temp0p1KToC((int16_t)raw);
+        if (App_BatMan_IsTempValid(temp))
+        {
+            temp_ts1_c = temp;
+            s_temp_ts1_sample_valid = true;
+        }
+        else
+        {
+            temp_ts1_c = temp_ic_c;
+        }
+    }
+    if (App_BatMan_ReadDirectU16(BQ76952_CMD_TS3_TEMPERATURE, &raw))
+    {
+        temp = Com_BQ76952_Temp0p1KToC((int16_t)raw);
+        if (App_BatMan_IsTempValid(temp))
+        {
+            temp_ts3_c = temp;
+            s_temp_ts3_sample_valid = true;
+        }
+        else
+        {
+            temp_ts3_c = temp_ic_c;
+        }
+    }
+
+    if (s_temp_ts1_sample_valid && s_temp_ts3_sample_valid)
+    {
+        temp_cell_c = (int16_t)((temp_ts1_c + temp_ts3_c) / 2);
+        s_temp_cell_sample_valid = true;
+    }
+    else if (s_temp_ts1_sample_valid)
+    {
+        temp_cell_c = temp_ts1_c;
+        s_temp_cell_sample_valid = true;
+    }
+    else if (s_temp_ts3_sample_valid)
+    {
+        temp_cell_c = temp_ts3_c;
+        s_temp_cell_sample_valid = true;
     }
     else
     {
-        temp_0p1k = (int16_t)App_BatMan_ReadU16Le(data);
-        temp_ts1_c = Com_BQ76952_Temp0p1KToC(temp_0p1k);
+        temp_cell_c = temp_ic_c;
     }
-
-    if (Int_BQ76952_ReadDirect(BQ76952_CMD_TS3_TEMPERATURE, data, 2u) != INT_BQ76952_OK)
-    {
-        s_comm_fault = true;
-        temp_ts3_c = temp_ic_c;
-        printf("load ts3 temp fail\r\n");
-    }
-    else
-    {
-        temp_0p1k = (int16_t)App_BatMan_ReadU16Le(data);
-        temp_ts3_c = Com_BQ76952_Temp0p1KToC(temp_0p1k);
-    }
-
-    temp_cell_c = (int16_t)((temp_ts1_c + temp_ts3_c) / 2);
     temp_fet_c = temp_ic_c;
-
-    printf("temp_ic:%dC ts1:%dC ts3:%dC cell:%dC fet:%dC\r\n",
-           temp_ic_c,
-           temp_ts1_c,
-           temp_ts3_c,
-           temp_cell_c,
-           temp_fet_c);
 }
 
-void App_BatMan_LoadBqStatus(void)
+/**
+ * @brief 读取 BQ 告警、FET 和 safety 状态。
+ *
+ * 这些字段用于解释 BQ 为什么打开或关闭 MOS。APP 只记录状态，
+ * 不覆盖 BQ 的保护决策。
+ */
+static void App_BatMan_LoadBqStatus(void)
 {
-    uint8_t data[2];
+    uint16_t value16;
+    uint8_t value8;
 
-    if (Int_BQ76952_ReadDirect(BQ76952_CMD_ALARM_STATUS, data, 2u) != INT_BQ76952_OK)
+    if (App_BatMan_ReadDirectU16(BQ76952_CMD_ALARM_STATUS, &value16))
     {
-        s_comm_fault = true;
-        printf("load alarm status fail\r\n");
+        alarm_status = value16;
     }
-    else
+    if (App_BatMan_ReadDirectU16(BQ76952_CMD_ALARM_RAW_STATUS, &value16))
     {
-        alarm_status = App_BatMan_ReadU16Le(data);
+        alarm_raw = value16;
     }
-
-    if (Int_BQ76952_ReadDirect(BQ76952_CMD_ALARM_RAW_STATUS, data, 2u) != INT_BQ76952_OK)
+    if (App_BatMan_ReadDirectU16(BQ76952_CMD_BATTERY_STATUS, &value16))
     {
-        s_comm_fault = true;
-        printf("load alarm raw fail\r\n");
+        battery_status = value16;
     }
-    else
+    if (App_BatMan_ReadDirectU8(BQ76952_CMD_FET_STATUS, &value8))
     {
-        alarm_raw = App_BatMan_ReadU16Le(data);
+        fet_status = value8;
     }
-
-    if (Int_BQ76952_ReadDirect(BQ76952_CMD_BATTERY_STATUS, data, 2u) != INT_BQ76952_OK)
+    if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_STATUS_A, &value8))
     {
-        s_comm_fault = true;
-        printf("load battery status fail\r\n");
+        safety_status_a = value8;
     }
-    else
+    if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_STATUS_B, &value8))
     {
-        battery_status = App_BatMan_ReadU16Le(data);
+        safety_status_b = value8;
     }
-
-    if (Int_BQ76952_ReadDirect(BQ76952_CMD_FET_STATUS, data, 1u) != INT_BQ76952_OK)
+    if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_STATUS_C, &value8))
     {
-        s_comm_fault = true;
-        printf("load fet status fail\r\n");
-    }
-    else
-    {
-        fet_status = data[0];
-    }
-
-    if (Int_BQ76952_ReadDirect(BQ76952_CMD_SAFETY_STATUS_A, data, 1u) != INT_BQ76952_OK)
-    {
-        s_comm_fault = true;
-        safety_status_a = 0u;
-    }
-    else
-    {
-        safety_status_a = data[0];
-    }
-
-    if (Int_BQ76952_ReadDirect(BQ76952_CMD_SAFETY_STATUS_B, data, 1u) != INT_BQ76952_OK)
-    {
-        s_comm_fault = true;
-        safety_status_b = 0u;
-    }
-    else
-    {
-        safety_status_b = data[0];
-    }
-
-    if (Int_BQ76952_ReadDirect(BQ76952_CMD_SAFETY_STATUS_C, data, 1u) != INT_BQ76952_OK)
-    {
-        s_comm_fault = true;
-        safety_status_c = 0u;
-    }
-    else
-    {
-        safety_status_c = data[0];
+        safety_status_c = value8;
     }
 }
 
-void App_BatMan_UpdateFaultState(void)
+/**
+ * @brief 更新 APP 层故障摘要。
+ *
+ * 这是显示/日志用的软件摘要，不是硬件保护动作。通信失败、明显异常
+ * 电芯电压或 safety status 非零都会让 `fault_active` 置位。
+ */
+static void App_BatMan_UpdateFaultState(void)
 {
-    bool cell_voltage_fault = false;
-    bool safety_fault = false;
+    uint8_t i;
+    bool cell_fault = false;
+    bool safety_fault;
 
-    for (uint8_t i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
+    for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
     {
         if ((cell_mv[i] < APP_BATMAN_CELL_VALID_MIN_MV) ||
             (cell_mv[i] > APP_BATMAN_CELL_VALID_MAX_MV))
         {
-            cell_voltage_fault = true;
-            printf("cell voltage fault index:%u mv:%u\r\n",
-                   (unsigned int)i,
-                   (unsigned int)cell_mv[i]);
+            cell_fault = true;
         }
     }
 
     safety_fault = ((safety_status_a != 0u) ||
                     (safety_status_b != 0u) ||
                     (safety_status_c != 0u));
-
-    fault_active = s_comm_fault || cell_voltage_fault || safety_fault;
-    charge_allowed = s_charge_request && !fault_active;
-    discharge_allowed = s_discharge_request && !fault_active;
-
-    if (safety_fault)
-    {
-        printf("safety_a:%02x safety_b:%02x safety_c:%02x\r\n",
-               safety_status_a,
-               safety_status_b,
-               safety_status_c);
-    }
+    fault_active = s_comm_fault || cell_fault || safety_fault;
 }
 
-void App_BatMan_CalcCoulomb(uint16_t delta_ms)
+/**
+ * @brief 用平均单体电压给 SOC 初值播种。
+ *
+ * OCV 估算只有在接近静置时最可靠，但比固定 50% 更适合作为开机初值。
+ */
+static void App_BatMan_SeedSoc(void)
 {
-    float delta_mah;
+    Com_SOC_SampleTypeDef sample;
+    Com_SOC_ResultTypeDef result;
 
-    delta_mah = ((float)current_ma * (float)delta_ms) / 3600000.0f;
-    s_coulomb_mah += delta_mah;
-
-    if (s_coulomb_mah < 0.0f)
+    if (!s_cells_sample_valid || (cell_avg_mv == 0u))
     {
-        s_coulomb_mah = 0.0f;
-    }
-    else if (s_coulomb_mah > (float)APP_BATMAN_CAPACITY_MAH)
-    {
-        s_coulomb_mah = (float)APP_BATMAN_CAPACITY_MAH;
-    }
-}
-
-void App_BatMan_CalcSoc(uint16_t interval_ms)
-{
-    float coulomb_soc;
-    float target_soc;
-    float alpha;
-    uint8_t ocv_soc;
-
-    (void)interval_ms;
-
-    if (!s_soc_seeded)
-    {
-        ocv_soc = Com_BQ76952_GetPercentByVoltage(cell_avg_mv);
-        soc_percent = (float)ocv_soc;
-        display_soc_percent = soc_percent;
-        s_coulomb_mah = ((float)APP_BATMAN_CAPACITY_MAH * soc_percent) / 100.0f;
-        s_soc_seeded = true;
-    }
-
-    coulomb_soc = (s_coulomb_mah / (float)APP_BATMAN_CAPACITY_MAH) * 100.0f;
-    if (coulomb_soc < 0.0f)
-    {
-        coulomb_soc = 0.0f;
-    }
-    else if (coulomb_soc > 100.0f)
-    {
-        coulomb_soc = 100.0f;
-    }
-
-    target_soc = coulomb_soc;
-
-    /*
-     * 低电流时把 OCV 表轻轻拉进来，保留旧项目那种“电流积分 + 电压修正”的味道。
-     * 这里不做厚 EKF，只做适合教学和 bring-up 的轻量融合。
-     */
-    if ((current_a >= -APP_BATMAN_CURRENT_LOW_CURRENT_A) &&
-        (current_a <= APP_BATMAN_CURRENT_LOW_CURRENT_A) &&
-        (cell_avg_mv > 0u))
-    {
-        ocv_soc = Com_BQ76952_GetPercentByVoltage(cell_avg_mv);
-        target_soc = (0.7f * coulomb_soc) + (0.3f * (float)ocv_soc);
-    }
-
-    soc_percent = target_soc;
-
-    if (current_a > 0.01f)
-    {
-        alpha = APP_BATMAN_SOC_BLEND_ALPHA_CHG;
-    }
-    else if (current_a < -0.01f)
-    {
-        alpha = APP_BATMAN_SOC_BLEND_ALPHA_DSG;
-    }
-    else
-    {
-        alpha = APP_BATMAN_SOC_BLEND_ALPHA_IDLE;
-    }
-
-    if (display_soc_percent == 0.0f)
-    {
-        display_soc_percent = soc_percent;
-    }
-    else
-    {
-        float candidate = display_soc_percent + alpha * (soc_percent - display_soc_percent);
-
-        if ((current_a > 0.01f) && (candidate < display_soc_percent))
-        {
-            candidate = display_soc_percent;
-        }
-        else if ((current_a < -0.01f) && (candidate > display_soc_percent))
-        {
-            candidate = display_soc_percent;
-        }
-
-        if (candidate < 0.0f)
-        {
-            candidate = 0.0f;
-        }
-        else if (candidate > 100.0f)
-        {
-            candidate = 100.0f;
-        }
-
-        display_soc_percent = candidate;
-    }
-
-    soc_percent = display_soc_percent;
-}
-
-void App_BatMan_CellBalance(void)
-{
-    uint8_t cell_to_balance[APP_BATMAN_CELL_COUNT];
-    uint16_t min_voltage_mv = 5000u;
-    uint16_t start_delta_mv;
-    uint8_t best_balance_index = APP_BATMAN_CELL_COUNT;
-    uint16_t best_balance_mv = 0u;
-    bool has_balance_cell = false;
-    uint8_t i;
-
-    for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
-    {
-        cell_to_balance[i] = 0u;
-    }
-
-    if (fault_active ||
-        (temp_cell_c < APP_BATMAN_BALANCE_MIN_TEMP_C) ||
-        (temp_cell_c > APP_BATMAN_BALANCE_MAX_TEMP_C))
-    {
-        s_balance_active = false;
-        balance_mask = 0u;
-        (void)App_BatMan_StopBalancing();
         return;
     }
 
-    for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
-    {
-        if (cell_mv[i] < min_voltage_mv)
-        {
-            min_voltage_mv = cell_mv[i];
-        }
-    }
+    sample.interval_ms = 0u;
+    sample.current_valid = false;
+    sample.current_ma = 0;
+    sample.cells_valid = true;
+    sample.cell_min_mv = cell_min_mv;
+    sample.cell_max_mv = cell_max_mv;
+    sample.cell_avg_mv = cell_avg_mv;
+    sample.temp_valid = s_temp_cell_sample_valid;
+    sample.temp_c = temp_cell_c;
+    sample.soh_valid = (soh_confidence_percent >= 50u);
+    sample.soh_percent = soh_percent;
+    Com_SOC_Update(&sample);
 
-    start_delta_mv = s_balance_active ? APP_BATMAN_BALANCE_STOP_DELTA_MV :
-                                        APP_BATMAN_BALANCE_START_DELTA_MV;
-
-    for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
-    {
-        if ((cell_mv[i] >= APP_BATMAN_BALANCE_MIN_CELL_MV) &&
-            ((uint16_t)(cell_mv[i] - min_voltage_mv) >= start_delta_mv))
-        {
-            cell_to_balance[i] = 1u;
-        }
-    }
-
-    for (i = 0u; i < (APP_BATMAN_CELL_COUNT - 1u); i++)
-    {
-        if ((cell_to_balance[i] != 0u) && (cell_to_balance[i + 1u] != 0u))
-        {
-            if (cell_mv[i] < cell_mv[i + 1u])
-            {
-                cell_to_balance[i] = 0u;
-            }
-            else
-            {
-                cell_to_balance[i + 1u] = 0u;
-            }
-        }
-    }
-
-    for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
-    {
-        if ((cell_to_balance[i] != 0u) && (cell_mv[i] > best_balance_mv))
-        {
-            best_balance_mv = cell_mv[i];
-            best_balance_index = i;
-        }
-    }
-
-    for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
-    {
-        if (i != best_balance_index)
-        {
-            cell_to_balance[i] = 0u;
-        }
-    }
-
-    for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
-    {
-        if (cell_to_balance[i] != 0u)
-        {
-            has_balance_cell = true;
-        }
-    }
-
-    if (!has_balance_cell)
-    {
-        s_balance_active = false;
-        balance_mask = 0u;
-        (void)App_BatMan_StopBalancing();
-        return;
-    }
-
-    s_balance_active = true;
-    balance_mask = App_BatMan_PhysicalBalanceMaskToBqMask(cell_to_balance);
-    if (App_BatMan_SetBalanceMask(balance_mask) != INT_BQ76952_OK)
-    {
-        /*
-         * 这里直接写 host balancing mask，失败时就关掉均衡并留给打印输出。
-         * 由于是 bring-up / 教学版本，优先让流程清晰，而不是把错误码传一整层。
-         */
-        s_balance_active = false;
-        balance_mask = 0u;
-        (void)App_BatMan_StopBalancing();
-        printf("set balance mask fail\r\n");
-        return;
-    }
+    Com_SOC_GetResult(&result);
+    soc_percent = result.soc_percent;
+    display_soc_percent = result.display_percent;
+    soc_confidence_percent = result.confidence_percent;
+    soc_residual_mv = result.residual_mv;
+    soc_kalman_gain = result.kalman_gain_soc;
+    soc_p = result.p_soc;
+    soc_active_capacity_mah = result.active_capacity_mah;
 }
 
-void App_BatMan_ApplyPolicy(void)
+/**
+ * @brief 更新轻量 SOC 估算。
+ *
+ * 设计意图：
+ * - 用 CC2 电流做库仑积分；
+ * - 低电流时用 OCV 表轻微拉回；
+ * - 显示值做滤波，避免 OLED/Linux 看到跳变。
+ */
+static void App_BatMan_UpdateSoc(uint32_t interval_ms)
 {
-    /*
-     * FET 控制权交给 BQ76952：
-     * - APP 不再写 FET_CONTROL / ALL_FETS_OFF；
-     * - charge_allowed / discharge_allowed 只用于状态汇报；
-     * - 发生故障时只停均衡，功率 FET 由 BQ 保护矩阵处理。
-     */
-    if (fault_active)
-    {
-        if (s_balance_active || (balance_mask != 0u))
-        {
-            s_balance_active = false;
-            balance_mask = 0u;
-            (void)App_BatMan_StopBalancing();
-        }
-    }
+    Com_SOC_SampleTypeDef sample;
+    Com_SOC_ResultTypeDef result;
+
+    sample.interval_ms = interval_ms;
+    sample.current_valid = s_current_sample_valid;
+    sample.current_ma = current_ma;
+    sample.cells_valid = s_cells_sample_valid;
+    sample.cell_min_mv = cell_min_mv;
+    sample.cell_max_mv = cell_max_mv;
+    sample.cell_avg_mv = cell_avg_mv;
+    sample.temp_valid = s_temp_cell_sample_valid;
+    sample.temp_c = temp_cell_c;
+    sample.soh_valid = (soh_confidence_percent >= 50u);
+    sample.soh_percent = soh_percent;
+    Com_SOC_Update(&sample);
+
+    Com_SOC_GetResult(&result);
+    soc_percent = result.soc_percent;
+    display_soc_percent = result.display_percent;
+    soc_confidence_percent = result.confidence_percent;
+    soc_residual_mv = result.residual_mv;
+    soc_kalman_gain = result.kalman_gain_soc;
+    soc_p = result.p_soc;
+    soc_active_capacity_mah = result.active_capacity_mah;
 }
 
-void App_BatMan_PrintDebug(void)
+/**
+ * @brief 更新健康趋势计数。
+ *
+ * 这不是标定过的 SOH 算法，只记录可长期观察的压力指标：吞吐量、
+ * 等效循环、最大压差、最高温度和 safety fault 次数。
+ */
+static void App_BatMan_UpdateHealth(uint32_t interval_ms)
 {
-    printf("stack:%lu mv pack:%lu mv current:%ld ma temp_ic:%d temp_ts1:%d temp_ts3:%d temp_cell:%d temp_fet:%d alarm:%04x raw:%04x batt:%04x fet:%02x safety:%02x/%02x/%02x bal:%04x soc:%.1f%% fault:%d chg:%d dsg:%d\r\n",
+    Com_SOH_SampleTypeDef sample;
+    Com_SOH_ResultTypeDef result;
+
+    sample.interval_ms = interval_ms;
+    sample.current_valid = s_current_sample_valid;
+    sample.current_ma = current_ma;
+    sample.cells_valid = s_cells_sample_valid;
+    sample.cell_delta_mv = cell_delta_mv;
+    sample.temp_cell_valid = s_temp_cell_sample_valid;
+    sample.temp_cell_c = temp_cell_c;
+    sample.safety_status_a = safety_status_a;
+    sample.safety_status_b = safety_status_b;
+    sample.safety_status_c = safety_status_c;
+    Com_SOH_Update(&sample);
+
+    Com_SOH_GetResult(&result);
+    charge_throughput_mah = result.charge_throughput_mah;
+    discharge_throughput_mah = result.discharge_throughput_mah;
+    cycle_count = result.cycle_count;
+    soh_percent = result.soh_percent;
+    soh_confidence_percent = result.confidence_percent;
+}
+
+/**
+ * @brief 执行一次完整 BQ 采样。
+ *
+ * 固定采样顺序便于对比不同固件版本的串口日志。
+ */
+static void App_BatMan_Sample(void)
+{
+    App_BatMan_LoadCellsVoltage();
+    App_BatMan_LoadBatVoltage();
+    App_BatMan_LoadCurrent();
+    App_BatMan_LoadTemperature();
+    App_BatMan_LoadBqStatus();
+    App_BatMan_UpdateFaultState();
+}
+
+/**
+ * @brief 输出一行紧凑调试信息。
+ *
+ * 当前版本面向持续运行，不再每秒逐节刷屏，避免串口日志过载。
+ */
+static void App_BatMan_PrintDebug(void)
+{
+    printf("bat cell:%u/%u/%u d:%u stack:%lu curr:%ld temp:%d fet:%02x safe:%02x/%02x/%02x soc:%.1f sc:%u res:%.1f k:%.3f p:%.6f soh:%u cyc:%lu fault:%u\r\n",
+           (unsigned int)cell_min_mv,
+           (unsigned int)cell_avg_mv,
+           (unsigned int)cell_max_mv,
+           (unsigned int)cell_delta_mv,
            (unsigned long)stack_mv,
-           (unsigned long)pack_mv,
            (long)current_ma,
-           temp_ic_c,
-           temp_ts1_c,
-           temp_ts3_c,
            temp_cell_c,
-           temp_fet_c,
-           (unsigned int)alarm_status,
-           (unsigned int)alarm_raw,
-           (unsigned int)battery_status,
-           (unsigned int)fet_status,
+           fet_status,
            safety_status_a,
            safety_status_b,
            safety_status_c,
-           (unsigned int)balance_mask,
            (double)display_soc_percent,
-           fault_active ? 1 : 0,
-           charge_allowed ? 1 : 0,
-           discharge_allowed ? 1 : 0);
+           soc_confidence_percent,
+           (double)soc_residual_mv,
+           (double)soc_kalman_gain,
+           (double)soc_p,
+           soh_percent,
+           (unsigned long)cycle_count,
+           fault_active ? 1u : 0u);
+}
 
-    for (uint8_t i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
+/**
+ * @brief 初始化 BQ76952 APP 层。
+ *
+ * 流程顺序不能随意调整：
+ * 1. 先复位 APP 快照和 OLED 状态；
+ * 2. 初始化板级 BQ 通信并设置 CRC 模式；
+ * 3. reset BQ 并读取 Device Number 验证 I2C/协议；
+ * 4. 进入 ConfigUpdate 写 Data Memory；
+ * 5. 退出 ConfigUpdate 后清启动告警并执行 FET_ENABLE；
+ * 6. 采样一次，给上层提供首帧有效快照。
+ */
+void App_BatMan_Init(void)
+{
+    uint8_t data[2];
+    uint16_t device_number;
+    Int_BQ76952_StatusTypeDef ret;
+
+    /* OLED 先显示 FAIL，直到 Device Number 读取成功。 */
+    App_BatMan_ResetState();
+    App_BatMan_InitAlgorithms();
+    App_OLED_ShowIicStatus(false);
+
+    /*
+     * CRC 模式必须在第一条 BQ 命令前确定；主从 CRC 设置不一致时，
+     * 后续读写会表现为协议失败。
+     */
+    Int_BQ76952_InitBoard();
+    Int_BQ76952_SetCrcEnabled(APP_BATMAN_CRC_BOOT_ENABLE != 0u);
+
+    /*
+     * reset/wake 失败时不继续写配置，避免芯片处于未知状态时留下半配置。
+     */
+    ret = Int_BQ76952_Reset();
+    if (ret != INT_BQ76952_OK)
     {
-        printf("cell_mv[%u]:%u mv\r\n",
-               (unsigned int)i,
-               (unsigned int)cell_mv[i]);
+        printf("bq reset fail ret:%d hal:0x%08lx\r\n",
+               (int)ret,
+               (unsigned long)Int_BQ76952_GetLastHalError());
+        return;
     }
+    HAL_Delay(APP_BATMAN_BQ_RESET_SETTLE_MS);
+
+    /*
+     * Device Number 是通信链路的第一道硬确认：地址、subcommand 帧和
+     * 读回长度都必须正确。
+     */
+    ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_DEVICE_NUMBER, data, 2u);
+    if (ret != INT_BQ76952_OK)
+    {
+        printf("bq device fail ret:%d hal:0x%08lx\r\n",
+               (int)ret,
+               (unsigned long)Int_BQ76952_GetLastHalError());
+        return;
+    }
+
+    device_number = App_BatMan_ReadU16Le(data);
+    printf("bq ok dev:0x%04x crc:%u\r\n",
+           (unsigned int)device_number,
+           Int_BQ76952_IsCrcEnabled() ? 1u : 0u);
+    App_OLED_ShowIicStatus(true);
+
+    /*
+     * Data Memory 写入必须包在 ConfigUpdate 内。ConfigUpdate 未退出前，
+     * 不做正常采样，也不执行 FET_ENABLE。
+     */
+    if (Int_BQ76952_EnterConfigUpdate() != INT_BQ76952_OK)
+    {
+        printf("bq cfg enter fail\r\n");
+        App_OLED_ShowIicStatus(false);
+        return;
+    }
+
+    if (!App_BatMan_ConfigBq())
+    {
+        printf("bq cfg write fail\r\n");
+        App_OLED_ShowIicStatus(false);
+        (void)Int_BQ76952_ExitConfigUpdate();
+        return;
+    }
+    /*
+     * Power Config 显示在 OLED 上，用作现场快速确认 Data Memory 读链路。
+     */
+    if (Int_BQ76952_ReadDataMemory(BQ76952_DM_POWER_CONFIG, data, 2u) == INT_BQ76952_OK)
+    {
+        s_power_config = App_BatMan_ReadU16Le(data);
+        App_OLED_ShowBqIicPowerConfig(true, s_power_config);
+        printf("bq power_config:0x%04x\r\n", (unsigned int)s_power_config);
+    }
+
+    if (Int_BQ76952_ExitConfigUpdate() != INT_BQ76952_OK)
+    {
+        printf("bq cfg exit fail\r\n");
+        App_OLED_ShowIicStatus(false);
+        return;
+    }
+
+    /*
+     * ConfigUpdate 退出后，只清启动噪声告警，然后允许 BQ FET 状态机运行。
+     * APP 不直接强制 CHG/DSG 导通。
+     */
+    App_BatMan_ClearStartupAlarms();
+    if (App_BatMan_EnableBqFetControl() != INT_BQ76952_OK)
+    {
+        printf("bq fet enable fail\r\n");
+        App_OLED_ShowIicStatus(false);
+        return;
+    }
+
+    /*
+     * 初始化成功后立即采样一次，避免 UART/OLED/CAN 首帧仍是全零快照。
+     */
+    App_BatMan_Sample();
+    App_BatMan_UpdateHealth(0u);
+    App_BatMan_UpdateSoc(0u);
+    App_OLED_ShowIicStatus(!s_comm_fault);
+    printf("batman init ok\r\n");
 }
 
-void App_BatMan_SetChargeState(uint8_t charge_state)
+/**
+ * @brief BQ76952 周期任务。
+ *
+ * 该任务只从主循环调用；若未来由 RTOS 多任务读取这些全局快照，需要
+ * 引入 snapshot 或临界区，而不是简单依赖 volatile。
+ */
+void App_BatMan_Task(uint32_t interval_ms)
 {
-    s_charge_request = (charge_state != 0u);
-    charge_allowed = s_charge_request && !fault_active;
-    App_BatMan_ApplyPolicy();
-}
+    /*
+     * 通信故障按采样周期计算。瞬时 I2C 异常应出现在当次日志中，
+     * 但不永久污染后续正常采样。
+     */
+    s_comm_fault = false;
 
-void App_BatMan_SetDischargeState(uint8_t discharge_state)
-{
-    s_discharge_request = (discharge_state != 0u);
-    discharge_allowed = s_discharge_request && !fault_active;
-    App_BatMan_ApplyPolicy();
-}
+    App_BatMan_Sample();
+    App_BatMan_UpdateHealth(interval_ms);
+    App_BatMan_UpdateSoc(interval_ms);
+    App_OLED_ShowIicStatus(!s_comm_fault);
 
-void App_BatMan_SetChargeAllowed(bool allowed)
-{
-    App_BatMan_SetChargeState(allowed ? 1u : 0u);
-}
-
-void App_BatMan_SetDischargeAllowed(bool allowed)
-{
-    App_BatMan_SetDischargeState(allowed ? 1u : 0u);
+    s_debug_ms += interval_ms;
+    if (s_debug_ms >= APP_BATMAN_DEBUG_PERIOD_MS)
+    {
+        s_debug_ms = 0u;
+        App_BatMan_PrintDebug();
+    }
 }

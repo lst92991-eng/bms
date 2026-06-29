@@ -3,42 +3,6 @@
 #include "Int_SC8815_BSP.h"
 #include "main.h"
 
-#ifndef INT_SC8815_SCL_GPIO_PORT
-#define INT_SC8815_SCL_GPIO_PORT GPIOA
-#endif
-
-#ifndef INT_SC8815_SCL_PIN
-#define INT_SC8815_SCL_PIN GPIO_PIN_7
-#endif
-
-#ifndef INT_SC8815_SDA_GPIO_PORT
-#define INT_SC8815_SDA_GPIO_PORT GPIOA
-#endif
-
-#ifndef INT_SC8815_SDA_PIN
-#define INT_SC8815_SDA_PIN GPIO_PIN_6
-#endif
-
-#ifndef INT_SC8815_CE_N_GPIO_PORT
-#define INT_SC8815_CE_N_GPIO_PORT GPIOB
-#endif
-
-#ifndef INT_SC8815_CE_N_PIN
-#define INT_SC8815_CE_N_PIN GPIO_PIN_1
-#endif
-
-#ifndef INT_SC8815_PSTOP_GPIO_PORT
-#define INT_SC8815_PSTOP_GPIO_PORT GPIOB
-#endif
-
-#ifndef INT_SC8815_PSTOP_PIN
-#define INT_SC8815_PSTOP_PIN GPIO_PIN_0
-#endif
-
-#ifndef INT_SC8815_IIC_DELAY_CYCLES
-#define INT_SC8815_IIC_DELAY_CYCLES (32u)
-#endif
-
 #define INT_SC8815_REG_MAX                       SC8815_REG_RESERVED_1B
 #define INT_SC8815_CTRL3_STANDBY_CHANGE_MASK     (SC8815_CTRL3_SET_ILIM_BW_SEL_MASK | \
                                                    SC8815_CTRL3_SET_LOOP_SET_MASK | \
@@ -48,38 +12,38 @@ static bool s_sc8815_standby = true;
 
 static void Int_SC8815_IicDelay(void)
 {
-    for (volatile uint32_t i = 0u; i < INT_SC8815_IIC_DELAY_CYCLES; i++)
+    for (volatile uint32_t i = 0u; i < SC8815_SW_I2C_DELAY_CYCLES; i++)
     {
     }
 }
 
 static void Int_SC8815_IicSclHigh(void)
 {
-    HAL_GPIO_WritePin(INT_SC8815_SCL_GPIO_PORT, INT_SC8815_SCL_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, GPIO_PIN_SET);
     Int_SC8815_IicDelay();
 }
 
 static void Int_SC8815_IicSclLow(void)
 {
-    HAL_GPIO_WritePin(INT_SC8815_SCL_GPIO_PORT, INT_SC8815_SCL_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, GPIO_PIN_RESET);
     Int_SC8815_IicDelay();
 }
 
 static void Int_SC8815_IicSdaHigh(void)
 {
-    HAL_GPIO_WritePin(INT_SC8815_SDA_GPIO_PORT, INT_SC8815_SDA_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, GPIO_PIN_SET);
     Int_SC8815_IicDelay();
 }
 
 static void Int_SC8815_IicSdaLow(void)
 {
-    HAL_GPIO_WritePin(INT_SC8815_SDA_GPIO_PORT, INT_SC8815_SDA_PIN, GPIO_PIN_RESET);
+    HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, GPIO_PIN_RESET);
     Int_SC8815_IicDelay();
 }
 
 static bool Int_SC8815_IicSdaRead(void)
 {
-    return HAL_GPIO_ReadPin(INT_SC8815_SDA_GPIO_PORT, INT_SC8815_SDA_PIN) == GPIO_PIN_SET;
+    return HAL_GPIO_ReadPin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin) == GPIO_PIN_SET;
 }
 
 static void Int_SC8815_BusStart(void)
@@ -479,8 +443,8 @@ static uint16_t Int_SC8815_CombineAdcRaw(uint8_t high, uint8_t low)
 
 Int_SC8815_StatusTypeDef Int_SC8815_InitSafe(void)
 {
-    HAL_GPIO_WritePin(INT_SC8815_PSTOP_GPIO_PORT, INT_SC8815_PSTOP_PIN, GPIO_PIN_SET);
-    HAL_GPIO_WritePin(INT_SC8815_CE_N_GPIO_PORT, INT_SC8815_CE_N_PIN, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SC8815_PSTOP_GPIO_Port, SC8815_PSTOP_Pin, GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SC8815_CE_N_GPIO_Port, SC8815_CE_N_Pin, GPIO_PIN_SET);
 
     s_sc8815_standby = true;
 
@@ -492,8 +456,8 @@ Int_SC8815_StatusTypeDef Int_SC8815_InitSafe(void)
 
 Int_SC8815_StatusTypeDef Int_SC8815_SetChipEnabled(bool enabled)
 {
-    HAL_GPIO_WritePin(INT_SC8815_CE_N_GPIO_PORT,
-                      INT_SC8815_CE_N_PIN,
+    HAL_GPIO_WritePin(SC8815_CE_N_GPIO_Port,
+                      SC8815_CE_N_Pin,
                       enabled ? GPIO_PIN_RESET : GPIO_PIN_SET);
 
     return INT_SC8815_OK;
@@ -501,8 +465,8 @@ Int_SC8815_StatusTypeDef Int_SC8815_SetChipEnabled(bool enabled)
 
 Int_SC8815_StatusTypeDef Int_SC8815_SetStandby(bool standby)
 {
-    HAL_GPIO_WritePin(INT_SC8815_PSTOP_GPIO_PORT,
-                      INT_SC8815_PSTOP_PIN,
+    HAL_GPIO_WritePin(SC8815_PSTOP_GPIO_Port,
+                      SC8815_PSTOP_Pin,
                       standby ? GPIO_PIN_SET : GPIO_PIN_RESET);
     s_sc8815_standby = standby;
 

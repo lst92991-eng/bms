@@ -18,6 +18,7 @@
 #define SC8815_I2C_ADDR_READ_8BIT                    (0xE9u)
 #define SC8815_I2C_STANDARD_MODE_HZ                  (100000u)
 #define SC8815_I2C_FAST_MODE_HZ                      (400000u)
+#define SC8815_SW_I2C_DELAY_CYCLES                   (32u)     /* 软件 I2C 半周期粗延时，后续上逻辑分析仪后再按波形校准。 */
 
 /* ==================== 项目硬件常量 ==================== */
 

@@ -55,10 +55,10 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, SC8815_SW_I2C_SDA_Pin|SC8815_SW_I2C_SCL_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(SC8815_PSTOP_GPIO_Port, SC8815_PSTOP_Pin, GPIO_PIN_SET);
+  HAL_GPIO_WritePin(GPIOB, SC8815_PSTOP_Pin|SC8815_CE_N_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
-  HAL_GPIO_WritePin(GPIOB, SC8815_CE_N_Pin|LED_RED_Pin|LED_GREEN_Pin, GPIO_PIN_RESET);
+  HAL_GPIO_WritePin(GPIOB, LED_RED_Pin|LED_GREEN_Pin, GPIO_PIN_RESET);
 
   /*Configure GPIO pin : SC8815_INT_Pin */
   GPIO_InitStruct.Pin = SC8815_INT_Pin;
@@ -83,7 +83,7 @@ void MX_GPIO_Init(void)
   /*Configure GPIO pin : SC8815_CE_N_Pin */
   GPIO_InitStruct.Pin = SC8815_CE_N_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
-  GPIO_InitStruct.Pull = GPIO_PULLDOWN;
+  GPIO_InitStruct.Pull = GPIO_PULLUP;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(SC8815_CE_N_GPIO_Port, &GPIO_InitStruct);
 
@@ -94,17 +94,17 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : BMS_WAKE_DRV_Pin */
-  GPIO_InitStruct.Pin = BMS_WAKE_DRV_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(BMS_WAKE_DRV_GPIO_Port, &GPIO_InitStruct);
-
   /*Configure GPIO pin : BMS_MUX_BTN_Pin */
   GPIO_InitStruct.Pin = BMS_MUX_BTN_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(BMS_MUX_BTN_GPIO_Port, &GPIO_InitStruct);
+
+  /*Configure GPIO pin : BMS_WAKE_DRV_Pin */
+  GPIO_InitStruct.Pin = BMS_WAKE_DRV_Pin;
+  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
+  GPIO_InitStruct.Pull = GPIO_NOPULL;
+  HAL_GPIO_Init(BMS_WAKE_DRV_GPIO_Port, &GPIO_InitStruct);
 
   /*Configure GPIO pin : BQ_INT_Pin */
   GPIO_InitStruct.Pin = BQ_INT_Pin;

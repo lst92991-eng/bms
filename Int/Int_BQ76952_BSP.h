@@ -31,6 +31,7 @@
 #define BQ76952_I2C_CRC_DEFAULT_ENABLED         (0u)      /* Bring-up default: current BQ board is responding in non-CRC I2C mode. */
 #define BQ76952_I2C_STANDARD_MODE_HZ            (100000u) /* 支持 100 kHz I2C；上拉和线长需硬件确认。 */
 #define BQ76952_I2C_FAST_MODE_HZ                (400000u) /* 默认 fast mode 可用 400 kHz；bring-up 阶段可先降速。 */
+#define BQ76952_WAKE_SETTLE_MS                  (10u)     /* 当前 PB3 不主动驱动，仅保留上电/复位后的稳定等待窗口。 */
 
 #define BQ76952_CRC8_POLY                       (0x07u)   /* I2C CRC 多项式 x^8+x^2+x+1；是否启用由 COM 按项目通信格式设置。 */
 #define BQ76952_CRC8_INIT                       (0x00u)   /* I2C CRC 初始值 0x00；本项目默认启用，INT 层仍保留开关。 */

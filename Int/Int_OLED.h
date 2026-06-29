@@ -1,15 +1,15 @@
-#ifndef __OLED_H
-#define __OLED_H
+#ifndef INT_OLED_H
+#define INT_OLED_H
 
-#include "gpio.h"
+#include <stdint.h>
+
 #include "i2c.h"
-#include "stdlib.h"
-#include "string.h"
-// I2C地址
-#define OLED_I2C_ADDRESS 0x78
 
-#define OLED_CMD 0  // 命令
-#define OLED_DATA 1 // 数据
+/* SSD1315/SSD1306 类 0.96 寸 OLED，I2C 写地址为 0x78。 */
+#define OLED_I2C_ADDRESS  0x78
+
+#define OLED_CMD   0
+#define OLED_DATA  1
 
 void Inf_OLED_ColorTurn(uint8_t i);
 void Inf_OLED_DisplayTurn(uint8_t i);

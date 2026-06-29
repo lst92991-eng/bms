@@ -66,4 +66,25 @@ int16_t Com_BQ76952_Temp0p1KToC(int16_t temp_0p1k);
  */
 uint8_t Com_BQ76952_GetPercentByVoltage(uint16_t cell_mv);
 
+/**
+ * @brief 根据单体 OCV 查询 SOC，精度 0.01%。
+ * @param cell_mv 单体开路电压或接近开路电压，单位 mV。
+ * @return 0~10000，表示 0.00%~100.00%。
+ */
+uint16_t Com_BQ76952_GetSoc0p01ByVoltage(uint16_t cell_mv);
+
+/**
+ * @brief 根据 SOC 反查单体 OCV。
+ * @param soc_0p01 0~10000，表示 0.00%~100.00%。
+ * @return 单体 OCV，单位 mV。
+ */
+uint16_t Com_BQ76952_GetVoltageBySoc0p01(uint16_t soc_0p01);
+
+/**
+ * @brief 获取 OCV 曲线在当前 SOC 附近的斜率。
+ * @param soc_0p01 0~10000，表示 0.00%~100.00%。
+ * @return 单位 mV/%SOC，用于 EKF 观测矩阵 H。
+ */
+float Com_BQ76952_GetOcvSlopeMvPerPercent(uint16_t soc_0p01);
+
 #endif /* COM_BQ76952_H */

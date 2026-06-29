@@ -121,11 +121,9 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_EnterConfigUpdate(void);
  */
 Int_BQ76952_StatusTypeDef Int_BQ76952_ExitConfigUpdate(void);
 
-#ifdef INT_BQ76952_ENABLE_BRINGUP_API
 /**
  * @brief 读取器件编号，用于 bring-up 确认芯片响应。
  */
 Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDeviceNumber(uint16_t *device_number);
-#endif
 
 #endif /* INT_BQ76952_H */

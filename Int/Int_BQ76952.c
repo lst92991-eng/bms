@@ -7,34 +7,6 @@
 #include "i2c.h"
 #include "main.h"
 
-#ifndef INT_BQ76952_I2C_HANDLE
-#define INT_BQ76952_I2C_HANDLE hi2c1
-#endif
-
-#ifndef INT_BQ76952_WAKE_GPIO_PORT
-#define INT_BQ76952_WAKE_GPIO_PORT GPIOB
-#endif
-
-#ifndef INT_BQ76952_WAKE_PIN
-#define INT_BQ76952_WAKE_PIN GPIO_PIN_3
-#endif
-
-#ifndef INT_BQ76952_ALERT_GPIO_PORT
-#define INT_BQ76952_ALERT_GPIO_PORT GPIOB
-#endif
-
-#ifndef INT_BQ76952_ALERT_PIN
-#define INT_BQ76952_ALERT_PIN GPIO_PIN_4
-#endif
-
-#ifndef INT_BQ76952_WAKE_PULSE_MS
-#define INT_BQ76952_WAKE_PULSE_MS (2u)
-#endif
-
-#ifndef INT_BQ76952_WAKE_SETTLE_MS
-#define INT_BQ76952_WAKE_SETTLE_MS (10u)
-#endif
-
 #define INT_BQ76952_I2C_ADDR             BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT
 #define INT_BQ76952_I2C_TIMEOUT_MS       (100u)
 #define INT_BQ76952_ECHO_POLL_COUNT      (100u)
@@ -44,14 +16,12 @@
 #define INT_BQ76952_DIRECT_MAX_LEN       (34u)
 #define INT_BQ76952_TRANSFER_MAX_LEN     BQ76952_TRANSFER_BUFFER_SIZE
 
-extern I2C_HandleTypeDef INT_BQ76952_I2C_HANDLE;
-
 static bool s_bq76952_crc_enabled = false;
 static uint32_t s_bq76952_last_hal_error = 0u;
 
 static void Int_BQ76952_RecordHalError(void)
 {
-    s_bq76952_last_hal_error = HAL_I2C_GetError(&INT_BQ76952_I2C_HANDLE);
+    s_bq76952_last_hal_error = HAL_I2C_GetError(&hi2c1);
 }
 
 static uint8_t Int_BQ76952_Crc8Update(uint8_t crc, uint8_t data)
@@ -264,12 +234,12 @@ void Int_BQ76952_WakeUp(void)
      * PB3 当前按硬件排查要求保持浮空输入，不主动驱动 BMS_WAKE。
      * 这里仅保留等待窗口，避免上层流程依赖唤醒函数时序时行为突变。
      */
-    HAL_Delay(INT_BQ76952_WAKE_SETTLE_MS);
+    HAL_Delay(BQ76952_WAKE_SETTLE_MS);
 }
 
 bool Int_BQ76952_IsAlertAsserted(void)
 {
-    return HAL_GPIO_ReadPin(INT_BQ76952_ALERT_GPIO_PORT, INT_BQ76952_ALERT_PIN) == GPIO_PIN_RESET;
+    return HAL_GPIO_ReadPin(BQ_INT_GPIO_Port, BQ_INT_Pin) == GPIO_PIN_RESET;
 }
 
 Int_BQ76952_StatusTypeDef Int_BQ76952_Reset(void)
@@ -298,7 +268,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ProbeDevice(uint32_t *hal_error)
     HAL_StatusTypeDef hal_status;
 
     s_bq76952_last_hal_error = 0u;
-    hal_status = HAL_I2C_IsDeviceReady(&INT_BQ76952_I2C_HANDLE,
+    hal_status = HAL_I2C_IsDeviceReady(&hi2c1,
                                        INT_BQ76952_I2C_ADDR,
                                        3u,
                                        INT_BQ76952_I2C_TIMEOUT_MS);
@@ -339,7 +309,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data,
 
     if (!s_bq76952_crc_enabled)
     {
-        if (HAL_I2C_Mem_Read(&INT_BQ76952_I2C_HANDLE,
+        if (HAL_I2C_Mem_Read(&hi2c1,
                              INT_BQ76952_I2C_ADDR,
                              command,
                              I2C_MEMADD_SIZE_8BIT,
@@ -357,7 +327,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data,
     {
         uint8_t rx[INT_BQ76952_DIRECT_MAX_LEN * 2u];
 
-        if (HAL_I2C_Mem_Read(&INT_BQ76952_I2C_HANDLE,
+        if (HAL_I2C_Mem_Read(&hi2c1,
                              INT_BQ76952_I2C_ADDR,
                              command,
                              I2C_MEMADD_SIZE_8BIT,
@@ -430,7 +400,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDirect(uint8_t command, const uint8_t
 
     if (!s_bq76952_crc_enabled)
     {
-        if (HAL_I2C_Mem_Write(&INT_BQ76952_I2C_HANDLE,
+        if (HAL_I2C_Mem_Write(&hi2c1,
                               INT_BQ76952_I2C_ADDR,
                               command,
                               I2C_MEMADD_SIZE_8BIT,
@@ -468,7 +438,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDirect(uint8_t command, const uint8_t
             }
         }
 
-        if (HAL_I2C_Master_Transmit(&INT_BQ76952_I2C_HANDLE,
+        if (HAL_I2C_Master_Transmit(&hi2c1,
                                     INT_BQ76952_I2C_ADDR,
                                     tx,
                                     (uint16_t)(1u + (len * 2u)),
@@ -614,7 +584,6 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDataMemory(uint16_t address, const ui
     return Int_BQ76952_WriteDirect(BQ76952_TRANSFER_CHECKSUM, meta, 2u);
 }
 
-#ifdef INT_BQ76952_ENABLE_BRINGUP_API
 Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDeviceNumber(uint16_t *device_number)
 {
     uint8_t data[2];
@@ -634,7 +603,6 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDeviceNumber(uint16_t *device_number)
     *device_number = (uint16_t)(((uint16_t)data[1] << 8u) | data[0]);
     return INT_BQ76952_OK;
 }
-#endif
 
 Int_BQ76952_StatusTypeDef Int_BQ76952_EnterConfigUpdate(void)
 {

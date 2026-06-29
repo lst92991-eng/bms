@@ -2,12 +2,25 @@
 
 #include "Int_OLED.h"
 
+/**
+ * @file App_OLED.c
+ * @brief APP 层 OLED 简单状态页。
+ *
+ * 当前 OLED 只承载 bring-up 必需信息：BQ I2C 是否正常，以及成功读到的
+ * BQ Power Config。显示布局集中在本文件，避免把 UI 细节混进 BatMan。
+ */
+
 static bool s_oled_ready = false;
 static bool s_iic_status_valid = false;
 static bool s_last_iic_ok = false;
 static bool s_power_config_valid = false;
 static uint16_t s_last_power_config = 0u;
 
+/**
+ * @brief 将 4-bit 值转换为十六进制字符。
+ *
+ * 避免为了显示 4 位十六进制值引入 sprintf。
+ */
 static char App_OLED_HexNibble(uint8_t value)
 {
     value &= 0x0Fu;
@@ -19,6 +32,9 @@ static char App_OLED_HexNibble(uint8_t value)
     return (char)('A' + (value - 10u));
 }
 
+/**
+ * @brief 生成 OLED 上的 Power Config 显示行。
+ */
 static void App_OLED_MakePowerConfigLine(uint16_t power_config, char *line)
 {
     line[0] = 'P';
@@ -32,6 +48,11 @@ static void App_OLED_MakePowerConfigLine(uint16_t power_config, char *line)
     line[8] = '\0';
 }
 
+/**
+ * @brief 重绘完整 OLED 状态页。
+ *
+ * 页面很小，整屏刷新更容易保证错误、复位和状态变化后的显示一致性。
+ */
 static void App_OLED_Render(bool ok, bool power_valid, uint16_t power_config)
 {
     char power_line[9];
@@ -54,8 +75,12 @@ static void App_OLED_Render(bool ok, bool power_valid, uint16_t power_config)
     Inf_OLED_Refresh();
 }
 
+/**
+ * @brief 初始化 OLED APP 页面。
+ */
 void App_OLED_Init(void)
 {
+    /* BQ 通信确认前默认显示 FAIL，方便上板排查。 */
     Inf_OLED_Init();
     s_oled_ready = true;
     s_iic_status_valid = false;
@@ -63,6 +88,11 @@ void App_OLED_Init(void)
     App_OLED_ShowIicStatus(false);
 }
 
+/**
+ * @brief 显示 BQ I2C 是否正常。
+ *
+ * 连续相同状态不重复刷新，减少 OLED I2C 访问。
+ */
 void App_OLED_ShowIicStatus(bool ok)
 {
     if (!s_oled_ready)
@@ -81,6 +111,12 @@ void App_OLED_ShowIicStatus(bool ok)
     App_OLED_Render(ok, ok && s_power_config_valid, s_last_power_config);
 }
 
+/**
+ * @brief 显示 BQ I2C 状态和 Power Config。
+ *
+ * Power Config 只有在 `ok=true` 时才有意义；失败时屏幕显示占位符，
+ * 内部保留上一次成功值以便后续恢复显示。
+ */
 void App_OLED_ShowBqIicPowerConfig(bool ok, uint16_t power_config)
 {
     if (!s_oled_ready)
