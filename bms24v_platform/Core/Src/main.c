@@ -138,7 +138,7 @@ int main(void)
   Int_Button_Init();
   (void)Int_CanFd_Init();
   (void)Int_EEPROM_Init();
-  App_Buzzer_PlayPowerOn();
+  //App_Buzzer_PlayPowerOn();
   App_OLED_Init();
   App_SC8815_Init();
   App_BatMan_Init();

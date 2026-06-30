@@ -42,6 +42,7 @@ bms24v_platform\main.o: ../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart_e
 bms24v_platform\main.o: ../Core/Inc/fdcan.h
 bms24v_platform\main.o: ../Core/Inc/i2c.h
 bms24v_platform\main.o: ../Core/Inc/rtc.h
+bms24v_platform\main.o: ../Core/Inc/tim.h
 bms24v_platform\main.o: ../Core/Inc/usart.h
 bms24v_platform\main.o: ../Core/Inc/gpio.h
 bms24v_platform\main.o: D:\App\Keil\ARM\ARMCC\Bin\..\include\string.h

@@ -6,6 +6,7 @@
 "bms24v_platform\fdcan.o"
 "bms24v_platform\i2c.o"
 "bms24v_platform\rtc.o"
+"bms24v_platform\tim.o"
 "bms24v_platform\usart.o"
 "bms24v_platform\stm32g0xx_it.o"
 "bms24v_platform\stm32g0xx_hal_msp.o"
@@ -15,6 +16,9 @@
 "bms24v_platform\app_oled.o"
 "bms24v_platform\app_sc8815.o"
 "bms24v_platform\com_bq76952.o"
+"bms24v_platform\com_batteryparam.o"
+"bms24v_platform\com_soc.o"
+"bms24v_platform\com_soh.o"
 "bms24v_platform\int_bq76952.o"
 "bms24v_platform\int_oled.o"
 "bms24v_platform\int_sc8815.o"
@@ -46,7 +50,7 @@
 "bms24v_platform\stm32g0xx_hal_uart.o"
 "bms24v_platform\stm32g0xx_hal_uart_ex.o"
 "bms24v_platform\system_stm32g0xx.o"
---strict --scatter "bms24v_platform\bms24v_platform.sct"
+--library_type=microlib --strict --scatter "bms24v_platform\bms24v_platform.sct"
 --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
 --info sizes --info totals --info unused --info veneers
 --list "bms24v_platform.map" -o bms24v_platform\bms24v_platform.axf

@@ -41,3 +41,4 @@ bms24v_platform\int_buzzer.o: ../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_
 bms24v_platform\int_buzzer.o: ../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_tim_ex.h
 bms24v_platform\int_buzzer.o: ../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart.h
 bms24v_platform\int_buzzer.o: ../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart_ex.h
+bms24v_platform\int_buzzer.o: ../Core/Inc/tim.h
