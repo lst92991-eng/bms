@@ -1,6 +1,8 @@
 #include "App_BatMan.h"
 #include "App_BatMan_Internal.h"
 
+#include <stdio.h>
+
 #include "Int_BQ76952.h"
 #include "Int_BQ76952_BSP.h"
 #include "main.h"
@@ -73,6 +75,19 @@ bool s_current_sample_valid = false;
 bool s_temp_cell_sample_valid = false;
 
 static uint16_t s_power_config = 0u;
+
+static void App_BatMan_BusyDelayMs(uint32_t ms)
+{
+    volatile uint32_t i;
+    uint32_t loop;
+
+    for (loop = 0u; loop < ms; loop++)
+    {
+        for (i = 0u; i < 6400u; i++)
+        {
+        }
+    }
+}
 
 /**
  * @brief 按 BQ76952 little-endian 格式读取 16-bit 值。
@@ -165,10 +180,13 @@ void App_BatMan_Init(void)
     uint16_t device_number;
     Int_BQ76952_StatusTypeDef ret;
 
+    printf("batman init start\r\n");
+
     /* OLED 先显示 FAIL，直到 Device Number 读取成功。 */
     App_BatMan_ResetState();
     App_BatMan_InitAlgorithms();
     App_BatMan_ShowIicStatus(false);
+    printf("batman init reset state done\r\n");
 
     /*
      * CRC 模式必须在第一条 BQ 命令前确定；主从 CRC 设置不一致时，
@@ -176,22 +194,32 @@ void App_BatMan_Init(void)
      */
     Int_BQ76952_InitBoard();
     Int_BQ76952_SetCrcEnabled(APP_BATMAN_CRC_BOOT_ENABLE != 0u);
+    printf("bq board init done crc:%u\r\n", APP_BATMAN_CRC_BOOT_ENABLE != 0u ? 1u : 0u);
 
     /*
      * reset 失败时不继续写配置，避免芯片处于未知状态时留下半配置。
      */
+    printf("bq reset start\r\n");
     ret = Int_BQ76952_Reset();
     if (ret != INT_BQ76952_OK)
     {
         App_BatMan_PrintBqResetFail(ret);
         return;
     }
-    HAL_Delay(APP_BATMAN_BQ_RESET_SETTLE_MS);
+    printf("bq reset done\r\n");
+    printf("bq reset settle begin tick:%lu primask:%lu\r\n",
+           HAL_GetTick(),
+           __get_PRIMASK());
+    App_BatMan_BusyDelayMs(APP_BATMAN_BQ_RESET_SETTLE_MS);
+    printf("bq reset settle end tick:%lu primask:%lu\r\n",
+           HAL_GetTick(),
+           __get_PRIMASK());
 
     /*
      * Device Number 是通信链路的第一道硬确认：地址、subcommand 帧和
      * 读回长度都必须正确。
      */
+    printf("bq device read start\r\n");
     ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_DEVICE_NUMBER, data, 2u);
     if (ret != INT_BQ76952_OK)
     {
@@ -207,13 +235,16 @@ void App_BatMan_Init(void)
      * Data Memory 写入必须包在 ConfigUpdate 内。ConfigUpdate 未退出前，
      * 不做正常采样，也不执行 FET_ENABLE。
      */
+    printf("bq cfg enter start\r\n");
     if (Int_BQ76952_EnterConfigUpdate() != INT_BQ76952_OK)
     {
         App_BatMan_PrintBqCfgEnterFail();
         App_BatMan_ShowIicStatus(false);
         return;
     }
+    printf("bq cfg enter done\r\n");
 
+    printf("bq cfg write start\r\n");
     if (!App_BatMan_ConfigBq())
     {
         App_BatMan_PrintBqCfgWriteFail();
@@ -221,9 +252,11 @@ void App_BatMan_Init(void)
         (void)Int_BQ76952_ExitConfigUpdate();
         return;
     }
+    printf("bq cfg write done\r\n");
     /*
      * Power Config 显示在 OLED 上，用作现场快速确认 Data Memory 读链路。
      */
+    printf("bq power config read start\r\n");
     if (Int_BQ76952_ReadDataMemory(BQ76952_DM_POWER_CONFIG, data, 2u) == INT_BQ76952_OK)
     {
         s_power_config = App_BatMan_ReadU16Le(data);
@@ -231,28 +264,34 @@ void App_BatMan_Init(void)
         App_BatMan_PrintBqPowerConfig(s_power_config);
     }
 
+    printf("bq cfg exit start\r\n");
     if (Int_BQ76952_ExitConfigUpdate() != INT_BQ76952_OK)
     {
         App_BatMan_PrintBqCfgExitFail();
         App_BatMan_ShowIicStatus(false);
         return;
     }
+    printf("bq cfg exit done\r\n");
 
     /*
      * ConfigUpdate 退出后，只清启动噪声告警，并保持 CHG/DSG/PCHG/PDSG 关断。
      * 后续如需接通主功率路径，必须增加单独的业务入口和保护条件。
      */
+    printf("bq startup alarms clear\r\n");
     App_BatMan_ClearStartupAlarms();
+    printf("bq main fet off start\r\n");
     if (App_BatMan_KeepMainFetsOff() != INT_BQ76952_OK)
     {
         App_BatMan_PrintBqFetOffFail();
         App_BatMan_ShowIicStatus(false);
         return;
     }
+    printf("bq main fet off done\r\n");
 
     /*
      * 初始化成功后立即采样一次，避免 UART/OLED/CAN 首帧仍是全零快照。
      */
+    printf("batman first sample start\r\n");
     App_BatMan_Sample();
     App_BatMan_UpdateHealth(0u);
     App_BatMan_UpdateSoc(0u);

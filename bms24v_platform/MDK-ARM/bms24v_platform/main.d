@@ -46,13 +46,4 @@ bms24v_platform\main.o: ../Core/Inc/tim.h
 bms24v_platform\main.o: ../Core/Inc/usart.h
 bms24v_platform\main.o: ../Core/Inc/gpio.h
 bms24v_platform\main.o: D:\App\Keil\ARM\ARMCC\Bin\..\include\string.h
-bms24v_platform\main.o: ../../App/App_BatMan.h
-bms24v_platform\main.o: D:\App\Keil\ARM\ARMCC\Bin\..\include\stdbool.h
-bms24v_platform\main.o: ../../App/App_Buzzer.h
-bms24v_platform\main.o: ../../App/App_OLED.h
-bms24v_platform\main.o: ../../App/App_SC8815.h
-bms24v_platform\main.o: ../../Int/Int_Button.h
-bms24v_platform\main.o: ../../Int/Int_Buzzer.h
-bms24v_platform\main.o: ../../Int/Int_CanFd.h
-bms24v_platform\main.o: ../../Int/Int_EEPROM.h
-bms24v_platform\main.o: ../../Int/Int_Led.h
+bms24v_platform\main.o: ../../App/App_Main.h

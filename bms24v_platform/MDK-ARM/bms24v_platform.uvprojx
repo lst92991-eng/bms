@@ -571,6 +571,16 @@
               <FilePath>../../App/App_OLED.h</FilePath>
             </File>
             <File>
+              <FileName>App_Power.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../App/App_Power.c</FilePath>
+            </File>
+            <File>
+              <FileName>App_Power.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../App/App_Power.h</FilePath>
+            </File>
+            <File>
               <FileName>App_SC8815.c</FileName>
               <FileType>1</FileType>
               <FilePath>../../App/App_SC8815.c</FilePath>

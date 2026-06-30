@@ -3,9 +3,12 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include <stdio.h>
+
 #include "App_BatMan.h"
 #include "App_Buzzer.h"
 #include "App_OLED.h"
+#include "App_Power.h"
 #include "App_SC8815.h"
 #include "Int_Button.h"
 #include "Int_Buzzer.h"
@@ -17,10 +20,10 @@
 #define APP_MAIN_BATMAN_TASK_PERIOD_MS     1000u
 #define APP_MAIN_SC8815_TASK_PERIOD_MS     1000u
 #define APP_MAIN_BOARD_IO_TASK_PERIOD_MS   10u
-#define APP_MAIN_POWER_TASK_PERIOD_MS      100u
 #define APP_MAIN_CAN_TASK_PERIOD_MS        100u
 #define APP_MAIN_NVM_TASK_PERIOD_MS        1000u
 #define APP_MAIN_DISPLAY_TASK_PERIOD_MS    1000u
+#define APP_MAIN_BUZZER_ENABLE             0u
 
 /**
  * @brief 板载按键、蜂鸣器等轻量 IO 任务。
@@ -35,24 +38,10 @@ void board_io_task(void *arg)
     while (1)
     {
         Int_Button_Task(HAL_GetTick());
-        Int_Buzzer_Task(HAL_GetTick());
+#if APP_MAIN_BUZZER_ENABLE
+        App_Buzzer_Task(HAL_GetTick());
+#endif
         vTaskDelay(APP_MAIN_BOARD_IO_TASK_PERIOD_MS);
-    }
-}
-
-/**
- * @brief P0 功率策略任务预留。
- *
- * 后续在这里统一决定 BQ 主充放电 FET、SC8815 充电请求、故障关断和恢复条件。
- * 当前阶段保持空任务，避免在 P0 规则未确认前引入隐含功率动作。
- */
-void power_task(void *arg)
-{
-    (void)arg;
-
-    while (1)
-    {
-        vTaskDelay(APP_MAIN_POWER_TASK_PERIOD_MS);
     }
 }
 
@@ -75,7 +64,8 @@ void can_task(void *arg)
 /**
  * @brief BQ76952 电池监控任务。
  *
- * 周期读取电芯、电流、温度、告警状态，并推进 SOC/SOH、MCU 均衡和调试输出。
+ * 周期读取电芯、电流、温度、告警状态，并立即推进功率策略。
+ * BQ 数据和功率决策放在同一任务里，避免 power_task 读到半更新快照。
  */
 void batman_task(void *arg)
 {
@@ -84,6 +74,7 @@ void batman_task(void *arg)
     while (1)
     {
         App_BatMan_Task(APP_MAIN_BATMAN_TASK_PERIOD_MS);
+        App_Power_Task(APP_MAIN_BATMAN_TASK_PERIOD_MS);
         vTaskDelay(APP_MAIN_BATMAN_TASK_PERIOD_MS);
     }
 }
@@ -92,7 +83,7 @@ void batman_task(void *arg)
  * @brief SC8815 充电芯片监控任务。
  *
  * 只做状态读取和 charge_request 状态机推进；默认不主动请求充电，功率释放由
- * 后续 P0 任务显式决定。
+ * BatMan 任务中的 App_Power 策略显式决定。
  */
 void sc8815_task(void *arg)
 {
@@ -143,36 +134,51 @@ void display_task(void *arg)
  */
 static void App_Main_Init(void)
 {
+    printf("app init: led\r\n");
     Int_Led_Init();
+#if APP_MAIN_BUZZER_ENABLE
+    printf("app init: buzzer int\r\n");
     Int_Buzzer_Init();
+    printf("app init: buzzer app\r\n");
     App_Buzzer_Init();
+#endif
+    printf("app init: button\r\n");
     Int_Button_Init();
+    printf("app init: canfd\r\n");
     (void)Int_CanFd_Init();
+    printf("app init: eeprom\r\n");
     (void)Int_EEPROM_Init();
 
+    printf("app init: oled\r\n");
     App_OLED_Init();
+    printf("app init: sc8815\r\n");
     App_SC8815_Init();
+    printf("app init: batman\r\n");
     App_BatMan_Init();
+    printf("app init: power\r\n");
+    App_Power_Init();
+    printf("app init: done\r\n");
 }
 
 /**
  * @brief 创建 FreeRTOS 任务并启动调度器。
  *
  * 任务表按旧项目教学风格展开写，不做额外封装，便于直接看到每个业务模块的
- * 周期和优先级。P0 未完成的 APP 先保留空任务入口。
+ * 周期和优先级。协议、NVM、正式显示页先保留空任务入口。
  */
 void App_Main(void)
 {
     App_Main_Init();
 
+    printf("rtos create tasks\r\n");
     xTaskCreate(board_io_task, "board_io_task", 256, NULL, 3, NULL);
-    xTaskCreate(power_task, "power_task", 512, NULL, 3, NULL);
     xTaskCreate(can_task, "can_task", 512, NULL, 2, NULL);
-    xTaskCreate(batman_task, "batman_task", 512, NULL, 2, NULL);
+    xTaskCreate(batman_task, "batman_task", 768, NULL, 3, NULL);
     xTaskCreate(sc8815_task, "sc8815_task", 512, NULL, 2, NULL);
     xTaskCreate(nvm_task, "nvm_task", 384, NULL, 1, NULL);
     xTaskCreate(display_task, "display_task", 384, NULL, 1, NULL);
 
+    printf("rtos start scheduler\r\n");
     vTaskStartScheduler();
 
     while (1)

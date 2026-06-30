@@ -21,4 +21,11 @@ void App_SC8815_Task(uint16_t interval_ms);
  */
 void App_SC8815_RequestCharge(bool enable);
 
+bool App_SC8815_IsCommOk(void);
+bool App_SC8815_IsAcOk(void);
+bool App_SC8815_HasFault(void);
+bool App_SC8815_IsCharging(void);
+uint32_t App_SC8815_GetVbusMv(void);
+uint32_t App_SC8815_GetVbatMv(void);
+
 #endif /* APP_SC8815_H */

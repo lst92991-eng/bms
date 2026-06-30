@@ -21,7 +21,7 @@
 #define APP_BATMAN_CC2_RAW_POLARITY              (1)
 
 /**
- * @brief 初始化 BQ76952，写入基线 Data Memory，并把 FET 控制权交给 BQ。
+ * @brief 初始化 BQ76952，写入基线 Data Memory，并保持主 FET 默认关断。
  */
 void App_BatMan_Init(void);
 
@@ -30,6 +30,27 @@ void App_BatMan_Init(void);
  * @param interval_ms 调用周期，用于 SOC/SOH 积分。
  */
 void App_BatMan_Task(uint32_t interval_ms);
+
+/**
+ * @brief 设置主充放电 MOS。
+ * @param charge_enable true 允许 CHG/PCHG，false 强制关断充电路径。
+ * @param discharge_enable true 允许 DSG/PDSG，false 强制关断放电路径。
+ * @return true 写入成功。
+ */
+bool App_BatMan_SetMainFets(bool charge_enable, bool discharge_enable);
+
+/**
+ * @brief 只释放预放电 PDSG，主放电 DSG 仍保持关断。
+ * @param charge_enable true 时充电路径按当前策略释放，false 时保持关断。
+ * @return true 写入成功。
+ */
+bool App_BatMan_SetPreDischargeFet(bool charge_enable);
+
+/**
+ * @brief 强制关闭 CHG/DSG/PCHG/PDSG。
+ * @return true 写入成功。
+ */
+bool App_BatMan_AllMainFetsOff(void);
 
 /* 最新 BQ 遥测快照，由主循环任务更新。 */
 extern uint16_t cell_mv[APP_BATMAN_CELL_COUNT];

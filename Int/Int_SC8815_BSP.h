@@ -28,7 +28,13 @@
 #define SC8815_PROJECT_PACK_FULL_MV                  (25200u)
 #define SC8815_PROJECT_TARGET_CHARGE_MV              (24730u)
 
-/* 软 I2C 物理连接：PA7=SCL，PA6=SDA；这里只记录硬件事实，不提供 GPIO 操作。 */
+/*
+ * 网表按 MCU I2C3 命名为 PA7=SCL、PA6=SDA，但当前硬件已确认硬件 I2C3
+ * 线序不可直接使用。软件 IIC 默认先按网表线序访问，ACK 失败时 INT 层会
+ * 自动尝试交换线序，便于 bring-up 阶段确认真实接线。
+ */
+#define SC8815_PROJECT_IIC_LINE_SWAPPED              (0u)
+/* 软 I2C 网表连接：PA7=MCU_SCL_NET，PA6=MCU_SDA_NET；这里只记录硬件事实，不提供 GPIO 操作。 */
 #define SC8815_PROJECT_SCL_PORT_LETTER               ('A')
 #define SC8815_PROJECT_SCL_PIN_NUMBER                (7u)
 #define SC8815_PROJECT_SDA_PORT_LETTER               ('A')
@@ -64,8 +70,8 @@
 
 /* Bring-up 与软件约束电流，单位 mA。限流值禁止为 0，项目最低不低于 300mA。 */
 #define SC8815_PROJECT_MIN_LIMIT_CURRENT_MA          (300u)
-#define SC8815_PROJECT_BRINGUP_IBUS_LIMIT_MA         (500u)
-#define SC8815_PROJECT_BRINGUP_IBAT_LIMIT_MA         (300u)
+#define SC8815_PROJECT_BRINGUP_IBUS_LIMIT_MA         (1000u)
+#define SC8815_PROJECT_BRINGUP_IBAT_LIMIT_MA         (1000u)
 #define SC8815_PROJECT_DEFAULT_IBUS_LIMIT_MA         (1500u)
 #define SC8815_PROJECT_DEFAULT_IBAT_LIMIT_MA         (3000u)
 #define SC8815_PROJECT_MAX_IBUS_LIMIT_MA             (3000u)

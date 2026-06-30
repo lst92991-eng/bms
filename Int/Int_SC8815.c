@@ -9,6 +9,47 @@
                                                    SC8815_CTRL3_SET_EOC_SET_MASK)
 
 static bool s_sc8815_standby = true;
+static bool s_sc8815_iic_swapped = (SC8815_PROJECT_IIC_LINE_SWAPPED != 0u);
+
+static uint32_t Int_SC8815_EnterCritical(void)
+{
+    uint32_t primask = __get_PRIMASK();
+
+    __disable_irq();
+    return primask;
+}
+
+static void Int_SC8815_ExitCritical(uint32_t primask)
+{
+    __set_PRIMASK(primask);
+}
+
+static void Int_SC8815_InitGpio(void)
+{
+    GPIO_InitTypeDef gpio = {0};
+
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+
+    HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port,
+                      SC8815_SW_I2C_SDA_Pin,
+                      GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port,
+                      SC8815_SW_I2C_SCL_Pin,
+                      GPIO_PIN_SET);
+
+    gpio.Pin = SC8815_SW_I2C_SDA_Pin | SC8815_SW_I2C_SCL_Pin;
+    gpio.Mode = GPIO_MODE_OUTPUT_OD;
+    gpio.Pull = GPIO_PULLUP;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOA, &gpio);
+
+    gpio.Pin = SC8815_PSTOP_Pin | SC8815_CE_N_Pin;
+    gpio.Mode = GPIO_MODE_OUTPUT_PP;
+    gpio.Pull = GPIO_PULLUP;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOB, &gpio);
+}
 
 static void Int_SC8815_IicDelay(void)
 {
@@ -19,30 +60,63 @@ static void Int_SC8815_IicDelay(void)
 
 static void Int_SC8815_IicSclHigh(void)
 {
-    HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, GPIO_PIN_SET);
+    if (s_sc8815_iic_swapped)
+    {
+        HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, GPIO_PIN_SET);
+    }
+    else
+    {
+        HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, GPIO_PIN_SET);
+    }
     Int_SC8815_IicDelay();
 }
 
 static void Int_SC8815_IicSclLow(void)
 {
-    HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, GPIO_PIN_RESET);
+    if (s_sc8815_iic_swapped)
+    {
+        HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, GPIO_PIN_RESET);
+    }
+    else
+    {
+        HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, GPIO_PIN_RESET);
+    }
     Int_SC8815_IicDelay();
 }
 
 static void Int_SC8815_IicSdaHigh(void)
 {
-    HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, GPIO_PIN_SET);
+    if (s_sc8815_iic_swapped)
+    {
+        HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, GPIO_PIN_SET);
+    }
+    else
+    {
+        HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, GPIO_PIN_SET);
+    }
     Int_SC8815_IicDelay();
 }
 
 static void Int_SC8815_IicSdaLow(void)
 {
-    HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, GPIO_PIN_RESET);
+    if (s_sc8815_iic_swapped)
+    {
+        HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, GPIO_PIN_RESET);
+    }
+    else
+    {
+        HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, GPIO_PIN_RESET);
+    }
     Int_SC8815_IicDelay();
 }
 
 static bool Int_SC8815_IicSdaRead(void)
 {
+    if (s_sc8815_iic_swapped)
+    {
+        return HAL_GPIO_ReadPin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin) == GPIO_PIN_SET;
+    }
+
     return HAL_GPIO_ReadPin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin) == GPIO_PIN_SET;
 }
 
@@ -383,56 +457,104 @@ static Int_SC8815_StatusTypeDef Int_SC8815_GuardWrite(uint8_t reg,
     return INT_SC8815_OK;
 }
 
-static Int_SC8815_StatusTypeDef Int_SC8815_ReadRegRaw(uint8_t reg, uint8_t *value)
+static Int_SC8815_StatusTypeDef Int_SC8815_ReadRegRawOnce(uint8_t reg, uint8_t *value)
 {
+    uint32_t primask;
+    Int_SC8815_StatusTypeDef ret = INT_SC8815_OK;
+
     if ((value == NULL) || !Int_SC8815_IsRegAddressValid(reg))
     {
         return INT_SC8815_ERROR_PARAM;
     }
 
+    primask = Int_SC8815_EnterCritical();
     Int_SC8815_BusStart();
 
     if (!Int_SC8815_BusWriteByte(SC8815_I2C_ADDR_WRITE_8BIT) ||
         !Int_SC8815_BusWriteByte(reg))
     {
         Int_SC8815_BusStop();
-        return INT_SC8815_ERROR_ACK;
+        ret = INT_SC8815_ERROR_ACK;
     }
-
-    Int_SC8815_BusStart();
-
-    if (!Int_SC8815_BusWriteByte(SC8815_I2C_ADDR_READ_8BIT))
+    else
     {
-        Int_SC8815_BusStop();
-        return INT_SC8815_ERROR_ACK;
+        Int_SC8815_BusStart();
+
+        if (!Int_SC8815_BusWriteByte(SC8815_I2C_ADDR_READ_8BIT))
+        {
+            Int_SC8815_BusStop();
+            ret = INT_SC8815_ERROR_ACK;
+        }
+        else
+        {
+            *value = Int_SC8815_BusReadByte(false);
+            Int_SC8815_BusStop();
+        }
     }
 
-    *value = Int_SC8815_BusReadByte(false);
-    Int_SC8815_BusStop();
-
-    return INT_SC8815_OK;
+    Int_SC8815_ExitCritical(primask);
+    return ret;
 }
 
-static Int_SC8815_StatusTypeDef Int_SC8815_WriteRegRaw(uint8_t reg, uint8_t value)
+static Int_SC8815_StatusTypeDef Int_SC8815_WriteRegRawOnce(uint8_t reg, uint8_t value)
 {
+    uint32_t primask;
+    Int_SC8815_StatusTypeDef ret = INT_SC8815_OK;
+
     if (!Int_SC8815_IsRegAddressValid(reg))
     {
         return INT_SC8815_ERROR_PARAM;
     }
 
+    primask = Int_SC8815_EnterCritical();
     Int_SC8815_BusStart();
 
     if (!Int_SC8815_BusWriteByte(SC8815_I2C_ADDR_WRITE_8BIT) ||
         !Int_SC8815_BusWriteByte(reg) ||
         !Int_SC8815_BusWriteByte(value))
     {
-        Int_SC8815_BusStop();
-        return INT_SC8815_ERROR_ACK;
+        ret = INT_SC8815_ERROR_ACK;
     }
 
     Int_SC8815_BusStop();
+    Int_SC8815_ExitCritical(primask);
+    return ret;
+}
 
-    return INT_SC8815_OK;
+static Int_SC8815_StatusTypeDef Int_SC8815_ReadRegRaw(uint8_t reg, uint8_t *value)
+{
+    Int_SC8815_StatusTypeDef ret;
+
+    ret = Int_SC8815_ReadRegRawOnce(reg, value);
+    if (ret == INT_SC8815_ERROR_ACK)
+    {
+        s_sc8815_iic_swapped = !s_sc8815_iic_swapped;
+        ret = Int_SC8815_ReadRegRawOnce(reg, value);
+        if (ret != INT_SC8815_OK)
+        {
+            s_sc8815_iic_swapped = !s_sc8815_iic_swapped;
+        }
+    }
+
+    return ret;
+}
+
+static Int_SC8815_StatusTypeDef Int_SC8815_WriteRegRaw(uint8_t reg, uint8_t value)
+{
+    Int_SC8815_StatusTypeDef ret;
+
+    ret = Int_SC8815_WriteRegRawOnce(reg, value);
+    if (ret == INT_SC8815_ERROR_ACK)
+    {
+        s_sc8815_iic_swapped = !s_sc8815_iic_swapped;
+        ret = Int_SC8815_WriteRegRawOnce(reg, value);
+        if (ret != INT_SC8815_OK)
+        {
+            s_sc8815_iic_swapped = !s_sc8815_iic_swapped;
+        }
+    }
+
+    return ret;
 }
 
 static uint16_t Int_SC8815_CombineAdcRaw(uint8_t high, uint8_t low)
@@ -443,13 +565,36 @@ static uint16_t Int_SC8815_CombineAdcRaw(uint8_t high, uint8_t low)
 
 Int_SC8815_StatusTypeDef Int_SC8815_InitSafe(void)
 {
+    uint8_t i;
+    bool default_swapped;
+
+    Int_SC8815_InitGpio();
+
     HAL_GPIO_WritePin(SC8815_PSTOP_GPIO_Port, SC8815_PSTOP_Pin, GPIO_PIN_SET);
     HAL_GPIO_WritePin(SC8815_CE_N_GPIO_Port, SC8815_CE_N_Pin, GPIO_PIN_SET);
 
     s_sc8815_standby = true;
+    default_swapped = (SC8815_PROJECT_IIC_LINE_SWAPPED != 0u);
+    s_sc8815_iic_swapped = false;
 
-    Int_SC8815_IicSclHigh();
-    Int_SC8815_IicSdaHigh();
+    /*
+     * PA6/PA7 曾出现线序争议，bring-up 时两种线序都释放一次总线。
+     * 只打 SCL 恢复脉冲和 STOP，不访问寄存器，也不启动功率级。
+     */
+    for (i = 0u; i < 2u; i++)
+    {
+        s_sc8815_iic_swapped = (i != 0u);
+        Int_SC8815_IicSclHigh();
+        Int_SC8815_IicSdaHigh();
+        for (uint8_t pulse = 0u; pulse < 9u; pulse++)
+        {
+            Int_SC8815_IicSclLow();
+            Int_SC8815_IicSclHigh();
+        }
+        Int_SC8815_BusStop();
+    }
+
+    s_sc8815_iic_swapped = default_swapped;
 
     return INT_SC8815_OK;
 }
@@ -743,4 +888,25 @@ Int_SC8815_StatusTypeDef Int_SC8815_SetCurrentLimitMa(Int_SC8815_CurrentLimitTyp
     code = Int_SC8815_CurrentLimitMaToCode(current_ma, ratio, rsense_mohm);
 
     return Int_SC8815_WriteReg(reg, code);
+}
+
+bool Int_SC8815_IsIicLineSwapped(void)
+{
+    return s_sc8815_iic_swapped;
+}
+
+uint8_t Int_SC8815_GetBusLevels(void)
+{
+    uint8_t levels = 0u;
+
+    if (HAL_GPIO_ReadPin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin) == GPIO_PIN_SET)
+    {
+        levels |= 0x01u;
+    }
+    if (HAL_GPIO_ReadPin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin) == GPIO_PIN_SET)
+    {
+        levels |= 0x02u;
+    }
+
+    return levels;
 }

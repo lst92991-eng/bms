@@ -108,4 +108,7 @@ Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentMa(Int_SC8815_CurrentChannelTy
  */
 Int_SC8815_StatusTypeDef Int_SC8815_SetCurrentLimitMa(Int_SC8815_CurrentLimitTypeDef type, uint16_t current_ma);
 
+bool Int_SC8815_IsIicLineSwapped(void);
+uint8_t Int_SC8815_GetBusLevels(void);
+
 #endif /* INT_SC8815_H */

@@ -22,6 +22,7 @@
 #define APP_BATMAN_DM_DSG_FET_PROTECTIONS_C_DEFAULT     (0xE2u)
 #define APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT        (0xF800u)
 #define APP_BATMAN_DM_FET_OPTIONS_DEFAULT               (BQ76952_FET_OPTIONS_FET_INIT_OFF_MASK | \
+                                                         BQ76952_FET_OPTIONS_PDSG_EN_MASK | \
                                                          BQ76952_FET_OPTIONS_FET_CTRL_EN_MASK | \
                                                          BQ76952_FET_OPTIONS_HOST_FET_EN_MASK | \
                                                          BQ76952_FET_OPTIONS_SFET_MASK)
@@ -31,6 +32,32 @@
                                                          BQ76952_FET_CONTROL_CHG_OFF_MASK | \
                                                          BQ76952_FET_CONTROL_PDSG_OFF_MASK | \
                                                          BQ76952_FET_CONTROL_DSG_OFF_MASK)
+
+static Int_BQ76952_StatusTypeDef App_BatMan_WriteMainFetControl(uint8_t off_mask)
+{
+    uint8_t data[2];
+    uint16_t mfg_status;
+    Int_BQ76952_StatusTypeDef ret;
+
+    ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_MANUFACTURING_STATUS, data, 2u);
+    if (ret != INT_BQ76952_OK)
+    {
+        return ret;
+    }
+
+    mfg_status = App_BatMan_ReadU16Le(data);
+    if ((mfg_status & BQ76952_MFG_STATUS_FET_EN_MASK) == 0u)
+    {
+        ret = Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_FET_ENABLE);
+        if (ret != INT_BQ76952_OK)
+        {
+            return ret;
+        }
+    }
+
+    data[0] = off_mask;
+    return Int_BQ76952_WriteSubcommandData(BQ76952_SUBCMD_FET_CONTROL, data, 1u);
+}
 
 /**
  * @brief 写入 1 字节 Data Memory 配置。
@@ -160,31 +187,65 @@ bool App_BatMan_ConfigBq(void)
  */
 Int_BQ76952_StatusTypeDef App_BatMan_KeepMainFetsOff(void)
 {
-    uint8_t data[2];
-    uint16_t mfg_status;
-    Int_BQ76952_StatusTypeDef ret;
+    return App_BatMan_WriteMainFetControl((uint8_t)APP_BATMAN_MAIN_FET_OFF_MASK);
+}
 
-    ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_MANUFACTURING_STATUS, data, 2u);
-    if (ret != INT_BQ76952_OK)
+bool App_BatMan_SetMainFets(bool charge_enable, bool discharge_enable)
+{
+    uint8_t off_mask = 0u;
+
+    if (!charge_enable)
     {
-        return ret;
+        off_mask |= BQ76952_FET_CONTROL_PCHG_OFF_MASK;
+        off_mask |= BQ76952_FET_CONTROL_CHG_OFF_MASK;
+    }
+    if (!discharge_enable)
+    {
+        off_mask |= BQ76952_FET_CONTROL_PDSG_OFF_MASK;
+        off_mask |= BQ76952_FET_CONTROL_DSG_OFF_MASK;
     }
 
-    mfg_status = App_BatMan_ReadU16Le(data);
-    if ((mfg_status & BQ76952_MFG_STATUS_FET_EN_MASK) != 0u)
+    if (App_BatMan_WriteMainFetControl(off_mask) == INT_BQ76952_OK)
     {
-        data[0] = (uint8_t)APP_BATMAN_MAIN_FET_OFF_MASK;
-        return Int_BQ76952_WriteSubcommandData(BQ76952_SUBCMD_FET_CONTROL, data, 1u);
+        return true;
     }
 
-    ret = Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_FET_ENABLE);
-    if (ret != INT_BQ76952_OK)
+    s_comm_fault = true;
+    return false;
+}
+
+bool App_BatMan_SetPreDischargeFet(bool charge_enable)
+{
+    uint8_t off_mask = BQ76952_FET_CONTROL_DSG_OFF_MASK;
+
+    if (!charge_enable)
     {
-        return ret;
+        off_mask |= BQ76952_FET_CONTROL_PCHG_OFF_MASK;
+        off_mask |= BQ76952_FET_CONTROL_CHG_OFF_MASK;
     }
 
-    data[0] = (uint8_t)APP_BATMAN_MAIN_FET_OFF_MASK;
-    return Int_BQ76952_WriteSubcommandData(BQ76952_SUBCMD_FET_CONTROL, data, 1u);
+    /*
+     * 这里只放开 PDSG，不放开主 DSG。外部大电容先通过预放电支路缓慢建立电压，
+     * 避免主放电 MOS 直接合闸时的浪涌电流触发 SCD。
+     */
+    if (App_BatMan_WriteMainFetControl(off_mask) == INT_BQ76952_OK)
+    {
+        return true;
+    }
+
+    s_comm_fault = true;
+    return false;
+}
+
+bool App_BatMan_AllMainFetsOff(void)
+{
+    if (App_BatMan_KeepMainFetsOff() == INT_BQ76952_OK)
+    {
+        return true;
+    }
+
+    s_comm_fault = true;
+    return false;
 }
 
 /**

@@ -2,8 +2,10 @@
 
 #include <stdio.h>
 
+#include "FreeRTOS.h"
 #include "Int_SC8815.h"
 #include "Int_SC8815_BSP.h"
+#include "queue.h"
 
 /**
  * @file App_SC8815.c
@@ -20,6 +22,7 @@
  */
 
 #define APP_SC8815_DEBUG_PERIOD_MS              (1000u)
+#define APP_SC8815_CHARGE_QUEUE_LEN             (1u)
 
 /*
  * SC8815 状态快照。
@@ -41,9 +44,11 @@ typedef struct
     uint32_t vbat_mv;
     uint32_t ibus_ma;
     uint32_t ibat_ma;
+    uint8_t last_error;
 } App_SC8815_StateTypeDef;
 
 static App_SC8815_StateTypeDef s_sc;
+static QueueHandle_t s_charge_queue = NULL;
 static uint16_t s_debug_ms = 0u;
 
 /**
@@ -74,7 +79,31 @@ static bool App_SC8815_Check(Int_SC8815_StatusTypeDef ret)
     }
 
     s_sc.comm_ok = false;
+    s_sc.last_error = (uint8_t)ret;
     return false;
+}
+
+static void App_SC8815_TaskInitQueue(void)
+{
+    if (s_charge_queue == NULL)
+    {
+        s_charge_queue = xQueueCreate(APP_SC8815_CHARGE_QUEUE_LEN, sizeof(uint8_t));
+    }
+}
+
+static void App_SC8815_LoadChargeRequest(void)
+{
+    uint8_t request;
+
+    if (s_charge_queue == NULL)
+    {
+        return;
+    }
+
+    if (xQueueReceive(s_charge_queue, &request, 0u) == pdPASS)
+    {
+        s_sc.charge_requested = (request != 0u);
+    }
 }
 
 /**
@@ -201,8 +230,11 @@ static void App_SC8815_Sample(void)
  */
 static void App_SC8815_PrintDebug(void)
 {
-    printf("sc ok:%u req:%u en:%u stby:%u status:%02x ac:%u short:%u otp:%u eoc:%u vbus:%lu vbat:%lu ibus:%lu ibat:%lu\r\n",
+    printf("sc ok:%u err:%u swap:%u bus:%02x req:%u en:%u stby:%u status:%02x ac:%u short:%u otp:%u eoc:%u vbus:%lu vbat:%lu ibus:%lu ibat:%lu\r\n",
            s_sc.comm_ok ? 1u : 0u,
+           (unsigned int)s_sc.last_error,
+           Int_SC8815_IsIicLineSwapped() ? 1u : 0u,
+           (unsigned int)Int_SC8815_GetBusLevels(),
            s_sc.charge_requested ? 1u : 0u,
            s_sc.chip_enabled ? 1u : 0u,
            s_sc.standby ? 1u : 0u,
@@ -243,6 +275,8 @@ void App_SC8815_Init(void)
     s_sc.vbat_mv = 0u;
     s_sc.ibus_ma = 0u;
     s_sc.ibat_ma = 0u;
+    s_sc.last_error = INT_SC8815_OK;
+    s_charge_queue = NULL;
     s_debug_ms = 0u;
 
     /*
@@ -268,7 +302,9 @@ void App_SC8815_Init(void)
  */
 void App_SC8815_Task(uint16_t interval_ms)
 {
+    App_SC8815_TaskInitQueue();
     App_SC8815_Sample();
+    App_SC8815_LoadChargeRequest();
     App_SC8815_ApplyChargeRequest();
 
     s_debug_ms = (uint16_t)(s_debug_ms + interval_ms);
@@ -287,6 +323,46 @@ void App_SC8815_Task(uint16_t interval_ms)
  */
 void App_SC8815_RequestCharge(bool enable)
 {
-    s_sc.charge_requested = enable;
-    App_SC8815_ApplyChargeRequest();
+    uint8_t request = enable ? 1u : 0u;
+
+    if (s_charge_queue == NULL)
+    {
+        s_sc.charge_requested = enable;
+        return;
+    }
+
+    if (xQueueOverwrite(s_charge_queue, &request) != pdPASS)
+    {
+        s_sc.charge_requested = enable;
+    }
+}
+
+bool App_SC8815_IsCommOk(void)
+{
+    return s_sc.comm_ok;
+}
+
+bool App_SC8815_IsAcOk(void)
+{
+    return s_sc.ac_ok;
+}
+
+bool App_SC8815_HasFault(void)
+{
+    return (!s_sc.comm_ok || s_sc.vbus_short || s_sc.otp);
+}
+
+bool App_SC8815_IsCharging(void)
+{
+    return (s_sc.charge_requested && s_sc.chip_enabled && !s_sc.standby);
+}
+
+uint32_t App_SC8815_GetVbusMv(void)
+{
+    return s_sc.vbus_mv;
+}
+
+uint32_t App_SC8815_GetVbatMv(void)
+{
+    return s_sc.vbat_mv;
 }
