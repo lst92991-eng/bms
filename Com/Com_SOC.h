@@ -6,13 +6,12 @@
 
 /**
  * @file Com_SOC.h
- * @brief SOC 核心算法层。
+ * @brief SOC 教学算法层。
  *
- * 第一阶段算法目标：
- * 1. Ah 积分负责连续 SOC 推进；
- * 2. 二阶 RC 模型估计极化电压，避免动态端电压直接查 OCV；
- * 3. EKF 在低电流并静置足够久后用单体电压修正 SOC；
- * 4. 显示 SOC 单独限速/滤波，不污染真实估计值。
+ * 当前版本保留三条主线：
+ * 1. Ah 积分负责连续跟踪；
+ * 2. OCV 查表负责上电播种和静置校正；
+ * 3. 一维 Kalman 负责把 OCV 校正“慢慢拉回来”。
  */
 
 typedef enum
@@ -40,22 +39,9 @@ typedef struct
     int32_t rest_current_ma;
     uint16_t rest_voltage_stable_mv;
 
-    float r0_ohm;
-    float r1_ohm;
-    float c1_f;
-    float r2_ohm;
-    float c2_f;
-
-    float process_q_soc;
-    float process_q_v;
-    float process_q_v1;
-    float process_q_v2;
-    float measure_r_mv;
-    bool dynamic_ekf_enable;
-    float measure_r_dynamic_mv;
-    float residual_reject_mv;
-    int32_t dynamic_current_delta_limit_ma;
-    uint32_t dynamic_current_stable_ms;
+    float kalman_q;
+    float kalman_r;
+    float ocv_update_limit_percent;
 
     uint16_t full_cell_mv;
     uint16_t empty_cell_mv;
@@ -92,66 +78,27 @@ typedef struct
     uint32_t remain_mah;
     bool seeded;
     Com_SOC_SeedSourceTypeDef seed_source;
+
     bool rest_ready;
     bool voltage_update_used;
     bool full_anchor_used;
     bool empty_anchor_used;
-    bool dynamic_ekf_used;
     uint8_t confidence_percent;
-    float model_cell_mv;
+
+    float ocv_soc_percent;
     float ocv_cell_mv;
-    float polar_v1_mv;
-    float polar_v2_mv;
-    float residual_mv;
+    float residual_percent;
     float kalman_gain_soc;
-    float kalman_gain_v1;
-    float kalman_gain_v2;
     float p_soc;
-    float p_v1;
-    float p_v2;
     float active_capacity_mah;
     float measured_cell_mv;
-    float ir0_mv;
     float soc_raw_percent;
     uint32_t rest_ms;
     uint32_t voltage_stable_ms;
-    uint32_t current_stable_ms;
-    bool ekf_used_avg_voltage;
 } Com_SOC_ResultTypeDef;
 
-/**
- * @brief 初始化 SOC 算法。
- */
 void Com_SOC_Init(const Com_SOC_ConfigTypeDef *config);
-
-/**
- * @brief 根据一次采样更新 SOC。
- */
 void Com_SOC_Update(const Com_SOC_SampleTypeDef *sample);
-
-/**
- * @brief 获取 SOC 全量结果。
- */
 void Com_SOC_GetResult(Com_SOC_ResultTypeDef *result);
-
-/**
- * @brief 获取 EKF 估计 SOC。
- */
-float Com_SOC_GetSocPercent(void);
-
-/**
- * @brief 获取显示 SOC。
- */
-float Com_SOC_GetDisplayPercent(void);
-
-/**
- * @brief 获取剩余容量估算。
- */
-uint32_t Com_SOC_GetRemainMah(void);
-
-/**
- * @brief 判断是否完成上电播种。
- */
-bool Com_SOC_IsSeeded(void);
 
 #endif /* COM_SOC_H */

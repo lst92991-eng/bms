@@ -584,24 +584,16 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDataMemory(uint16_t address, const ui
     return Int_BQ76952_WriteDirect(BQ76952_TRANSFER_CHECKSUM, meta, 2u);
 }
 
-Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDeviceNumber(uint16_t *device_number)
+Int_BQ76952_StatusTypeDef Int_BQ76952_SetBalanceMask(uint16_t mask)
 {
     uint8_t data[2];
-    Int_BQ76952_StatusTypeDef ret;
 
-    if (device_number == NULL)
-    {
-        return INT_BQ76952_ERROR_PARAM;
-    }
+    data[0] = (uint8_t)(mask & 0xFFu);
+    data[1] = (uint8_t)(mask >> 8u);
 
-    ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_DEVICE_NUMBER, data, 2u);
-    if (ret != INT_BQ76952_OK)
-    {
-        return ret;
-    }
-
-    *device_number = (uint16_t)(((uint16_t)data[1] << 8u) | data[0]);
-    return INT_BQ76952_OK;
+    return Int_BQ76952_WriteSubcommandData(BQ76952_SUBCMD_CB_ACTIVE_CELLS,
+                                           data,
+                                           2u);
 }
 
 Int_BQ76952_StatusTypeDef Int_BQ76952_EnterConfigUpdate(void)

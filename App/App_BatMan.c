@@ -21,7 +21,7 @@
  *
  * 维护边界：
  * - 不在 APP 层直接写 FET 控制命令强制开关 MOS。
- * - 不在 APP 层计算并写入 host cell-balance mask。
+ * - 均衡由 MCU 计算 mask，BQ 只执行 CB_ACTIVE_CELLS。
  * - `fault_active` 只用于监控和日志，不替代 BQ 的硬件保护动作。
  */
 
@@ -41,26 +41,24 @@
 #define APP_BATMAN_SOC_CURRENT_DEADBAND_MA      (30)
 #define APP_BATMAN_SOC_REST_CURRENT_MA          (100)
 #define APP_BATMAN_SOC_REST_STABLE_MV           (3u)
-#define APP_BATMAN_SOC_R0_OHM                   (0.012f)
-#define APP_BATMAN_SOC_R1_OHM                   (0.006f)
-#define APP_BATMAN_SOC_C1_F                     (8000.0f)
-#define APP_BATMAN_SOC_R2_OHM                   (0.003f)
-#define APP_BATMAN_SOC_C2_F                     (60000.0f)
-#define APP_BATMAN_SOC_PROCESS_Q_SOC            (0.00000001f)
-#define APP_BATMAN_SOC_PROCESS_Q_V1             (0.0000001f)
-#define APP_BATMAN_SOC_PROCESS_Q_V2             (0.0000001f)
-#define APP_BATMAN_SOC_MEASURE_R_MV             (25.0f)
-#define APP_BATMAN_SOC_MEASURE_R_DYN_MV         (80.0f)
-#define APP_BATMAN_SOC_RESIDUAL_REJECT_MV       (300.0f)
-#define APP_BATMAN_SOC_DYN_CURR_DELTA_MA        (300)
-#define APP_BATMAN_SOC_DYN_CURR_STABLE_MS       (5000u)
+#define APP_BATMAN_SOC_KALMAN_Q                 (0.002f)
+#define APP_BATMAN_SOC_KALMAN_R                 (9.0f)
+#define APP_BATMAN_SOC_OCV_STEP_LIMIT_PERCENT   (3.0f)
 #define APP_BATMAN_SOC_FULL_CURRENT_MA          (250)
 #define APP_BATMAN_SOC_EMPTY_CURRENT_MA         (250)
 #define APP_BATMAN_SOC_FULL_ANCHOR_HOLD_MS      (5000u)
 #define APP_BATMAN_SOC_EMPTY_ANCHOR_HOLD_MS     (5000u)
 #define APP_BATMAN_SOC_DISPLAY_RISE_PER_S       (1.5f)
 #define APP_BATMAN_SOC_DISPLAY_FALL_PER_S       (2.5f)
-#define APP_BATMAN_SOC_DYNAMIC_EKF_ENABLE       (0u)
+
+#define APP_BATMAN_BALANCE_PERIOD_MS            (10000u)
+#define APP_BATMAN_BALANCE_START_MIN_MV         (3900u)
+#define APP_BATMAN_BALANCE_STOP_MIN_MV          (3850u)
+#define APP_BATMAN_BALANCE_START_DELTA_MV       (40u)
+#define APP_BATMAN_BALANCE_STOP_DELTA_MV        (20u)
+#define APP_BATMAN_BALANCE_TEMP_MIN_C           (0)
+#define APP_BATMAN_BALANCE_TEMP_MAX_C           (45)
+#define APP_BATMAN_BALANCE_IC_TEMP_MAX_C        (70)
 
 /*
  * 早期 SOH 提醒因子。
@@ -90,8 +88,7 @@
 #define APP_BATMAN_DM_FET_OPTIONS_DEFAULT               (BQ76952_FET_OPTIONS_FET_CTRL_EN_MASK | \
                                                          BQ76952_FET_OPTIONS_SFET_MASK)
 #define APP_BATMAN_DM_CHG_PUMP_CONTROL_DEFAULT          (0x01u)
-#define APP_BATMAN_DM_BALANCING_CONFIGURATION_DEFAULT   (BQ76952_BALANCING_CB_CHG_MASK | \
-                                                         BQ76952_BALANCING_CB_NOSLEEP_MASK)
+#define APP_BATMAN_DM_BALANCING_CONFIGURATION_DEFAULT   (0x00u)
 
 /*
  * 对外遥测快照。
@@ -124,7 +121,7 @@ bool fault_active;
 float soc_percent;
 float display_soc_percent;
 uint8_t soc_confidence_percent;
-float soc_residual_mv;
+float soc_residual_percent;
 float soc_kalman_gain;
 float soc_p;
 float soc_active_capacity_mah;
@@ -133,6 +130,7 @@ uint32_t discharge_throughput_mah;
 uint32_t cycle_count;
 uint8_t soh_percent;
 uint8_t soh_confidence_percent;
+uint16_t balance_mask;
 
 /*
  * 文件内运行状态。
@@ -145,7 +143,19 @@ static bool s_temp_ts1_sample_valid = false;
 static bool s_temp_ts3_sample_valid = false;
 static bool s_temp_cell_sample_valid = false;
 static uint32_t s_debug_ms = 0u;
+static uint32_t s_balance_ms = 0u;
 static uint16_t s_power_config = 0u;
+static uint16_t s_last_balance_mask = BQ76952_CELL_MASK_NONE;
+
+static const uint16_t s_balance_cell_mask[APP_BATMAN_CELL_COUNT] =
+{
+    BQ76952_CELL_MASK_6S_HW_CELL1,
+    BQ76952_CELL_MASK_6S_HW_CELL2,
+    BQ76952_CELL_MASK_6S_HW_CELL3,
+    BQ76952_CELL_MASK_6S_HW_CELL4,
+    BQ76952_CELL_MASK_6S_HW_CELL5,
+    BQ76952_CELL_MASK_6S_HW_CELL6
+};
 
 /**
  * @brief 按 BQ76952 little-endian 格式读取 16-bit 值。
@@ -203,7 +213,7 @@ static void App_BatMan_ResetState(void)
     soc_percent = APP_BATMAN_DEFAULT_SOC_PERCENT;
     display_soc_percent = APP_BATMAN_DEFAULT_SOC_PERCENT;
     soc_confidence_percent = 0u;
-    soc_residual_mv = 0.0f;
+    soc_residual_percent = 0.0f;
     soc_kalman_gain = 0.0f;
     soc_p = 0.0f;
     soc_active_capacity_mah = (float)APP_BATMAN_CAPACITY_MAH;
@@ -212,6 +222,7 @@ static void App_BatMan_ResetState(void)
     cycle_count = 0u;
     soh_percent = 100u;
     soh_confidence_percent = 0u;
+    balance_mask = BQ76952_CELL_MASK_NONE;
 
     s_comm_fault = false;
     s_cells_sample_valid = false;
@@ -220,7 +231,9 @@ static void App_BatMan_ResetState(void)
     s_temp_ts3_sample_valid = false;
     s_temp_cell_sample_valid = false;
     s_debug_ms = 0u;
+    s_balance_ms = 0u;
     s_power_config = 0u;
+    s_last_balance_mask = BQ76952_CELL_MASK_NONE;
 }
 
 /**
@@ -304,8 +317,7 @@ static bool App_BatMan_ConfigBq(void)
     }
 
     /*
-     * 均衡不再由 host mask 驱动。APP 不写 CB_ACTIVE_CELLS，只保留
-     * BQ 自主管理所需的项目模式配置。
+     * 关闭 BQ 自主均衡，允许 MCU 后续用 CB_ACTIVE_CELLS 明确指定均衡串。
      */
     if (!App_BatMan_WriteConfigU8(BQ76952_DM_BALANCING_CONFIGURATION,
                                   APP_BATMAN_DM_BALANCING_CONFIGURATION_DEFAULT))
@@ -451,21 +463,9 @@ static void App_BatMan_InitAlgorithms(void)
     soc_config.rest_need_ms = APP_BATMAN_SOC_REST_NEED_MS;
     soc_config.rest_current_ma = APP_BATMAN_SOC_REST_CURRENT_MA;
     soc_config.rest_voltage_stable_mv = APP_BATMAN_SOC_REST_STABLE_MV;
-    soc_config.r0_ohm = APP_BATMAN_SOC_R0_OHM;
-    soc_config.r1_ohm = APP_BATMAN_SOC_R1_OHM;
-    soc_config.c1_f = APP_BATMAN_SOC_C1_F;
-    soc_config.r2_ohm = APP_BATMAN_SOC_R2_OHM;
-    soc_config.c2_f = APP_BATMAN_SOC_C2_F;
-    soc_config.process_q_soc = APP_BATMAN_SOC_PROCESS_Q_SOC;
-    soc_config.process_q_v = APP_BATMAN_SOC_PROCESS_Q_V1;
-    soc_config.process_q_v1 = APP_BATMAN_SOC_PROCESS_Q_V1;
-    soc_config.process_q_v2 = APP_BATMAN_SOC_PROCESS_Q_V2;
-    soc_config.measure_r_mv = APP_BATMAN_SOC_MEASURE_R_MV;
-    soc_config.dynamic_ekf_enable = (APP_BATMAN_SOC_DYNAMIC_EKF_ENABLE != 0u);
-    soc_config.measure_r_dynamic_mv = APP_BATMAN_SOC_MEASURE_R_DYN_MV;
-    soc_config.residual_reject_mv = APP_BATMAN_SOC_RESIDUAL_REJECT_MV;
-    soc_config.dynamic_current_delta_limit_ma = APP_BATMAN_SOC_DYN_CURR_DELTA_MA;
-    soc_config.dynamic_current_stable_ms = APP_BATMAN_SOC_DYN_CURR_STABLE_MS;
+    soc_config.kalman_q = APP_BATMAN_SOC_KALMAN_Q;
+    soc_config.kalman_r = APP_BATMAN_SOC_KALMAN_R;
+    soc_config.ocv_update_limit_percent = APP_BATMAN_SOC_OCV_STEP_LIMIT_PERCENT;
     soc_config.full_cell_mv = APP_BATMAN_CELL_FULL_MV;
     soc_config.empty_cell_mv = 3000u;
     soc_config.full_current_ma = APP_BATMAN_SOC_FULL_CURRENT_MA;
@@ -714,44 +714,6 @@ static void App_BatMan_UpdateFaultState(void)
 }
 
 /**
- * @brief 用平均单体电压给 SOC 初值播种。
- *
- * OCV 估算只有在接近静置时最可靠，但比固定 50% 更适合作为开机初值。
- */
-static void App_BatMan_SeedSoc(void)
-{
-    Com_SOC_SampleTypeDef sample;
-    Com_SOC_ResultTypeDef result;
-
-    if (!s_cells_sample_valid || (cell_avg_mv == 0u))
-    {
-        return;
-    }
-
-    sample.interval_ms = 0u;
-    sample.current_valid = false;
-    sample.current_ma = 0;
-    sample.cells_valid = true;
-    sample.cell_min_mv = cell_min_mv;
-    sample.cell_max_mv = cell_max_mv;
-    sample.cell_avg_mv = cell_avg_mv;
-    sample.temp_valid = s_temp_cell_sample_valid;
-    sample.temp_c = temp_cell_c;
-    sample.soh_valid = (soh_confidence_percent >= 50u);
-    sample.soh_percent = soh_percent;
-    Com_SOC_Update(&sample);
-
-    Com_SOC_GetResult(&result);
-    soc_percent = result.soc_percent;
-    display_soc_percent = result.display_percent;
-    soc_confidence_percent = result.confidence_percent;
-    soc_residual_mv = result.residual_mv;
-    soc_kalman_gain = result.kalman_gain_soc;
-    soc_p = result.p_soc;
-    soc_active_capacity_mah = result.active_capacity_mah;
-}
-
-/**
  * @brief 更新轻量 SOC 估算。
  *
  * 设计意图：
@@ -781,10 +743,96 @@ static void App_BatMan_UpdateSoc(uint32_t interval_ms)
     soc_percent = result.soc_percent;
     display_soc_percent = result.display_percent;
     soc_confidence_percent = result.confidence_percent;
-    soc_residual_mv = result.residual_mv;
+    soc_residual_percent = result.residual_percent;
     soc_kalman_gain = result.kalman_gain_soc;
     soc_p = result.p_soc;
     soc_active_capacity_mah = result.active_capacity_mah;
+}
+
+static uint16_t App_BatMan_MakeBalanceMask(void)
+{
+    uint8_t i;
+    uint8_t max_index = 0u;
+    uint8_t last_index = APP_BATMAN_CELL_COUNT;
+
+    if (s_comm_fault || fault_active || !s_cells_sample_valid)
+    {
+        return BQ76952_CELL_MASK_NONE;
+    }
+    if ((temp_cell_c < APP_BATMAN_BALANCE_TEMP_MIN_C) ||
+        (temp_cell_c > APP_BATMAN_BALANCE_TEMP_MAX_C) ||
+        (temp_ic_c >= APP_BATMAN_BALANCE_IC_TEMP_MAX_C))
+    {
+        return BQ76952_CELL_MASK_NONE;
+    }
+    if ((cell_min_mv < APP_BATMAN_BALANCE_STOP_MIN_MV) ||
+        (cell_delta_mv <= APP_BATMAN_BALANCE_STOP_DELTA_MV))
+    {
+        return BQ76952_CELL_MASK_NONE;
+    }
+
+    for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
+    {
+        if ((s_last_balance_mask & s_balance_cell_mask[i]) != 0u)
+        {
+            last_index = i;
+        }
+    }
+
+    for (i = 1u; i < APP_BATMAN_CELL_COUNT; i++)
+    {
+        if (cell_mv[i] > cell_mv[max_index])
+        {
+            max_index = i;
+        }
+    }
+
+    if ((cell_min_mv < APP_BATMAN_BALANCE_START_MIN_MV) ||
+        (cell_delta_mv < APP_BATMAN_BALANCE_START_DELTA_MV))
+    {
+        if ((last_index < APP_BATMAN_CELL_COUNT) &&
+            ((uint16_t)(cell_mv[last_index] - cell_min_mv) > APP_BATMAN_BALANCE_STOP_DELTA_MV))
+        {
+            return s_last_balance_mask;
+        }
+        return BQ76952_CELL_MASK_NONE;
+    }
+
+    if ((uint16_t)(cell_mv[max_index] - cell_min_mv) < APP_BATMAN_BALANCE_START_DELTA_MV)
+    {
+        if ((last_index < APP_BATMAN_CELL_COUNT) &&
+            ((uint16_t)(cell_mv[last_index] - cell_min_mv) > APP_BATMAN_BALANCE_STOP_DELTA_MV))
+        {
+            return s_last_balance_mask;
+        }
+        return BQ76952_CELL_MASK_NONE;
+    }
+
+    return s_balance_cell_mask[max_index];
+}
+
+static void App_BatMan_UpdateBalance(uint32_t interval_ms)
+{
+    uint16_t new_mask;
+
+    s_balance_ms += interval_ms;
+    if ((s_balance_ms < APP_BATMAN_BALANCE_PERIOD_MS) &&
+        !fault_active &&
+        !s_comm_fault)
+    {
+        return;
+    }
+    s_balance_ms = 0u;
+
+    new_mask = App_BatMan_MakeBalanceMask();
+    if (Int_BQ76952_SetBalanceMask(new_mask) != INT_BQ76952_OK)
+    {
+        s_comm_fault = true;
+        new_mask = BQ76952_CELL_MASK_NONE;
+    }
+
+    balance_mask = new_mask;
+    s_last_balance_mask = new_mask;
 }
 
 /**
@@ -840,7 +888,7 @@ static void App_BatMan_Sample(void)
  */
 static void App_BatMan_PrintDebug(void)
 {
-    printf("bat cell:%u/%u/%u d:%u stack:%lu curr:%ld temp:%d fet:%02x safe:%02x/%02x/%02x soc:%.1f sc:%u res:%.1f k:%.3f p:%.6f soh:%u cyc:%lu fault:%u\r\n",
+    printf("bat cell:%u/%u/%u d:%u stack:%lu curr:%ld temp:%d fet:%02x safe:%02x/%02x/%02x soc:%.1f sc:%u res:%.1f%% k:%.3f p:%.3f bal:%04x soh:%u cyc:%lu fault:%u\r\n",
            (unsigned int)cell_min_mv,
            (unsigned int)cell_avg_mv,
            (unsigned int)cell_max_mv,
@@ -854,9 +902,10 @@ static void App_BatMan_PrintDebug(void)
            safety_status_c,
            (double)display_soc_percent,
            soc_confidence_percent,
-           (double)soc_residual_mv,
+           (double)soc_residual_percent,
            (double)soc_kalman_gain,
            (double)soc_p,
+           balance_mask,
            soh_percent,
            (unsigned long)cycle_count,
            fault_active ? 1u : 0u);
@@ -976,6 +1025,7 @@ void App_BatMan_Init(void)
     App_BatMan_Sample();
     App_BatMan_UpdateHealth(0u);
     App_BatMan_UpdateSoc(0u);
+    App_BatMan_UpdateBalance(APP_BATMAN_BALANCE_PERIOD_MS);
     App_OLED_ShowIicStatus(!s_comm_fault);
     printf("batman init ok\r\n");
 }
@@ -997,6 +1047,7 @@ void App_BatMan_Task(uint32_t interval_ms)
     App_BatMan_Sample();
     App_BatMan_UpdateHealth(interval_ms);
     App_BatMan_UpdateSoc(interval_ms);
+    App_BatMan_UpdateBalance(interval_ms);
     App_OLED_ShowIicStatus(!s_comm_fault);
 
     s_debug_ms += interval_ms;

@@ -11,7 +11,6 @@ typedef struct
 } App_BuzzerNoteTypeDef;
 
 void App_Buzzer_Init(void);
-void App_Buzzer_PlayTable(const App_BuzzerNoteTypeDef *notes, uint16_t count);
 void App_Buzzer_PlayPowerOn(void);
 
 #endif /* APP_BUZZER_H */

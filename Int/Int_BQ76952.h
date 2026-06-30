@@ -122,8 +122,11 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_EnterConfigUpdate(void);
 Int_BQ76952_StatusTypeDef Int_BQ76952_ExitConfigUpdate(void);
 
 /**
- * @brief 读取器件编号，用于 bring-up 确认芯片响应。
+ * @brief 写 host 控制均衡 cell mask。
+ *
+ * mask 的 bit 与 BQ Cell1..Cell16 对应；本项目 6S 只能使用 BSP 中确认过的
+ * BQ76952_CELL_MASK_6S_HW_CELLx，不能按物理 cell0..5 直接移位。
  */
-Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDeviceNumber(uint16_t *device_number);
+Int_BQ76952_StatusTypeDef Int_BQ76952_SetBalanceMask(uint16_t mask);
 
 #endif /* INT_BQ76952_H */

@@ -57,7 +57,7 @@ extern bool fault_active;
 extern float soc_percent;
 extern float display_soc_percent;
 extern uint8_t soc_confidence_percent;
-extern float soc_residual_mv;
+extern float soc_residual_percent;
 extern float soc_kalman_gain;
 extern float soc_p;
 extern float soc_active_capacity_mah;
@@ -66,5 +66,6 @@ extern uint32_t discharge_throughput_mah;
 extern uint32_t cycle_count;
 extern uint8_t soh_percent;
 extern uint8_t soh_confidence_percent;
+extern uint16_t balance_mask;
 
 #endif /* APP_BATMAN_H */

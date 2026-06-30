@@ -23,9 +23,26 @@
 
 /*
  * SC8815 状态快照。
- * 文件内保存，外部通过 `App_SC8815_GetState()` 只读访问，避免上层绕过
- * 请求接口直接改充电状态。
+ * 当前只给本文件状态机使用，外部通过串口日志观察，不再暴露只读指针。
  */
+typedef struct
+{
+    bool comm_ok;
+    bool charge_requested;
+    bool chip_enabled;
+    bool standby;
+    bool ac_ok;
+    bool indet;
+    bool vbus_short;
+    bool otp;
+    bool eoc;
+    uint8_t status_raw;
+    uint32_t vbus_mv;
+    uint32_t vbat_mv;
+    uint32_t ibus_ma;
+    uint32_t ibat_ma;
+} App_SC8815_StateTypeDef;
+
 static App_SC8815_StateTypeDef s_sc;
 static uint16_t s_debug_ms = 0u;
 
@@ -272,13 +289,4 @@ void App_SC8815_RequestCharge(bool enable)
 {
     s_sc.charge_requested = enable;
     App_SC8815_ApplyChargeRequest();
-}
-
-/**
- * @brief 获取 SC8815 状态快照。
- * @return 只读状态指针，调用者不得修改其内容。
- */
-const App_SC8815_StateTypeDef *App_SC8815_GetState(void)
-{
-    return &s_sc;
 }
