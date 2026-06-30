@@ -138,7 +138,7 @@
           </Flash1>
           <bUseTDR>1</bUseTDR>
           <Flash2>BIN\UL2V8M.DLL</Flash2>
-          <Flash3></Flash3>
+          <Flash3>"" ()</Flash3>
           <Flash4></Flash4>
           <pFcarmOut></pFcarmOut>
           <pFcarmGrp></pFcarmGrp>
@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32G0B1xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32G0xx_HAL_Driver/Inc;../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32G0xx/Include;../Drivers/CMSIS/Include;Int;../../App;../../Com;../../Int</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32G0xx_HAL_Driver/Inc;../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32G0xx/Include;../Drivers/CMSIS/Include;FreeRTOS/include;FreeRTOS/portable/RVDS/ARM_CM0;Int;../../App;../../Com;../../Int</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -506,14 +506,49 @@
           <GroupName>Application/User/App</GroupName>
           <Files>
             <File>
+              <FileName>App_Main.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../App/App_Main.c</FilePath>
+            </File>
+            <File>
+              <FileName>App_Main.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../App/App_Main.h</FilePath>
+            </File>
+            <File>
               <FileName>App_BatMan.c</FileName>
               <FileType>1</FileType>
               <FilePath>../../App/App_BatMan.c</FilePath>
             </File>
             <File>
+              <FileName>App_BatMan_Config.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../App/App_BatMan_Config.c</FilePath>
+            </File>
+            <File>
+              <FileName>App_BatMan_Sample.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../App/App_BatMan_Sample.c</FilePath>
+            </File>
+            <File>
+              <FileName>App_BatMan_Estimator.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../App/App_BatMan_Estimator.c</FilePath>
+            </File>
+            <File>
+              <FileName>App_BatMan_Debug.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../App/App_BatMan_Debug.c</FilePath>
+            </File>
+            <File>
               <FileName>App_BatMan.h</FileName>
               <FileType>5</FileType>
               <FilePath>../../App/App_BatMan.h</FilePath>
+            </File>
+            <File>
+              <FileName>App_BatMan_Internal.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../App/App_BatMan_Internal.h</FilePath>
             </File>
             <File>
               <FileName>App_Buzzer.c</FileName>
@@ -689,6 +724,61 @@
               <FileName>Int_EEPROM.h</FileName>
               <FileType>5</FileType>
               <FilePath>../../Int/Int_EEPROM.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Middle/FreeRTOS</GroupName>
+          <Files>
+            <File>
+              <FileName>tasks.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>FreeRTOS/source/tasks.c</FilePath>
+            </File>
+            <File>
+              <FileName>queue.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>FreeRTOS/source/queue.c</FilePath>
+            </File>
+            <File>
+              <FileName>list.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>FreeRTOS/source/list.c</FilePath>
+            </File>
+            <File>
+              <FileName>timers.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>FreeRTOS/source/timers.c</FilePath>
+            </File>
+            <File>
+              <FileName>event_groups.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>FreeRTOS/source/event_groups.c</FilePath>
+            </File>
+            <File>
+              <FileName>stream_buffer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>FreeRTOS/source/stream_buffer.c</FilePath>
+            </File>
+            <File>
+              <FileName>croutine.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>FreeRTOS/source/croutine.c</FilePath>
+            </File>
+            <File>
+              <FileName>port.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>FreeRTOS/portable/RVDS/ARM_CM0/port.c</FilePath>
+            </File>
+            <File>
+              <FileName>heap_4.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>FreeRTOS/portable/MemMang/heap_4.c</FilePath>
+            </File>
+            <File>
+              <FileName>FreeRTOSConfig.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>FreeRTOS/include/FreeRTOSConfig.h</FilePath>
             </File>
           </Files>
         </Group>

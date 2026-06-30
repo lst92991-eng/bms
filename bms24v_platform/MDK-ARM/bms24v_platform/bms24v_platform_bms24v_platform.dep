@@ -90,11 +90,11 @@ I (../Core/Inc/tim.h)(0x6A422068)
 I (../Core/Inc/usart.h)(0x6A3DE252)
 I (../Core/Inc/gpio.h)(0x6A3DE251)
 I (D:\App\Keil\ARM\ARMCC\include\string.h)(0x5E8E3CC2)
-I (../../App/App_BatMan.h)(0x6A42372F)
+I (../../App/App_BatMan.h)(0x6A435BA8)
 I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
-I (../../App/App_Buzzer.h)(0x6A421DAE)
+I (../../App/App_Buzzer.h)(0x6A435FAA)
 I (../../App/App_OLED.h)(0x6A3E60BD)
-I (../../App/App_SC8815.h)(0x6A41CDBF)
+I (../../App/App_SC8815.h)(0x6A43617F)
 I (../../Int/Int_Button.h)(0x6A42145E)
 I (../../Int/Int_Buzzer.h)(0x6A422164)
 I (../../Int/Int_CanFd.h)(0x6A4214C9)
@@ -466,16 +466,12 @@ I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_tim.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_tim_ex.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart_ex.h)(0x6A329DE5)
-F (../../App/App_BatMan.c)(0x6A42587E)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_batman.o --omf_browse bms24v_platform\app_batman.crf --depend bms24v_platform\app_batman.d)
-I (../../App/App_BatMan.h)(0x6A42372F)
+F (../../App/App_BatMan.c)(0x6A436DF6)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_batman.o --omf_browse bms24v_platform\app_batman.crf --depend bms24v_platform\app_batman.d)
+I (../../App/App_BatMan.h)(0x6A435BA8)
 I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
 I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
-I (D:\App\Keil\ARM\ARMCC\include\stdio.h)(0x5E8E3CC2)
-I (../../App/App_OLED.h)(0x6A3E60BD)
-I (../../Com/Com_BQ76952.h)(0x6A42339A)
-I (../../Com/Com_SOC.h)(0x6A423C6C)
-I (../../Com/Com_SOH.h)(0x6A4235CC)
-I (../../Int/Int_BQ76952.h)(0x6A421B8D)
+I (../../App/App_BatMan_Internal.h)(0x6A436DE5)
+I (../../Int/Int_BQ76952.h)(0x6A43625B)
 I (../../Int/Int_BQ76952_BSP.h)(0x6A421B94)
 I (../Core/Inc/main.h)(0x6A3DE253)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal.h)(0x6A329DE5)
@@ -515,9 +511,42 @@ I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_tim.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_tim_ex.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart_ex.h)(0x6A329DE5)
-F (../../App/App_BatMan.h)(0x6A42372F)()
-F (../../App/App_Buzzer.c)(0x6A421DAE)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_buzzer.o --omf_browse bms24v_platform\app_buzzer.crf --depend bms24v_platform\app_buzzer.d)
-I (../../App/App_Buzzer.h)(0x6A421DAE)
+F (../../App/App_BatMan_Config.c)(0x6A436DDA)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_batman_config.o --omf_browse bms24v_platform\app_batman_config.crf --depend bms24v_platform\app_batman_config.d)
+I (../../App/App_BatMan_Internal.h)(0x6A436DE5)
+I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
+I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
+I (../../App/App_BatMan.h)(0x6A435BA8)
+I (../../Int/Int_BQ76952.h)(0x6A43625B)
+I (../../Int/Int_BQ76952_BSP.h)(0x6A421B94)
+F (../../App/App_BatMan_Sample.c)(0x6A43678E)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_batman_sample.o --omf_browse bms24v_platform\app_batman_sample.crf --depend bms24v_platform\app_batman_sample.d)
+I (../../App/App_BatMan_Internal.h)(0x6A436DE5)
+I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
+I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
+I (../../App/App_BatMan.h)(0x6A435BA8)
+I (../../Int/Int_BQ76952.h)(0x6A43625B)
+I (../../Com/Com_BQ76952.h)(0x6A435F4B)
+I (../../Int/Int_BQ76952_BSP.h)(0x6A421B94)
+F (../../App/App_BatMan_Estimator.c)(0x6A43678E)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_batman_estimator.o --omf_browse bms24v_platform\app_batman_estimator.crf --depend bms24v_platform\app_batman_estimator.d)
+I (../../App/App_BatMan_Internal.h)(0x6A436DE5)
+I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
+I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
+I (../../App/App_BatMan.h)(0x6A435BA8)
+I (../../Int/Int_BQ76952.h)(0x6A43625B)
+I (../../Com/Com_SOC.h)(0x6A435EF8)
+I (../../Com/Com_SOH.h)(0x6A4235CC)
+I (../../Int/Int_BQ76952_BSP.h)(0x6A421B94)
+F (../../App/App_BatMan_Debug.c)(0x6A436E00)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_batman_debug.o --omf_browse bms24v_platform\app_batman_debug.crf --depend bms24v_platform\app_batman_debug.d)
+I (../../App/App_BatMan_Internal.h)(0x6A436DE5)
+I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
+I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
+I (../../App/App_BatMan.h)(0x6A435BA8)
+I (../../Int/Int_BQ76952.h)(0x6A43625B)
+I (D:\App\Keil\ARM\ARMCC\include\stdio.h)(0x5E8E3CC2)
+I (../../App/App_OLED.h)(0x6A3E60BD)
+F (../../App/App_BatMan.h)(0x6A435BA8)()
+F (../../App/App_BatMan_Internal.h)(0x6A436DE5)()
+F (../../App/App_Buzzer.c)(0x6A435FAA)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_buzzer.o --omf_browse bms24v_platform\app_buzzer.crf --depend bms24v_platform\app_buzzer.d)
+I (../../App/App_Buzzer.h)(0x6A435FAA)
 I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
 I (../../Int/Int_Buzzer.h)(0x6A422164)
 I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
@@ -559,7 +588,7 @@ I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_tim.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_tim_ex.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart_ex.h)(0x6A329DE5)
-F (../../App/App_Buzzer.h)(0x6A421DAE)()
+F (../../App/App_Buzzer.h)(0x6A435FAA)()
 F (../../App/App_OLED.c)(0x6A41CDBF)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_oled.o --omf_browse bms24v_platform\app_oled.crf --depend bms24v_platform\app_oled.d)
 I (../../App/App_OLED.h)(0x6A3E60BD)
 I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
@@ -605,39 +634,37 @@ I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_tim_ex.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart_ex.h)(0x6A329DE5)
 F (../../App/App_OLED.h)(0x6A3E60BD)()
-F (../../App/App_SC8815.c)(0x6A41CDBF)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_sc8815.o --omf_browse bms24v_platform\app_sc8815.crf --depend bms24v_platform\app_sc8815.d)
-I (../../App/App_SC8815.h)(0x6A41CDBF)
+F (../../App/App_SC8815.c)(0x6A4361B4)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_sc8815.o --omf_browse bms24v_platform\app_sc8815.crf --depend bms24v_platform\app_sc8815.d)
+I (../../App/App_SC8815.h)(0x6A43617F)
 I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
 I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
 I (D:\App\Keil\ARM\ARMCC\include\stdio.h)(0x5E8E3CC2)
 I (../../Int/Int_SC8815.h)(0x6A390746)
 I (../../Int/Int_SC8815_BSP.h)(0x6A421B9C)
-F (../../App/App_SC8815.h)(0x6A41CDBF)()
-F (../../Com/Com_BQ76952.c)(0x6A4238A6)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\com_bq76952.o --omf_browse bms24v_platform\com_bq76952.crf --depend bms24v_platform\com_bq76952.d)
-I (../../Com/Com_BQ76952.h)(0x6A42339A)
+F (../../App/App_SC8815.h)(0x6A43617F)()
+F (../../Com/Com_BQ76952.c)(0x6A435F04)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\com_bq76952.o --omf_browse bms24v_platform\com_bq76952.crf --depend bms24v_platform\com_bq76952.d)
+I (../../Com/Com_BQ76952.h)(0x6A435F4B)
 I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
-I (../../Com/Com_BatteryParam.h)(0x6A4238A6)
-F (../../Com/Com_BQ76952.h)(0x6A42339A)()
-F (../../Com/Com_BatteryParam.c)(0x6A4238A6)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\com_batteryparam.o --omf_browse bms24v_platform\com_batteryparam.crf --depend bms24v_platform\com_batteryparam.d)
-I (../../Com/Com_BatteryParam.h)(0x6A4238A6)
+F (../../Com/Com_BQ76952.h)(0x6A435F4B)()
+F (../../Com/Com_BatteryParam.c)(0x6A435F6A)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\com_batteryparam.o --omf_browse bms24v_platform\com_batteryparam.crf --depend bms24v_platform\com_batteryparam.d)
+I (../../Com/Com_BatteryParam.h)(0x6A435F6A)
 I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
-F (../../Com/Com_BatteryParam.h)(0x6A4238A6)()
-F (../../Com/Com_SOC.c)(0x6A425890)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\com_soc.o --omf_browse bms24v_platform\com_soc.crf --depend bms24v_platform\com_soc.d)
-I (../../Com/Com_SOC.h)(0x6A423C6C)
+F (../../Com/Com_BatteryParam.h)(0x6A435F6A)()
+F (../../Com/Com_SOC.c)(0x6A436219)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\com_soc.o --omf_browse bms24v_platform\com_soc.crf --depend bms24v_platform\com_soc.d)
+I (../../Com/Com_SOC.h)(0x6A435EF8)
 I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
 I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
-I (../../Com/Com_BatteryParam.h)(0x6A4238A6)
+I (../../Com/Com_BatteryParam.h)(0x6A435F6A)
 I (D:\App\Keil\ARM\ARMCC\include\limits.h)(0x5E8E3CC2)
-I (D:\App\Keil\ARM\ARMCC\include\math.h)(0x5E8E3CC2)
-F (../../Com/Com_SOC.h)(0x6A423C6C)()
+F (../../Com/Com_SOC.h)(0x6A435EF8)()
 F (../../Com/Com_SOH.c)(0x6A4238BF)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\com_soh.o --omf_browse bms24v_platform\com_soh.crf --depend bms24v_platform\com_soh.d)
 I (../../Com/Com_SOH.h)(0x6A4235CC)
 I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
 I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
-I (../../Com/Com_BatteryParam.h)(0x6A4238A6)
+I (../../Com/Com_BatteryParam.h)(0x6A435F6A)
 F (../../Com/Com_SOH.h)(0x6A4235CC)()
-F (../../Int/Int_BQ76952.c)(0x6A421B43)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\int_bq76952.o --omf_browse bms24v_platform\int_bq76952.crf --depend bms24v_platform\int_bq76952.d)
-I (../../Int/Int_BQ76952.h)(0x6A421B8D)
+F (../../Int/Int_BQ76952.c)(0x6A435F9B)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\int_bq76952.o --omf_browse bms24v_platform\int_bq76952.crf --depend bms24v_platform\int_bq76952.d)
+I (../../Int/Int_BQ76952.h)(0x6A43625B)
 I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
 I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
 I (D:\App\Keil\ARM\ARMCC\include\stddef.h)(0x5E8E3CC2)
@@ -681,7 +708,7 @@ I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_tim.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_tim_ex.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart_ex.h)(0x6A329DE5)
-F (../../Int/Int_BQ76952.h)(0x6A421B8D)()
+F (../../Int/Int_BQ76952.h)(0x6A43625B)()
 F (../../Int/Int_BQ76952_BSP.h)(0x6A421B94)()
 F (../../Int/Int_OLED.c)(0x6A421602)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\int_oled.o --omf_browse bms24v_platform\int_oled.crf --depend bms24v_platform\int_oled.d)
 I (../../Int/Int_OLED.h)(0x6A42154B)

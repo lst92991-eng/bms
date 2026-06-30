@@ -73,8 +73,6 @@ void Error_Handler(void);
 #define LED_GREEN_GPIO_Port GPIOB
 #define BMS_MUX_BTN_Pin GPIO_PIN_3
 #define BMS_MUX_BTN_GPIO_Port GPIOD
-#define BMS_WAKE_DRV_Pin GPIO_PIN_3
-#define BMS_WAKE_DRV_GPIO_Port GPIOB
 #define BQ_INT_Pin GPIO_PIN_4
 #define BQ_INT_GPIO_Port GPIOB
 #define BQ_INT_EXTI_IRQn EXTI4_15_IRQn

@@ -21,18 +21,9 @@ typedef enum
  *
  * 只做本项目默认的硬件假设初始化：
  * - 打开 BQ I2C 的 CRC 模式；
- * - 释放唤醒脚到安全初值；
  * - 不写任何业务寄存器。
  */
 void Int_BQ76952_InitBoard(void);
-
-/**
- * @brief 拉起 BQ76952 唤醒脚。
- *
- * 当前 bring-up 阶段 PB3 保持浮空输入，不主动驱动 BMS_WAKE。
- * 如后续恢复 MCU 唤醒控制，再在 BSP/GPIO 中重新打开驱动。
- */
-void Int_BQ76952_WakeUp(void);
 
 /**
  * @brief 读取 BMS_INT / ALERT 现状。
@@ -44,7 +35,7 @@ bool Int_BQ76952_IsAlertAsserted(void);
  * @brief 复位 BQ76952。
  *
  * 这里是“协议复位”，不是 MCU 复位。
- * 先按板级时序唤醒，再发送 RESET 子命令。
+ * 新硬件只保留硬件 wake，软件不再驱动或等待 wake 引脚。
  */
 Int_BQ76952_StatusTypeDef Int_BQ76952_Reset(void);
 

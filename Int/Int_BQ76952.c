@@ -228,15 +228,6 @@ void Int_BQ76952_InitBoard(void)
     s_bq76952_crc_enabled = (BQ76952_I2C_CRC_DEFAULT_ENABLED != 0u);
 }
 
-void Int_BQ76952_WakeUp(void)
-{
-    /*
-     * PB3 当前按硬件排查要求保持浮空输入，不主动驱动 BMS_WAKE。
-     * 这里仅保留等待窗口，避免上层流程依赖唤醒函数时序时行为突变。
-     */
-    HAL_Delay(BQ76952_WAKE_SETTLE_MS);
-}
-
 bool Int_BQ76952_IsAlertAsserted(void)
 {
     return HAL_GPIO_ReadPin(BQ_INT_GPIO_Port, BQ_INT_Pin) == GPIO_PIN_RESET;
@@ -244,7 +235,6 @@ bool Int_BQ76952_IsAlertAsserted(void)
 
 Int_BQ76952_StatusTypeDef Int_BQ76952_Reset(void)
 {
-    Int_BQ76952_WakeUp();
     return Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_RESET);
 }
 

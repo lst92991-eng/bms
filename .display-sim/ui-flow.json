@@ -1,0 +1,229 @@
+{
+  "version": 1,
+  "title": "Watch NTC Settings Flow",
+  "device": {
+    "kind": "st7789",
+    "width": 240,
+    "height": 240
+  },
+  "entry": "settings-home",
+  "pages": [
+    {
+      "id": "settings-home",
+      "title": "设置菜单",
+      "kind": "menu",
+      "notes": "手表 UI 的父页面，点击 NTC 报警进入配置页。",
+      "children": [
+        "ntc-cn-saved"
+      ],
+      "actions": [
+        {
+          "id": "open-ntc",
+          "label": "NTC 报警",
+          "target": "ntc-cn-saved"
+        }
+      ],
+      "hotspots": [
+        {
+          "id": "open-ntc-row",
+          "label": "NTC 报警",
+          "rect": [
+            12,
+            44,
+            216,
+            42
+          ],
+          "target": "ntc-cn-saved"
+        }
+      ]
+    },
+    {
+      "id": "ntc-cn-saved",
+      "title": "NTC 报警 / 已保存",
+      "parent": "settings-home",
+      "kind": "settings",
+      "trace": "traces/01_ntc_cn_saved.jsonl",
+      "reference": "references/01_ntc_cn_saved_240.png",
+      "children": [
+        "ntc-cn-edit-threshold",
+        "ntc-save-dialog"
+      ],
+      "actions": [
+        {
+          "id": "edit-threshold",
+          "label": "编辑高温阈值",
+          "target": "ntc-cn-edit-threshold"
+        },
+        {
+          "id": "save",
+          "label": "保存配置",
+          "target": "ntc-save-dialog"
+        },
+        {
+          "id": "back",
+          "label": "返回设置菜单",
+          "command": "back"
+        }
+      ],
+      "hotspots": [
+        {
+          "id": "sensor-toggle",
+          "label": "NTC 传感器开关",
+          "rect": [
+            4,
+            38,
+            232,
+            40
+          ],
+          "target": "ntc-cn-saved"
+        },
+        {
+          "id": "high-limit",
+          "label": "高温阈值",
+          "rect": [
+            4,
+            112,
+            232,
+            38
+          ],
+          "target": "ntc-cn-edit-threshold"
+        },
+        {
+          "id": "footer-back",
+          "label": "返回",
+          "rect": [
+            170,
+            218,
+            60,
+            20
+          ],
+          "command": "back"
+        }
+      ]
+    },
+    {
+      "id": "ntc-en-saved",
+      "title": "NTC Alarm / Saved",
+      "parent": "settings-home",
+      "kind": "settings",
+      "trace": "traces/02_ntc_en_saved.jsonl",
+      "reference": "references/02_ntc_en_saved_240.png",
+      "actions": [
+        {
+          "id": "edit-high-limit",
+          "label": "Edit High Limit",
+          "target": "ntc-cn-edit-threshold"
+        },
+        {
+          "id": "back",
+          "label": "Back",
+          "command": "back"
+        }
+      ],
+      "hotspots": [
+        {
+          "id": "high-limit",
+          "label": "High Limit",
+          "rect": [
+            4,
+            112,
+            232,
+            38
+          ],
+          "target": "ntc-cn-edit-threshold"
+        }
+      ]
+    },
+    {
+      "id": "ntc-cn-edit-threshold",
+      "title": "高温阈值编辑态",
+      "parent": "ntc-cn-saved",
+      "kind": "editor",
+      "trace": "traces/03_ntc_cn_edit_yellow.jsonl",
+      "reference": "references/03_ntc_cn_edit_yellow_240.png",
+      "children": [
+        "ntc-save-dialog"
+      ],
+      "actions": [
+        {
+          "id": "confirm-edit",
+          "label": "确认编辑",
+          "target": "ntc-save-dialog"
+        },
+        {
+          "id": "back",
+          "label": "返回 NTC 报警",
+          "command": "back"
+        }
+      ],
+      "hotspots": [
+        {
+          "id": "value-chip",
+          "label": "70°C 数值编辑",
+          "rect": [
+            176,
+            112,
+            60,
+            38
+          ],
+          "target": "ntc-save-dialog"
+        },
+        {
+          "id": "footer-back",
+          "label": "返回",
+          "rect": [
+            170,
+            218,
+            60,
+            20
+          ],
+          "command": "back"
+        }
+      ]
+    },
+    {
+      "id": "ntc-save-dialog",
+      "title": "保存确认弹窗",
+      "parent": "ntc-cn-edit-threshold",
+      "kind": "dialog",
+      "trace": "traces/04_ntc_cn_save_dialog.jsonl",
+      "reference": "references/04_ntc_cn_save_dialog_240.png",
+      "actions": [
+        {
+          "id": "confirm",
+          "label": "确认保存",
+          "target": "ntc-cn-saved"
+        },
+        {
+          "id": "cancel",
+          "label": "返回编辑",
+          "command": "back"
+        }
+      ],
+      "hotspots": [
+        {
+          "id": "confirm-button",
+          "label": "确认",
+          "rect": [
+            34,
+            150,
+            76,
+            30
+          ],
+          "target": "ntc-cn-saved"
+        },
+        {
+          "id": "return-button",
+          "label": "返回",
+          "rect": [
+            130,
+            150,
+            78,
+            30
+          ],
+          "command": "back"
+        }
+      ]
+    }
+  ]
+}

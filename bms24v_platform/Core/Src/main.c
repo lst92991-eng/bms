@@ -29,15 +29,7 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 
-#include "App_BatMan.h"
-#include "App_Buzzer.h"
-#include "App_OLED.h"
-#include "App_SC8815.h"
-#include "Int_Button.h"
-#include "Int_Buzzer.h"
-#include "Int_CanFd.h"
-#include "Int_EEPROM.h"
-#include "Int_Led.h"
+#include "App_Main.h"
 
 /* USER CODE END Includes */
 
@@ -49,9 +41,6 @@
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
 #define BRINGUP_UART_TIMEOUT_MS           100u
-#define APP_BATMAN_TASK_PERIOD_MS         1000u
-#define APP_SC8815_TASK_PERIOD_MS         1000u
-#define INT_BOARD_IO_TASK_PERIOD_MS       10u
 
 /* USER CODE END PD */
 
@@ -97,9 +86,6 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
-  uint32_t last_batman_task_tick = 0u;
-  uint32_t last_sc8815_task_tick = 0u;
-  uint32_t last_board_io_task_tick = 0u;
 
   /* USER CODE END 1 */
 
@@ -131,20 +117,8 @@ int main(void)
   Bringup_UartPrint("\r\nBMS24V platform safe boot\r\n");
   Bringup_UartPrint("SC8815 standby monitor after init: CE_N=0 PSTOP=1, charge request off\r\n");
   Bringup_UartPrint("USART1 115200 8N1\r\n");
-  Bringup_UartPrint("run App_BatMan and App_SC8815 upper logic\r\n");
-  Int_Led_Init();
-  Int_Buzzer_Init();
-  App_Buzzer_Init();
-  Int_Button_Init();
-  (void)Int_CanFd_Init();
-  (void)Int_EEPROM_Init();
-  //App_Buzzer_PlayPowerOn();
-  App_OLED_Init();
-  App_SC8815_Init();
-  App_BatMan_Init();
-  last_batman_task_tick = HAL_GetTick();
-  last_sc8815_task_tick = HAL_GetTick();
-  last_board_io_task_tick = HAL_GetTick();
+  Bringup_UartPrint("run App_Main task layer\r\n");
+  App_Main();
 
   /* USER CODE END 2 */
 
@@ -155,23 +129,6 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    if ((uint32_t)(HAL_GetTick() - last_board_io_task_tick) >= INT_BOARD_IO_TASK_PERIOD_MS) {
-      last_board_io_task_tick = HAL_GetTick();
-      Int_Button_Task(last_board_io_task_tick);
-      Int_Buzzer_Task(last_board_io_task_tick);
-    }
-
-    if ((uint32_t)(HAL_GetTick() - last_batman_task_tick) >= APP_BATMAN_TASK_PERIOD_MS) {
-      last_batman_task_tick = HAL_GetTick();
-      App_BatMan_Task(APP_BATMAN_TASK_PERIOD_MS);
-    }
-
-    if ((uint32_t)(HAL_GetTick() - last_sc8815_task_tick) >= APP_SC8815_TASK_PERIOD_MS) {
-      last_sc8815_task_tick = HAL_GetTick();
-      App_SC8815_Task(APP_SC8815_TASK_PERIOD_MS);
-    }
-
-    HAL_Delay(10u);
   }
   /* USER CODE END 3 */
 }

@@ -2,11 +2,7 @@ bms24v_platform\app_batman.o: ../../App/App_BatMan.c
 bms24v_platform\app_batman.o: ../../App/App_BatMan.h
 bms24v_platform\app_batman.o: D:\App\Keil\ARM\ARMCC\Bin\..\include\stdbool.h
 bms24v_platform\app_batman.o: D:\App\Keil\ARM\ARMCC\Bin\..\include\stdint.h
-bms24v_platform\app_batman.o: D:\App\Keil\ARM\ARMCC\Bin\..\include\stdio.h
-bms24v_platform\app_batman.o: ../../App/App_OLED.h
-bms24v_platform\app_batman.o: ../../Com/Com_BQ76952.h
-bms24v_platform\app_batman.o: ../../Com/Com_SOC.h
-bms24v_platform\app_batman.o: ../../Com/Com_SOH.h
+bms24v_platform\app_batman.o: ../../App/App_BatMan_Internal.h
 bms24v_platform\app_batman.o: ../../Int/Int_BQ76952.h
 bms24v_platform\app_batman.o: ../../Int/Int_BQ76952_BSP.h
 bms24v_platform\app_batman.o: ../Core/Inc/main.h

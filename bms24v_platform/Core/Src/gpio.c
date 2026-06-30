@@ -100,12 +100,6 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   HAL_GPIO_Init(BMS_MUX_BTN_GPIO_Port, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : BMS_WAKE_DRV_Pin */
-  GPIO_InitStruct.Pin = BMS_WAKE_DRV_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(BMS_WAKE_DRV_GPIO_Port, &GPIO_InitStruct);
-
   /*Configure GPIO pin : BQ_INT_Pin */
   GPIO_InitStruct.Pin = BQ_INT_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_IT_FALLING;
