@@ -230,6 +230,7 @@ static void App_BatMan_LoadTemperature(void)
  */
 static void App_BatMan_LoadBqStatus(void)
 {
+    uint8_t data[2];
     uint16_t value16;
     uint8_t value8;
 
@@ -245,9 +246,25 @@ static void App_BatMan_LoadBqStatus(void)
     {
         battery_status = value16;
     }
+    if (Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_MANUFACTURING_STATUS, data, 2u) == INT_BQ76952_OK)
+    {
+        manufacturing_status = App_BatMan_ReadU16Le(data);
+    }
     if (App_BatMan_ReadDirectU8(BQ76952_CMD_FET_STATUS, &value8))
     {
         fet_status = value8;
+    }
+    if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_ALERT_A, &value8))
+    {
+        safety_alert_a = value8;
+    }
+    if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_ALERT_B, &value8))
+    {
+        safety_alert_b = value8;
+    }
+    if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_ALERT_C, &value8))
+    {
+        safety_alert_c = value8;
     }
     if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_STATUS_A, &value8))
     {
@@ -260,6 +277,22 @@ static void App_BatMan_LoadBqStatus(void)
     if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_STATUS_C, &value8))
     {
         safety_status_c = value8;
+    }
+    if (App_BatMan_ReadDirectU8(BQ76952_CMD_PF_STATUS_A, &value8))
+    {
+        pf_status_a = value8;
+    }
+    if (App_BatMan_ReadDirectU8(BQ76952_CMD_PF_STATUS_B, &value8))
+    {
+        pf_status_b = value8;
+    }
+    if (App_BatMan_ReadDirectU8(BQ76952_CMD_PF_STATUS_C, &value8))
+    {
+        pf_status_c = value8;
+    }
+    if (App_BatMan_ReadDirectU8(BQ76952_CMD_PF_STATUS_D, &value8))
+    {
+        pf_status_d = value8;
     }
 }
 

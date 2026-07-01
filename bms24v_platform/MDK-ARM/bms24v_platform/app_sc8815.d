@@ -50,6 +50,8 @@ bms24v_platform\app_sc8815.o: FreeRTOS/portable/RVDS/ARM_CM0/portmacro.h
 bms24v_platform\app_sc8815.o: FreeRTOS/include/mpu_wrappers.h
 bms24v_platform\app_sc8815.o: ../../Int/Int_SC8815.h
 bms24v_platform\app_sc8815.o: ../../Int/Int_SC8815_BSP.h
+bms24v_platform\app_sc8815.o: ../Core/Inc/gpio.h
+bms24v_platform\app_sc8815.o: ../Core/Inc/main.h
 bms24v_platform\app_sc8815.o: FreeRTOS/include/queue.h
 bms24v_platform\app_sc8815.o: FreeRTOS/include/task.h
 bms24v_platform\app_sc8815.o: FreeRTOS/include/list.h

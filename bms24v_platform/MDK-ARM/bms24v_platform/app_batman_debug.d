@@ -6,3 +6,4 @@ bms24v_platform\app_batman_debug.o: ../../App/App_BatMan.h
 bms24v_platform\app_batman_debug.o: ../../Int/Int_BQ76952.h
 bms24v_platform\app_batman_debug.o: D:\App\Keil\ARM\ARMCC\Bin\..\include\stdio.h
 bms24v_platform\app_batman_debug.o: ../../App/App_OLED.h
+bms24v_platform\app_batman_debug.o: ../../Int/Int_BQ76952_BSP.h

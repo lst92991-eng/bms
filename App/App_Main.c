@@ -134,30 +134,30 @@ void display_task(void *arg)
  */
 static void App_Main_Init(void)
 {
-    printf("app init: led\r\n");
+    printf("APP初始化: LED\r\n");
     Int_Led_Init();
 #if APP_MAIN_BUZZER_ENABLE
-    printf("app init: buzzer int\r\n");
+    printf("APP初始化: 蜂鸣器底层\r\n");
     Int_Buzzer_Init();
-    printf("app init: buzzer app\r\n");
+    printf("APP初始化: 蜂鸣器应用\r\n");
     App_Buzzer_Init();
 #endif
-    printf("app init: button\r\n");
+    printf("APP初始化: 按键\r\n");
     Int_Button_Init();
-    printf("app init: canfd\r\n");
+    printf("APP初始化: CANFD\r\n");
     (void)Int_CanFd_Init();
-    printf("app init: eeprom\r\n");
+    printf("APP初始化: EEPROM\r\n");
     (void)Int_EEPROM_Init();
 
-    printf("app init: oled\r\n");
+    printf("APP初始化: OLED\r\n");
     App_OLED_Init();
-    printf("app init: sc8815\r\n");
+    printf("APP初始化: SC8815\r\n");
     App_SC8815_Init();
-    printf("app init: batman\r\n");
+    printf("APP初始化: 电池管理\r\n");
     App_BatMan_Init();
-    printf("app init: power\r\n");
+    printf("APP初始化: 电源管理\r\n");
     App_Power_Init();
-    printf("app init: done\r\n");
+    printf("APP初始化: 完成\r\n");
 }
 
 /**
@@ -170,7 +170,7 @@ void App_Main(void)
 {
     App_Main_Init();
 
-    printf("rtos create tasks\r\n");
+    printf("RTOS: 创建任务\r\n");
     xTaskCreate(board_io_task, "board_io_task", 256, NULL, 3, NULL);
     xTaskCreate(can_task, "can_task", 512, NULL, 2, NULL);
     xTaskCreate(batman_task, "batman_task", 768, NULL, 3, NULL);
@@ -178,7 +178,7 @@ void App_Main(void)
     xTaskCreate(nvm_task, "nvm_task", 384, NULL, 1, NULL);
     xTaskCreate(display_task, "display_task", 384, NULL, 1, NULL);
 
-    printf("rtos start scheduler\r\n");
+    printf("RTOS: 启动调度器\r\n");
     vTaskStartScheduler();
 
     while (1)

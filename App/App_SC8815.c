@@ -5,6 +5,7 @@
 #include "FreeRTOS.h"
 #include "Int_SC8815.h"
 #include "Int_SC8815_BSP.h"
+#include "gpio.h"
 #include "queue.h"
 
 /**
@@ -21,6 +22,7 @@
  * - `charge_requested = false`：bring-up 阶段不会自动启动充电。
  */
 
+#define APP_SC8815_BIT(value, mask)                (((value) & (mask)) != 0u ? 1u : 0u)
 #define APP_SC8815_DEBUG_PERIOD_MS              (1000u)
 #define APP_SC8815_CHARGE_QUEUE_LEN             (1u)
 
@@ -45,6 +47,18 @@ typedef struct
     uint32_t ibus_ma;
     uint32_t ibat_ma;
     uint8_t last_error;
+    uint8_t ce_n_pin;
+    uint8_t pstop_pin;
+    uint8_t vbat_set_reg;
+    uint8_t ratio_reg;
+    uint8_t ibus_lim_reg;
+    uint8_t ibat_lim_reg;
+    uint8_t vinreg_reg;
+    uint8_t ctrl0_reg;
+    uint8_t ctrl1_reg;
+    uint8_t ctrl2_reg;
+    uint8_t ctrl3_reg;
+    uint8_t mask_reg;
 } App_SC8815_StateTypeDef;
 
 static App_SC8815_StateTypeDef s_sc;
@@ -61,6 +75,13 @@ static void App_SC8815_SetStandbyMonitor(void)
 {
     (void)Int_SC8815_SetStandby(true);
     (void)Int_SC8815_SetChipEnabled(true);
+    /*
+     * 本板 24V 输入 PMOS 不是接 PGATE，而是由 GPO->R1->Q4 gate 控制。
+     * 回到待机时释放 GPO，避免 SC 停止后输入开关仍被拉低导通。
+     */
+    (void)Int_SC8815_UpdateReg(SC8815_REG_CTRL3_SET,
+                               SC8815_CTRL3_SET_GPO_CTRL_MASK,
+                               0u);
     s_sc.standby = true;
     s_sc.chip_enabled = true;
 }
@@ -163,9 +184,12 @@ static void App_SC8815_ApplyChargeRequest(void)
         !App_SC8815_Check(Int_SC8815_UpdateReg(SC8815_REG_CTRL2_SET,
                                                0u,
                                                SC8815_PROJECT_CTRL2_SAFE_SET_MASK)) ||
+        /*
+         * 原理图中 PGATE/DITHER 未接；实际 24V_IN->VBUS 前级 PMOS 由 GPO 拉低开启。
+         */
         !App_SC8815_Check(Int_SC8815_UpdateReg(SC8815_REG_CTRL3_SET,
                                                SC8815_PROJECT_CTRL3_SAFE_CLEAR_MASK,
-                                               0u)) ||
+                                               SC8815_CTRL3_SET_GPO_CTRL_MASK)) ||
         !App_SC8815_Check(Int_SC8815_UpdateReg(SC8815_REG_MASK,
                                                0u,
                                                SC8815_PROJECT_MASK_SAFE_SET_MASK)) ||
@@ -222,6 +246,40 @@ static void App_SC8815_Sample(void)
                                                        &s_sc.ibat_ma));
 }
 
+static uint8_t App_SC8815_ReadPinLevel(GPIO_TypeDef *port, uint16_t pin)
+{
+    return (HAL_GPIO_ReadPin(port, pin) == GPIO_PIN_SET) ? 1u : 0u;
+}
+
+static void App_SC8815_UpdateDebugRegs(void)
+{
+    s_sc.ce_n_pin = App_SC8815_ReadPinLevel(SC8815_CE_N_GPIO_Port,
+                                            SC8815_CE_N_Pin);
+    s_sc.pstop_pin = App_SC8815_ReadPinLevel(SC8815_PSTOP_GPIO_Port,
+                                             SC8815_PSTOP_Pin);
+
+    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_VBAT_SET,
+                                              &s_sc.vbat_set_reg));
+    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_RATIO,
+                                              &s_sc.ratio_reg));
+    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_IBUS_LIM_SET,
+                                              &s_sc.ibus_lim_reg));
+    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_IBAT_LIM_SET,
+                                              &s_sc.ibat_lim_reg));
+    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_VINREG_SET,
+                                              &s_sc.vinreg_reg));
+    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_CTRL0_SET,
+                                              &s_sc.ctrl0_reg));
+    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_CTRL1_SET,
+                                              &s_sc.ctrl1_reg));
+    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_CTRL2_SET,
+                                              &s_sc.ctrl2_reg));
+    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_CTRL3_SET,
+                                              &s_sc.ctrl3_reg));
+    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_MASK,
+                                              &s_sc.mask_reg));
+}
+
 /**
  * @brief 输出 SC8815 紧凑调试信息。
  *
@@ -230,7 +288,9 @@ static void App_SC8815_Sample(void)
  */
 static void App_SC8815_PrintDebug(void)
 {
-    printf("sc ok:%u err:%u swap:%u bus:%02x req:%u en:%u stby:%u status:%02x ac:%u short:%u otp:%u eoc:%u vbus:%lu vbat:%lu ibus:%lu ibat:%lu\r\n",
+    App_SC8815_UpdateDebugRegs();
+
+    printf("SC 通信:%u 错:%u 交换:%u 总线:%02x 请求:%u 使能:%u 待机:%u 状态:%02x AC:%u 短路:%u 过温:%u 充满:%u VBUS:%lu VBAT:%lu IBUS:%lu IBAT:%lu\r\n",
            s_sc.comm_ok ? 1u : 0u,
            (unsigned int)s_sc.last_error,
            Int_SC8815_IsIicLineSwapped() ? 1u : 0u,
@@ -247,6 +307,37 @@ static void App_SC8815_PrintDebug(void)
            (unsigned long)s_sc.vbat_mv,
            (unsigned long)s_sc.ibus_ma,
            (unsigned long)s_sc.ibat_ma);
+    printf("SC硬件 CE_N:%u PSTOP:%u REG VBAT:%02x RATIO:%02x LIM:%02x/%02x CTRL:%02x/%02x/%02x/%02x MASK:%02x\r\n",
+           (unsigned int)s_sc.ce_n_pin,
+           (unsigned int)s_sc.pstop_pin,
+           (unsigned int)s_sc.vbat_set_reg,
+           (unsigned int)s_sc.ratio_reg,
+           (unsigned int)s_sc.ibus_lim_reg,
+           (unsigned int)s_sc.ibat_lim_reg,
+           (unsigned int)s_sc.ctrl0_reg,
+           (unsigned int)s_sc.ctrl1_reg,
+           (unsigned int)s_sc.ctrl2_reg,
+           (unsigned int)s_sc.ctrl3_reg,
+           (unsigned int)s_sc.mask_reg);
+    printf("SC配置 VINREG:%02x 状态位 AC_OK:%u INDET:%u VBUS_SHORT:%u OTP:%u EOC:%u RSV:%02x\r\n",
+           (unsigned int)s_sc.vinreg_reg,
+           APP_SC8815_BIT(s_sc.status_raw, SC8815_STATUS_AC_OK_MASK),
+           APP_SC8815_BIT(s_sc.status_raw, SC8815_STATUS_INDET_MASK),
+           APP_SC8815_BIT(s_sc.status_raw, SC8815_STATUS_VBUS_SHORT_MASK),
+           APP_SC8815_BIT(s_sc.status_raw, SC8815_STATUS_OTP_MASK),
+           APP_SC8815_BIT(s_sc.status_raw, SC8815_STATUS_EOC_MASK),
+           (unsigned int)(s_sc.status_raw & SC8815_STATUS_RESERVED_MASK));
+    printf("SC控制位 OTG:%u PGATE开:%u GPO低:%u ADC:%u FACTORY:%u IBAT基准:%u 禁涓流:%u 禁终止:%u 禁短路折返:%u MASK:%02x\r\n",
+           APP_SC8815_BIT(s_sc.ctrl0_reg, SC8815_CTRL0_SET_EN_OTG_MASK),
+           APP_SC8815_BIT(s_sc.ctrl3_reg, SC8815_CTRL3_SET_EN_PGATE_MASK),
+           APP_SC8815_BIT(s_sc.ctrl3_reg, SC8815_CTRL3_SET_GPO_CTRL_MASK),
+           APP_SC8815_BIT(s_sc.ctrl3_reg, SC8815_CTRL3_SET_AD_START_MASK),
+           APP_SC8815_BIT(s_sc.ctrl2_reg, SC8815_CTRL2_SET_FACTORY_MASK),
+           APP_SC8815_BIT(s_sc.ctrl1_reg, SC8815_CTRL1_SET_ICHAR_SEL_MASK),
+           APP_SC8815_BIT(s_sc.ctrl1_reg, SC8815_CTRL1_SET_DIS_TRICKLE_MASK),
+           APP_SC8815_BIT(s_sc.ctrl1_reg, SC8815_CTRL1_SET_DIS_TERM_MASK),
+           APP_SC8815_BIT(s_sc.ctrl3_reg, SC8815_CTRL3_SET_DIS_SHORT_FOLDBACK_MASK),
+           (unsigned int)s_sc.mask_reg);
 }
 
 /**
@@ -276,6 +367,18 @@ void App_SC8815_Init(void)
     s_sc.ibus_ma = 0u;
     s_sc.ibat_ma = 0u;
     s_sc.last_error = INT_SC8815_OK;
+    s_sc.ce_n_pin = 1u;
+    s_sc.pstop_pin = 1u;
+    s_sc.vbat_set_reg = 0u;
+    s_sc.ratio_reg = 0u;
+    s_sc.ibus_lim_reg = 0u;
+    s_sc.ibat_lim_reg = 0u;
+    s_sc.vinreg_reg = 0u;
+    s_sc.ctrl0_reg = 0u;
+    s_sc.ctrl1_reg = 0u;
+    s_sc.ctrl2_reg = 0u;
+    s_sc.ctrl3_reg = 0u;
+    s_sc.mask_reg = 0u;
     s_charge_queue = NULL;
     s_debug_ms = 0u;
 
@@ -292,7 +395,7 @@ void App_SC8815_Init(void)
      */
     (void)App_SC8815_Check(Int_SC8815_SetAdcEnabled(true));
     App_SC8815_Sample();
-    printf("sc init standby monitor ok:%u\r\n", s_sc.comm_ok ? 1u : 0u);
+    printf("SC初始化待机监控 通信:%u\r\n", s_sc.comm_ok ? 1u : 0u);
 }
 
 /**

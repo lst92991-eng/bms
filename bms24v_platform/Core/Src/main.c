@@ -114,10 +114,10 @@ int main(void)
   MX_I2C1_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
-  Bringup_UartPrint("\r\nBMS24V platform safe boot\r\n");
-  Bringup_UartPrint("SC8815 standby monitor after init: CE_N=0 PSTOP=1, charge request off\r\n");
-  Bringup_UartPrint("USART1 115200 8N1\r\n");
-  Bringup_UartPrint("run App_Main task layer\r\n");
+  Bringup_UartPrint("\r\nBMS24V 平台安全启动\r\n");
+  Bringup_UartPrint("SC8815 初始化后保持监控待机: CE_N=0 PSTOP=1 充电请求关闭\r\n");
+  Bringup_UartPrint("串口 USART1 115200 8N1\r\n");
+  Bringup_UartPrint("进入 App_Main 任务层\r\n");
   App_Main();
 
   /* USER CODE END 2 */

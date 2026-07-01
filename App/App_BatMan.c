@@ -46,10 +46,19 @@ int16_t temp_fet_c;
 uint16_t alarm_status;
 uint16_t alarm_raw;
 uint16_t battery_status;
+uint16_t manufacturing_status;
 uint8_t fet_status;
+uint8_t fet_control_request;
+uint8_t safety_alert_a;
+uint8_t safety_alert_b;
+uint8_t safety_alert_c;
 uint8_t safety_status_a;
 uint8_t safety_status_b;
 uint8_t safety_status_c;
+uint8_t pf_status_a;
+uint8_t pf_status_b;
+uint8_t pf_status_c;
+uint8_t pf_status_d;
 bool fault_active;
 float soc_percent;
 float display_soc_percent;
@@ -137,10 +146,19 @@ static void App_BatMan_ResetState(void)
     alarm_status = 0u;
     alarm_raw = 0u;
     battery_status = 0u;
+    manufacturing_status = 0u;
     fet_status = 0u;
+    fet_control_request = 0u;
+    safety_alert_a = 0u;
+    safety_alert_b = 0u;
+    safety_alert_c = 0u;
     safety_status_a = 0u;
     safety_status_b = 0u;
     safety_status_c = 0u;
+    pf_status_a = 0u;
+    pf_status_b = 0u;
+    pf_status_c = 0u;
+    pf_status_d = 0u;
     fault_active = false;
     soc_percent = APP_BATMAN_DEFAULT_SOC_PERCENT;
     display_soc_percent = APP_BATMAN_DEFAULT_SOC_PERCENT;
@@ -180,13 +198,13 @@ void App_BatMan_Init(void)
     uint16_t device_number;
     Int_BQ76952_StatusTypeDef ret;
 
-    printf("batman init start\r\n");
+    printf("电池管理初始化: 开始\r\n");
 
     /* OLED 先显示 FAIL，直到 Device Number 读取成功。 */
     App_BatMan_ResetState();
     App_BatMan_InitAlgorithms();
     App_BatMan_ShowIicStatus(false);
-    printf("batman init reset state done\r\n");
+    printf("电池管理初始化: 状态复位完成\r\n");
 
     /*
      * CRC 模式必须在第一条 BQ 命令前确定；主从 CRC 设置不一致时，
@@ -194,24 +212,24 @@ void App_BatMan_Init(void)
      */
     Int_BQ76952_InitBoard();
     Int_BQ76952_SetCrcEnabled(APP_BATMAN_CRC_BOOT_ENABLE != 0u);
-    printf("bq board init done crc:%u\r\n", APP_BATMAN_CRC_BOOT_ENABLE != 0u ? 1u : 0u);
+    printf("BQ板级初始化完成 CRC:%u\r\n", APP_BATMAN_CRC_BOOT_ENABLE != 0u ? 1u : 0u);
 
     /*
      * reset 失败时不继续写配置，避免芯片处于未知状态时留下半配置。
      */
-    printf("bq reset start\r\n");
+    printf("BQ复位: 开始\r\n");
     ret = Int_BQ76952_Reset();
     if (ret != INT_BQ76952_OK)
     {
         App_BatMan_PrintBqResetFail(ret);
         return;
     }
-    printf("bq reset done\r\n");
-    printf("bq reset settle begin tick:%lu primask:%lu\r\n",
+    printf("BQ复位: 完成\r\n");
+    printf("BQ复位等待: 开始 tick:%lu primask:%lu\r\n",
            HAL_GetTick(),
            __get_PRIMASK());
     App_BatMan_BusyDelayMs(APP_BATMAN_BQ_RESET_SETTLE_MS);
-    printf("bq reset settle end tick:%lu primask:%lu\r\n",
+    printf("BQ复位等待: 结束 tick:%lu primask:%lu\r\n",
            HAL_GetTick(),
            __get_PRIMASK());
 
@@ -219,7 +237,7 @@ void App_BatMan_Init(void)
      * Device Number 是通信链路的第一道硬确认：地址、subcommand 帧和
      * 读回长度都必须正确。
      */
-    printf("bq device read start\r\n");
+    printf("BQ设备号读取: 开始\r\n");
     ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_DEVICE_NUMBER, data, 2u);
     if (ret != INT_BQ76952_OK)
     {
@@ -235,16 +253,16 @@ void App_BatMan_Init(void)
      * Data Memory 写入必须包在 ConfigUpdate 内。ConfigUpdate 未退出前，
      * 不做正常采样，也不执行 FET_ENABLE。
      */
-    printf("bq cfg enter start\r\n");
+    printf("BQ配置模式: 进入开始\r\n");
     if (Int_BQ76952_EnterConfigUpdate() != INT_BQ76952_OK)
     {
         App_BatMan_PrintBqCfgEnterFail();
         App_BatMan_ShowIicStatus(false);
         return;
     }
-    printf("bq cfg enter done\r\n");
+    printf("BQ配置模式: 进入完成\r\n");
 
-    printf("bq cfg write start\r\n");
+    printf("BQ配置写入: 开始\r\n");
     if (!App_BatMan_ConfigBq())
     {
         App_BatMan_PrintBqCfgWriteFail();
@@ -252,11 +270,11 @@ void App_BatMan_Init(void)
         (void)Int_BQ76952_ExitConfigUpdate();
         return;
     }
-    printf("bq cfg write done\r\n");
+    printf("BQ配置写入: 完成\r\n");
     /*
      * Power Config 显示在 OLED 上，用作现场快速确认 Data Memory 读链路。
      */
-    printf("bq power config read start\r\n");
+    printf("BQ电源配置读取: 开始\r\n");
     if (Int_BQ76952_ReadDataMemory(BQ76952_DM_POWER_CONFIG, data, 2u) == INT_BQ76952_OK)
     {
         s_power_config = App_BatMan_ReadU16Le(data);
@@ -264,34 +282,34 @@ void App_BatMan_Init(void)
         App_BatMan_PrintBqPowerConfig(s_power_config);
     }
 
-    printf("bq cfg exit start\r\n");
+    printf("BQ配置模式: 退出开始\r\n");
     if (Int_BQ76952_ExitConfigUpdate() != INT_BQ76952_OK)
     {
         App_BatMan_PrintBqCfgExitFail();
         App_BatMan_ShowIicStatus(false);
         return;
     }
-    printf("bq cfg exit done\r\n");
+    printf("BQ配置模式: 退出完成\r\n");
 
     /*
      * ConfigUpdate 退出后，只清启动噪声告警，并保持 CHG/DSG/PCHG/PDSG 关断。
      * 后续如需接通主功率路径，必须增加单独的业务入口和保护条件。
      */
-    printf("bq startup alarms clear\r\n");
+    printf("BQ启动告警: 清除\r\n");
     App_BatMan_ClearStartupAlarms();
-    printf("bq main fet off start\r\n");
+    printf("BQ主FET默认关断: 开始\r\n");
     if (App_BatMan_KeepMainFetsOff() != INT_BQ76952_OK)
     {
         App_BatMan_PrintBqFetOffFail();
         App_BatMan_ShowIicStatus(false);
         return;
     }
-    printf("bq main fet off done\r\n");
+    printf("BQ主FET默认关断: 完成\r\n");
 
     /*
      * 初始化成功后立即采样一次，避免 UART/OLED/CAN 首帧仍是全零快照。
      */
-    printf("batman first sample start\r\n");
+    printf("电池管理首帧采样: 开始\r\n");
     App_BatMan_Sample();
     App_BatMan_UpdateHealth(0u);
     App_BatMan_UpdateSoc(0u);

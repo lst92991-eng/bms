@@ -12,16 +12,18 @@
 #define APP_POWER_CELL_LOW_MV                   (3000u)
 #define APP_POWER_CELL_RECOVER_MV               (3200u)
 #define APP_POWER_CELL_FULL_STOP_MV             (4200u)
+#define APP_POWER_CELL_FULL_RESUME_MV           (4180u)
 #define APP_POWER_CHARGE_TEMP_MIN_C             (0)
 #define APP_POWER_CHARGE_TEMP_MAX_C             (45)
 #define APP_POWER_DISCHARGE_TEMP_MIN_C          (-20)
 #define APP_POWER_DISCHARGE_TEMP_MAX_C          (60)
 #define APP_POWER_SC_INPUT_VALID_MV             (12000u)
 #define APP_POWER_BQ_WAKE_TIMEOUT_MS            (60000u)
-#define APP_POWER_PREDISCHARGE_TIME_MS          (20000u)
+#define APP_POWER_PREDISCHARGE_TIME_MS          (5000u)
 #define APP_POWER_BQ_SAFETY_A_SCD_MASK          (0x80u)
 #define APP_POWER_BUZZER_ENABLE                 0u
 #define APP_POWER_DEBUG_PERIOD_MS               (1000u)
+#define APP_POWER_CHARGE_ONLY_TEST_ENABLE       1u
 
 static App_Power_StateTypeDef s_power_state;
 static bool s_charge_allowed;
@@ -30,6 +32,7 @@ static bool s_output_charge;
 static bool s_output_discharge;
 static bool s_output_predischarge;
 static bool s_output_synced;
+static bool s_charge_full_latched;
 static bool s_low_power_sound_played;
 static bool s_predischarge_done_printed;
 static uint32_t s_bq_wake_ms;
@@ -116,11 +119,12 @@ static void App_Power_SetScWakeCharge(bool charge_enable)
 
 static void App_Power_PrintDebug(void)
 {
-    printf("power state:%u chg:%u dsg:%u pre:%u limit:%u/%u ma cell:%u/%u cur:%ld sc_ac:%u sc_vbus:%lu\r\n",
+    printf("电源 状态:%u 充:%u 放:%u 预:%u 满停:%u 限流:%u/%u mA 电芯:%u/%u 电流:%ld SC_AC:%u SC_VBUS:%lu\r\n",
            (unsigned int)s_power_state,
            s_charge_allowed ? 1u : 0u,
            s_discharge_allowed ? 1u : 0u,
            s_output_predischarge ? 1u : 0u,
+           s_charge_full_latched ? 1u : 0u,
            (unsigned int)APP_POWER_CHARGE_CURRENT_MA,
            (unsigned int)APP_POWER_DISCHARGE_CURRENT_MA,
            (unsigned int)cell_min_mv,
@@ -129,6 +133,45 @@ static void App_Power_PrintDebug(void)
            App_SC8815_IsAcOk() ? 1u : 0u,
            (unsigned long)App_SC8815_GetVbusMv());
 }
+
+#if APP_POWER_CHARGE_ONLY_TEST_ENABLE
+static bool App_Power_RunChargeOnlyTest(bool cell_ok,
+                                        bool input_ok,
+                                        bool sc_charge_ok,
+                                        bool charge_temp_ok,
+                                        bool charge_voltage_ok)
+{
+    if (!cell_ok)
+    {
+        return false;
+    }
+
+    s_bq_wake_ms = 0u;
+    s_predischarge_ms = 0u;
+    s_predischarge_done_printed = false;
+    s_low_power_sound_played = false;
+
+    s_charge_allowed = input_ok && sc_charge_ok && charge_temp_ok && charge_voltage_ok;
+    s_discharge_allowed = false;
+
+    if (s_charge_allowed)
+    {
+        /*
+         * 临时联调：只允许 BQ 充电 FET，强制关断 BQ 放电 FET；
+         * SC8815 同时发充电请求，用来分辨 BQ 与 SC 哪一侧影响 IBAT。
+         */
+        s_power_state = APP_POWER_STATE_RUN;
+        App_Power_SetOutput(true, false);
+    }
+    else
+    {
+        s_power_state = APP_POWER_STATE_MONITOR;
+        App_Power_SetOutput(false, false);
+    }
+
+    return true;
+}
+#endif
 
 void App_Power_Init(void)
 {
@@ -139,6 +182,7 @@ void App_Power_Init(void)
     s_output_discharge = false;
     s_output_predischarge = false;
     s_output_synced = false;
+    s_charge_full_latched = false;
     s_low_power_sound_played = false;
     s_predischarge_done_printed = false;
     s_bq_wake_ms = 0u;
@@ -159,6 +203,7 @@ void App_Power_Task(uint32_t interval_ms)
     bool input_ok;
     bool sc_charge_ok;
     bool charge_temp_ok;
+    bool charge_voltage_ok;
     bool discharge_temp_ok;
     bool discharge_over_current;
 
@@ -169,6 +214,22 @@ void App_Power_Task(uint32_t interval_ms)
     sc_charge_ok = !App_SC8815_HasFault();
     charge_temp_ok = ((temp_cell_c >= APP_POWER_CHARGE_TEMP_MIN_C) &&
                       (temp_cell_c <= APP_POWER_CHARGE_TEMP_MAX_C));
+    if (cell_ok)
+    {
+        if (cell_max_mv >= APP_POWER_CELL_FULL_STOP_MV)
+        {
+            s_charge_full_latched = true;
+        }
+        else if (cell_max_mv <= APP_POWER_CELL_FULL_RESUME_MV)
+        {
+            s_charge_full_latched = false;
+        }
+    }
+    else
+    {
+        s_charge_full_latched = false;
+    }
+    charge_voltage_ok = !s_charge_full_latched;
     discharge_temp_ok = ((temp_cell_c >= APP_POWER_DISCHARGE_TEMP_MIN_C) &&
                          (temp_cell_c <= APP_POWER_DISCHARGE_TEMP_MAX_C));
 
@@ -178,6 +239,23 @@ void App_Power_Task(uint32_t interval_ms)
      */
     discharge_over_current =
         (current_ma < -(APP_POWER_DISCHARGE_CURRENT_MA + APP_POWER_DISCHARGE_OVER_MARGIN_MA));
+
+#if APP_POWER_CHARGE_ONLY_TEST_ENABLE
+    if (App_Power_RunChargeOnlyTest(cell_ok,
+                                    input_ok,
+                                    sc_charge_ok,
+                                    charge_temp_ok,
+                                    charge_voltage_ok))
+    {
+        s_debug_ms = (uint16_t)(s_debug_ms + interval_ms);
+        if (s_debug_ms >= APP_POWER_DEBUG_PERIOD_MS)
+        {
+            s_debug_ms = 0u;
+            App_Power_PrintDebug();
+        }
+        return;
+    }
+#endif
 
     if (!cell_ok)
     {
@@ -242,7 +320,7 @@ void App_Power_Task(uint32_t interval_ms)
             App_Buzzer_PlayLowPower();
 #endif
         }
-        s_charge_allowed = input_ok && sc_charge_ok && charge_temp_ok;
+        s_charge_allowed = input_ok && sc_charge_ok && charge_temp_ok && charge_voltage_ok;
         s_discharge_allowed = false;
         App_Power_SetOutput(s_charge_allowed, s_discharge_allowed);
     }
@@ -252,7 +330,7 @@ void App_Power_Task(uint32_t interval_ms)
         s_predischarge_ms = 0u;
         s_predischarge_done_printed = false;
         s_power_state = APP_POWER_STATE_MONITOR;
-        s_charge_allowed = input_ok && sc_charge_ok && charge_temp_ok;
+        s_charge_allowed = input_ok && sc_charge_ok && charge_temp_ok && charge_voltage_ok;
         s_discharge_allowed = false;
         App_Power_SetOutput(s_charge_allowed, s_discharge_allowed);
     }
@@ -264,13 +342,13 @@ void App_Power_Task(uint32_t interval_ms)
         s_charge_allowed = input_ok &&
                            sc_charge_ok &&
                            charge_temp_ok &&
-                           (cell_max_mv < APP_POWER_CELL_FULL_STOP_MV);
+                           charge_voltage_ok;
         s_discharge_allowed = discharge_temp_ok;
         if (s_discharge_allowed && (s_predischarge_ms < APP_POWER_PREDISCHARGE_TIME_MS))
         {
             /*
-             * 先释放 PDSG 预放电支路。下游电容电压被拉上来后，再打开主 DSG，
-             * 避免直接合闸造成浪涌电流，被 BQ 判定为 SCD 后反复关断。
+             * 这里不是 MCU 单独强开 PDSG。BQ 的 PDSG_EN 已经打开，只要主机允许
+             * DSG，器件会自动先预放电，再按 LD/超时/压差条件切到主 DSG。
              */
             s_predischarge_ms = (uint16_t)(s_predischarge_ms + interval_ms);
             if (s_predischarge_ms >= APP_POWER_PREDISCHARGE_TIME_MS)
@@ -279,7 +357,7 @@ void App_Power_Task(uint32_t interval_ms)
                 if (!s_predischarge_done_printed)
                 {
                     s_predischarge_done_printed = true;
-                    printf("power predischarge done: %u ms\r\n",
+                    printf("电源 预放电等待完成:%u ms\r\n",
                            (unsigned int)APP_POWER_PREDISCHARGE_TIME_MS);
                 }
             }

@@ -40,8 +40,10 @@ void App_BatMan_Task(uint32_t interval_ms);
 bool App_BatMan_SetMainFets(bool charge_enable, bool discharge_enable);
 
 /**
- * @brief 只释放预放电 PDSG，主放电 DSG 仍保持关断。
+ * @brief 请求 BQ 自动执行预放电流程。
  * @param charge_enable true 时充电路径按当前策略释放，false 时保持关断。
+ *
+ * PDSG_EN 打开后，允许 DSG 时 BQ 会先开 PDSG，再按器件条件切到 DSG。
  * @return true 写入成功。
  */
 bool App_BatMan_SetPreDischargeFet(bool charge_enable);
@@ -70,10 +72,19 @@ extern int16_t temp_fet_c;
 extern uint16_t alarm_status;
 extern uint16_t alarm_raw;
 extern uint16_t battery_status;
+extern uint16_t manufacturing_status;
 extern uint8_t fet_status;
+extern uint8_t fet_control_request;
+extern uint8_t safety_alert_a;
+extern uint8_t safety_alert_b;
+extern uint8_t safety_alert_c;
 extern uint8_t safety_status_a;
 extern uint8_t safety_status_b;
 extern uint8_t safety_status_c;
+extern uint8_t pf_status_a;
+extern uint8_t pf_status_b;
+extern uint8_t pf_status_c;
+extern uint8_t pf_status_d;
 extern bool fault_active;
 extern float soc_percent;
 extern float display_soc_percent;

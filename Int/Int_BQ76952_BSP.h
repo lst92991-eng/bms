@@ -223,6 +223,8 @@
 #define BQ76952_DM_DSG_FET_PROTECTIONS_B        (0x926Au) /* U1，默认 0xE6，B 类故障关闭 DSG 的掩码。 */
 #define BQ76952_DM_DSG_FET_PROTECTIONS_C        (0x926Bu) /* U1，默认 0xE2，C 类故障关闭 DSG 的掩码。 */
 #define BQ76952_DM_DEFAULT_ALARM_MASK           (0x926Du) /* H2，默认 0xF800，Alarm Enable 默认值；影响 ALERT 输出。 */
+#define BQ76952_DM_SCD_THRESHOLD                (0x9286u) /* U1，SCD 阈值；0 对应 10mV，需按采样电阻换算电流。 */
+#define BQ76952_DM_SCD_DELAY                    (0x9287u) /* U1，SCD 延时；步进 15us，短路验证前不要长期放宽。 */
 #define BQ76952_DM_FET_OPTIONS                  (0x9308u) /* H1，默认 0x0D，FET 控制策略；误写可能改变功率路径。 */
 #define BQ76952_DM_CHG_PUMP_CONTROL             (0x9309u) /* U1，默认 0x01，电荷泵控制；影响高边 FET 驱动。 */
 #define BQ76952_DM_BALANCING_CONFIGURATION      (0x9335u) /* H1，默认 0x00，均衡配置；策略未定前不要自动开启。 */

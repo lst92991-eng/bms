@@ -11,7 +11,7 @@
  */
 #define APP_BATMAN_DM_DA_CONFIGURATION_DEFAULT          (0x05u)
 #define APP_BATMAN_DM_PROTECTION_CONFIGURATION_DEFAULT  (0x0002u)
-#define APP_BATMAN_DM_ENABLED_PROTECTIONS_A_DEFAULT     (0x88u)
+#define APP_BATMAN_DM_ENABLED_PROTECTIONS_A_DEFAULT     (BQ76952_ENABLED_PROTECTIONS_A_COV_MASK) /* bring-up 临时关闭 SCD，原 0x88。 */
 #define APP_BATMAN_DM_ENABLED_PROTECTIONS_B_DEFAULT     (0x00u)
 #define APP_BATMAN_DM_ENABLED_PROTECTIONS_C_DEFAULT     (0x00u)
 #define APP_BATMAN_DM_CHG_FET_PROTECTIONS_A_DEFAULT     (0x98u)
@@ -21,6 +21,8 @@
 #define APP_BATMAN_DM_DSG_FET_PROTECTIONS_B_DEFAULT     (0xE6u)
 #define APP_BATMAN_DM_DSG_FET_PROTECTIONS_C_DEFAULT     (0xE2u)
 #define APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT        (0xF800u)
+#define APP_BATMAN_DM_SCD_THRESHOLD_10MV                (0x00u) /* 手册 0 对应 10mV。 */
+#define APP_BATMAN_DM_SCD_DELAY_400US_TEST              (0x1Cu) /* 近似 400us，实际约 405us。 */
 #define APP_BATMAN_DM_FET_OPTIONS_DEFAULT               (BQ76952_FET_OPTIONS_FET_INIT_OFF_MASK | \
                                                          BQ76952_FET_OPTIONS_PDSG_EN_MASK | \
                                                          BQ76952_FET_OPTIONS_FET_CTRL_EN_MASK | \
@@ -56,7 +58,12 @@ static Int_BQ76952_StatusTypeDef App_BatMan_WriteMainFetControl(uint8_t off_mask
     }
 
     data[0] = off_mask;
-    return Int_BQ76952_WriteSubcommandData(BQ76952_SUBCMD_FET_CONTROL, data, 1u);
+    ret = Int_BQ76952_WriteSubcommandData(BQ76952_SUBCMD_FET_CONTROL, data, 1u);
+    if (ret == INT_BQ76952_OK)
+    {
+        fet_control_request = off_mask;
+    }
+    return ret;
 }
 
 /**
@@ -122,7 +129,11 @@ bool App_BatMan_ConfigBq(void)
     if (!App_BatMan_WriteConfigU16(BQ76952_DM_PROTECTION_CONFIGURATION,
                                    APP_BATMAN_DM_PROTECTION_CONFIGURATION_DEFAULT) ||
         !App_BatMan_WriteConfigU16(BQ76952_DM_DEFAULT_ALARM_MASK,
-                                   APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT))
+                                   APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_SCD_THRESHOLD,
+                                  APP_BATMAN_DM_SCD_THRESHOLD_10MV) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_SCD_DELAY,
+                                  APP_BATMAN_DM_SCD_DELAY_400US_TEST))
     {
         return false;
     }
@@ -216,7 +227,7 @@ bool App_BatMan_SetMainFets(bool charge_enable, bool discharge_enable)
 
 bool App_BatMan_SetPreDischargeFet(bool charge_enable)
 {
-    uint8_t off_mask = BQ76952_FET_CONTROL_DSG_OFF_MASK;
+    uint8_t off_mask = 0u;
 
     if (!charge_enable)
     {
@@ -225,8 +236,9 @@ bool App_BatMan_SetPreDischargeFet(bool charge_enable)
     }
 
     /*
-     * 这里只放开 PDSG，不放开主 DSG。外部大电容先通过预放电支路缓慢建立电压，
-     * 避免主放电 MOS 直接合闸时的浪涌电流触发 SCD。
+     * FET_CONTROL 写 1 是强制关断。BQ76952 的 PDSG_EN 会在 DSG 被允许打开时
+     * 自动先走 PDSG 预放电，再由器件切到 DSG；这里不能把 DSG_OFF 置 1，
+     * 否则器件永远收不到“允许放电”的请求。
      */
     if (App_BatMan_WriteMainFetControl(off_mask) == INT_BQ76952_OK)
     {
