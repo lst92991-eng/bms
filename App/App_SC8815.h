@@ -27,5 +27,6 @@ bool App_SC8815_HasFault(void);
 bool App_SC8815_IsCharging(void);
 uint32_t App_SC8815_GetVbusMv(void);
 uint32_t App_SC8815_GetVbatMv(void);
+uint32_t App_SC8815_GetInputLimitMa(void);
 
 #endif /* APP_SC8815_H */

@@ -46,6 +46,10 @@ typedef struct
     uint32_t vbat_mv;
     uint32_t ibus_ma;
     uint32_t ibat_ma;
+    uint16_t vbus_raw;
+    uint16_t vbat_raw;
+    uint16_t ibus_raw;
+    uint16_t ibat_raw;
     uint8_t last_error;
     uint8_t ce_n_pin;
     uint8_t pstop_pin;
@@ -180,7 +184,7 @@ static void App_SC8815_ApplyChargeRequest(void)
                                                SC8815_PROJECT_CTRL0_EN_OTG_VALUE)) ||
         !App_SC8815_Check(Int_SC8815_UpdateReg(SC8815_REG_CTRL1_SET,
                                                SC8815_PROJECT_CTRL1_SAFE_CLEAR_MASK,
-                                               0u)) ||
+                                               SC8815_PROJECT_CTRL1_SAFE_SET_MASK)) ||
         !App_SC8815_Check(Int_SC8815_UpdateReg(SC8815_REG_CTRL2_SET,
                                                0u,
                                                SC8815_PROJECT_CTRL2_SAFE_SET_MASK)) ||
@@ -226,6 +230,7 @@ static void App_SC8815_Sample(void)
 
     /* 每个采样周期重新评估通信状态，避免一次失败永久保持故障。 */
     s_sc.comm_ok = true;
+    s_sc.last_error = INT_SC8815_OK;
     if (App_SC8815_Check(Int_SC8815_ReadStatus(&status)))
     {
         s_sc.ac_ok = status.ac_ok;
@@ -244,6 +249,14 @@ static void App_SC8815_Sample(void)
                                                        &s_sc.ibus_ma));
     (void)App_SC8815_Check(Int_SC8815_ReadAdcCurrentMa(INT_SC8815_CURRENT_IBAT,
                                                        &s_sc.ibat_ma));
+    (void)App_SC8815_Check(Int_SC8815_ReadAdcRaw(INT_SC8815_ADC_VBUS,
+                                                 &s_sc.vbus_raw));
+    (void)App_SC8815_Check(Int_SC8815_ReadAdcRaw(INT_SC8815_ADC_VBAT,
+                                                 &s_sc.vbat_raw));
+    (void)App_SC8815_Check(Int_SC8815_ReadAdcCurrentRaw(INT_SC8815_CURRENT_IBUS,
+                                                        &s_sc.ibus_raw));
+    (void)App_SC8815_Check(Int_SC8815_ReadAdcCurrentRaw(INT_SC8815_CURRENT_IBAT,
+                                                        &s_sc.ibat_raw));
 }
 
 static uint8_t App_SC8815_ReadPinLevel(GPIO_TypeDef *port, uint16_t pin)
@@ -288,7 +301,22 @@ static void App_SC8815_UpdateDebugRegs(void)
  */
 static void App_SC8815_PrintDebug(void)
 {
+    uint32_t ibus_limit_ma;
+    uint32_t ibat_limit_ma;
+
     App_SC8815_UpdateDebugRegs();
+    ibus_limit_ma = (((uint32_t)s_sc.ibus_lim_reg + SC8815_CURRENT_LIMIT_CODE_OFFSET) *
+                     SC8815_PROJECT_IBUS_RATIO_X *
+                     SC8815_CURRENT_LIMIT_REF_RSENSE_MOHM *
+                     1000u) /
+                    (SC8815_CURRENT_LIMIT_CODE_DENOMINATOR *
+                     SC8815_PROJECT_RSNS_IBUS_MOHM);
+    ibat_limit_ma = (((uint32_t)s_sc.ibat_lim_reg + SC8815_CURRENT_LIMIT_CODE_OFFSET) *
+                     SC8815_PROJECT_IBAT_RATIO_X *
+                     SC8815_CURRENT_LIMIT_REF_RSENSE_MOHM *
+                     1000u) /
+                    (SC8815_CURRENT_LIMIT_CODE_DENOMINATOR *
+                     SC8815_PROJECT_RSNS_IBAT_MOHM);
 
     printf("SC 通信:%u 错:%u 交换:%u 总线:%02x 请求:%u 使能:%u 待机:%u 状态:%02x AC:%u 短路:%u 过温:%u 充满:%u VBUS:%lu VBAT:%lu IBUS:%lu IBAT:%lu\r\n",
            s_sc.comm_ok ? 1u : 0u,
@@ -319,6 +347,13 @@ static void App_SC8815_PrintDebug(void)
            (unsigned int)s_sc.ctrl2_reg,
            (unsigned int)s_sc.ctrl3_reg,
            (unsigned int)s_sc.mask_reg);
+    printf("SC原始ADC VBUS:%u VBAT:%u IBUS:%u IBAT:%u 限流换算:%lu/%lu mA\r\n",
+           (unsigned int)s_sc.vbus_raw,
+           (unsigned int)s_sc.vbat_raw,
+           (unsigned int)s_sc.ibus_raw,
+           (unsigned int)s_sc.ibat_raw,
+           (unsigned long)ibus_limit_ma,
+           (unsigned long)ibat_limit_ma);
     printf("SC配置 VINREG:%02x 状态位 AC_OK:%u INDET:%u VBUS_SHORT:%u OTP:%u EOC:%u RSV:%02x\r\n",
            (unsigned int)s_sc.vinreg_reg,
            APP_SC8815_BIT(s_sc.status_raw, SC8815_STATUS_AC_OK_MASK),
@@ -366,6 +401,10 @@ void App_SC8815_Init(void)
     s_sc.vbat_mv = 0u;
     s_sc.ibus_ma = 0u;
     s_sc.ibat_ma = 0u;
+    s_sc.vbus_raw = 0u;
+    s_sc.vbat_raw = 0u;
+    s_sc.ibus_raw = 0u;
+    s_sc.ibat_raw = 0u;
     s_sc.last_error = INT_SC8815_OK;
     s_sc.ce_n_pin = 1u;
     s_sc.pstop_pin = 1u;
@@ -468,4 +507,9 @@ uint32_t App_SC8815_GetVbusMv(void)
 uint32_t App_SC8815_GetVbatMv(void)
 {
     return s_sc.vbat_mv;
+}
+
+uint32_t App_SC8815_GetInputLimitMa(void)
+{
+    return SC8815_PROJECT_BRINGUP_IBUS_LIMIT_MA;
 }

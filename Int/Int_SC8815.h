@@ -93,6 +93,11 @@ Int_SC8815_StatusTypeDef Int_SC8815_SetAdcEnabled(bool enabled);
 Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcRaw(Int_SC8815_AdcChannelTypeDef channel, uint16_t *raw);
 
 /**
+ * @brief 读取电流 ADC 原始 10-bit 值。
+ */
+Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentRaw(Int_SC8815_CurrentChannelTypeDef channel, uint16_t *raw);
+
+/**
  * @brief 读取电压 ADC 并换算为 mV。
  */
 Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcVoltageMv(Int_SC8815_AdcChannelTypeDef channel, uint32_t *mv);

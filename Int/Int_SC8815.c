@@ -749,6 +749,51 @@ Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcRaw(Int_SC8815_AdcChannelTypeDef chan
     return INT_SC8815_OK;
 }
 
+Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentRaw(Int_SC8815_CurrentChannelTypeDef channel, uint16_t *raw)
+{
+    uint8_t high_reg;
+    uint8_t low_reg;
+    uint8_t high;
+    uint8_t low;
+    Int_SC8815_StatusTypeDef ret;
+
+    if (raw == NULL)
+    {
+        return INT_SC8815_ERROR_PARAM;
+    }
+
+    switch (channel)
+    {
+    case INT_SC8815_CURRENT_IBUS:
+        high_reg = SC8815_REG_IBUS_VALUE;
+        low_reg = SC8815_REG_IBUS_VALUE2;
+        break;
+
+    case INT_SC8815_CURRENT_IBAT:
+        high_reg = SC8815_REG_IBAT_VALUE;
+        low_reg = SC8815_REG_IBAT_VALUE2;
+        break;
+
+    default:
+        return INT_SC8815_ERROR_PARAM;
+    }
+
+    ret = Int_SC8815_ReadRegRaw(high_reg, &high);
+    if (ret != INT_SC8815_OK)
+    {
+        return ret;
+    }
+
+    ret = Int_SC8815_ReadRegRaw(low_reg, &low);
+    if (ret != INT_SC8815_OK)
+    {
+        return ret;
+    }
+
+    *raw = Int_SC8815_CombineAdcRaw(high, low);
+    return INT_SC8815_OK;
+}
+
 Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcVoltageMv(Int_SC8815_AdcChannelTypeDef channel, uint32_t *mv)
 {
     uint16_t raw;
@@ -794,10 +839,6 @@ Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcVoltageMv(Int_SC8815_AdcChannelTypeDe
 
 Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentMa(Int_SC8815_CurrentChannelTypeDef channel, uint32_t *ma)
 {
-    uint8_t high_reg;
-    uint8_t low_reg;
-    uint8_t high;
-    uint8_t low;
     uint8_t ratio;
     uint16_t rsense_mohm;
     uint16_t raw;
@@ -811,15 +852,11 @@ Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentMa(Int_SC8815_CurrentChannelTy
     switch (channel)
     {
     case INT_SC8815_CURRENT_IBUS:
-        high_reg = SC8815_REG_IBUS_VALUE;
-        low_reg = SC8815_REG_IBUS_VALUE2;
         ratio = SC8815_PROJECT_IBUS_RATIO_X;
         rsense_mohm = SC8815_PROJECT_RSNS_IBUS_MOHM;
         break;
 
     case INT_SC8815_CURRENT_IBAT:
-        high_reg = SC8815_REG_IBAT_VALUE;
-        low_reg = SC8815_REG_IBAT_VALUE2;
         ratio = SC8815_PROJECT_IBAT_RATIO_X;
         rsense_mohm = SC8815_PROJECT_RSNS_IBAT_MOHM;
         break;
@@ -828,19 +865,11 @@ Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentMa(Int_SC8815_CurrentChannelTy
         return INT_SC8815_ERROR_PARAM;
     }
 
-    ret = Int_SC8815_ReadRegRaw(high_reg, &high);
+    ret = Int_SC8815_ReadAdcCurrentRaw(channel, &raw);
     if (ret != INT_SC8815_OK)
     {
         return ret;
     }
-
-    ret = Int_SC8815_ReadRegRaw(low_reg, &low);
-    if (ret != INT_SC8815_OK)
-    {
-        return ret;
-    }
-
-    raw = Int_SC8815_CombineAdcRaw(high, low);
 
     *ma = (((uint32_t)raw + SC8815_ADC_VALUE_OFFSET) *
            SC8815_ADC_CURRENT_NUMERATOR *

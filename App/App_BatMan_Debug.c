@@ -143,7 +143,7 @@ static void App_BatMan_PrintDebug(void)
            (unsigned int)pf_status_b,
            (unsigned int)pf_status_c,
            (unsigned int)pf_status_d);
-    printf("BQ限制 XCHG:%u XDSG:%u FET_EN:%u CFG:%u PCHG:%u SLEEP:%u POR:%u\r\n",
+    printf("BQ限制 XCHG:%u XDSG:%u FET_EN:%u CFG:%u PCHG:%u SLEEP_EN:%u POR:%u\r\n",
            (alarm_raw & BQ76952_ALARM_XCHG_MASK) != 0u ? 1u : 0u,
            (alarm_raw & BQ76952_ALARM_XDSG_MASK) != 0u ? 1u : 0u,
            (manufacturing_status & BQ76952_MFG_STATUS_FET_EN_MASK) != 0u ? 1u : 0u,

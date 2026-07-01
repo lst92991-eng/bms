@@ -292,6 +292,22 @@ void App_BatMan_Init(void)
     printf("BQ配置模式: 退出完成\r\n");
 
     /*
+     * Bring-up 阶段先禁止 BQ 进入 Sleep，避免 CHG FET 被低功耗策略压住。
+     * 后续若要做低功耗版本，再把 Sleep 策略放回电源管理状态机统一控制。
+     */
+    printf("BQ Sleep禁用: 开始\r\n");
+    ret = Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_SLEEP_DISABLE);
+    if (ret != INT_BQ76952_OK)
+    {
+        printf("BQ Sleep禁用失败 ret:%d hal:0x%08lx\r\n",
+               (int)ret,
+               (unsigned long)Int_BQ76952_GetLastHalError());
+        App_BatMan_ShowIicStatus(false);
+        return;
+    }
+    printf("BQ Sleep禁用: 完成\r\n");
+
+    /*
      * ConfigUpdate 退出后，只清启动噪声告警，并保持 CHG/DSG/PCHG/PDSG 关断。
      * 后续如需接通主功率路径，必须增加单独的业务入口和保护条件。
      */

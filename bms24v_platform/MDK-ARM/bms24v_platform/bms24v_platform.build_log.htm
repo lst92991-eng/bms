@@ -27,7 +27,29 @@ Project File Date:  06/30/2026
 <h2>Output:</h2>
 *** Using Compiler 'V5.06 update 7 (build 960)', folder: 'D:\App\Keil\ARM\ARMCC\Bin'
 Build target 'bms24v_platform'
-"bms24v_platform\bms24v_platform.axf" - 0 Error(s), 0 Warning(s).
+compiling Int_SC8815.c...
+compiling App_SC8815.c...
+../../App/App_SC8815.c(321): warning:  #870-D: invalid multibyte character sequence
+      printf("SC 通信:%u �?:%u 交换:%u 总线:%02x 请求:%u 使能:%u 待机:%u 状�?:%02x AC:%u 短路:%u 过温:%u 充满:%u VBUS:%lu VBAT:%lu IBUS:%lu IBAT:%lu\r\n",
+../../App/App_SC8815.c(321): warning:  #870-D: invalid multibyte character sequence
+      printf("SC 通信:%u �?:%u 交换:%u 总线:%02x 请求:%u 使能:%u 待机:%u 状�?:%02x AC:%u 短路:%u 过温:%u 充满:%u VBUS:%lu VBAT:%lu IBUS:%lu IBAT:%lu\r\n",
+../../App/App_SC8815.c(365): warning:  #870-D: invalid multibyte character sequence
+      printf("SC控制�? OTG:%u PGATE开:%u GPO�?:%u ADC:%u FACTORY:%u IBAT基准:%u 禁涓�?:%u 禁终�?:%u 禁短路折�?:%u MASK:%02x\r\n",
+../../App/App_SC8815.c(365): warning:  #870-D: invalid multibyte character sequence
+      printf("SC控制�? OTG:%u PGATE开:%u GPO�?:%u ADC:%u FACTORY:%u IBAT基准:%u 禁涓�?:%u 禁终�?:%u 禁短路折�?:%u MASK:%02x\r\n",
+../../App/App_SC8815.c(365): warning:  #870-D: invalid multibyte character sequence
+      printf("SC控制�? OTG:%u PGATE开:%u GPO�?:%u ADC:%u FACTORY:%u IBAT基准:%u 禁涓�?:%u 禁终�?:%u 禁短路折�?:%u MASK:%02x\r\n",
+../../App/App_SC8815.c(365): warning:  #870-D: invalid multibyte character sequence
+      printf("SC控制�? OTG:%u PGATE开:%u GPO�?:%u ADC:%u FACTORY:%u IBAT基准:%u 禁涓�?:%u 禁终�?:%u 禁短路折�?:%u MASK:%02x\r\n",
+../../App/App_SC8815.c(365): warning:  #870-D: invalid multibyte character sequence
+      printf("SC控制�? OTG:%u PGATE开:%u GPO�?:%u ADC:%u FACTORY:%u IBAT基准:%u 禁涓�?:%u 禁终�?:%u 禁短路折�?:%u MASK:%02x\r\n",
+../../App/App_SC8815.c(437): warning:  #870-D: invalid multibyte character sequence
+      printf("SC初始化待机监�? 通信:%u\r\n", s_sc.comm_ok ? 1u : 0u);
+../../App/App_SC8815.c: 8 warnings, 0 errors
+linking...
+Program Size: Code=36912 RO-data=8628 RW-data=300 ZI-data=36028  
+FromELF: creating hex file...
+"bms24v_platform\bms24v_platform.axf" - 0 Error(s), 8 Warning(s).
 
 <h2>Software Packages used:</h2>
 
@@ -50,7 +72,7 @@ Package Vendor: Keil
 
    * Component: ARM::CMSIS:CORE:5.6.0
       Include file:  CMSIS/Core/Include/tz_context.h
-Build Time Elapsed:  00:00:00
+Build Time Elapsed:  00:00:02
 </pre>
 </body>
 </html>

@@ -70,7 +70,7 @@
 
 /* Bring-up 与软件约束电流，单位 mA。限流值禁止为 0，项目最低不低于 300mA。 */
 #define SC8815_PROJECT_MIN_LIMIT_CURRENT_MA          (300u)
-#define SC8815_PROJECT_BRINGUP_IBUS_LIMIT_MA         (1000u)
+#define SC8815_PROJECT_BRINGUP_IBUS_LIMIT_MA         (3000u)
 #define SC8815_PROJECT_BRINGUP_IBAT_LIMIT_MA         (1000u)
 #define SC8815_PROJECT_DEFAULT_IBUS_LIMIT_MA         (1500u)
 #define SC8815_PROJECT_DEFAULT_IBAT_LIMIT_MA         (3000u)
@@ -528,7 +528,8 @@
                                                       SC8815_CTRL0_SET_EN_OTG_SHIFT)
 #define SC8815_PROJECT_CTRL0_SAFE_CLEAR_MASK         (SC8815_CTRL0_SET_EN_OTG_MASK)
 
-/* 0x0A：保留 bit0=1；禁止 DIS_TRICKLE、DIS_TERM、FB_SEL、DIS_OVP 置 1。 */
+/* 0x0A：充电电流以 IBAT 为基准；保留 bit0=1；禁止危险位。 */
+#define SC8815_PROJECT_CTRL1_SAFE_SET_MASK           (SC8815_CTRL1_SET_ICHAR_SEL_MASK)
 #define SC8815_PROJECT_CTRL1_SAFE_CLEAR_MASK         (SC8815_CTRL1_SET_DIS_TRICKLE_MASK | \
                                                       SC8815_CTRL1_SET_DIS_TERM_MASK | \
                                                       SC8815_CTRL1_SET_FB_SEL_MASK | \

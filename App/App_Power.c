@@ -119,7 +119,7 @@ static void App_Power_SetScWakeCharge(bool charge_enable)
 
 static void App_Power_PrintDebug(void)
 {
-    printf("电源 状态:%u 充:%u 放:%u 预:%u 满停:%u 限流:%u/%u mA 电芯:%u/%u 电流:%ld SC_AC:%u SC_VBUS:%lu\r\n",
+    printf("电源 状态:%u 充:%u 放:%u 预:%u 满停:%u 限流:%u/%u mA SC输入限:%u mA 电芯:%u/%u 电流:%ld SC_AC:%u SC_VBUS:%lu\r\n",
            (unsigned int)s_power_state,
            s_charge_allowed ? 1u : 0u,
            s_discharge_allowed ? 1u : 0u,
@@ -127,6 +127,7 @@ static void App_Power_PrintDebug(void)
            s_charge_full_latched ? 1u : 0u,
            (unsigned int)APP_POWER_CHARGE_CURRENT_MA,
            (unsigned int)APP_POWER_DISCHARGE_CURRENT_MA,
+           (unsigned int)App_SC8815_GetInputLimitMa(),
            (unsigned int)cell_min_mv,
            (unsigned int)cell_max_mv,
            (long)current_ma,
@@ -152,16 +153,16 @@ static bool App_Power_RunChargeOnlyTest(bool cell_ok,
     s_low_power_sound_played = false;
 
     s_charge_allowed = input_ok && sc_charge_ok && charge_temp_ok && charge_voltage_ok;
-    s_discharge_allowed = false;
+    s_discharge_allowed = s_charge_allowed;
 
     if (s_charge_allowed)
     {
         /*
-         * 临时联调：只允许 BQ 充电 FET，强制关断 BQ 放电 FET；
-         * SC8815 同时发充电请求，用来分辨 BQ 与 SC 哪一侧影响 IBAT。
+         * 临时联调：24V 接入后同时释放 BQ CHG/DSG，
+         * 先确认 SC8815 的 VBAT 采样点能否被电池包拉到真实电压。
          */
         s_power_state = APP_POWER_STATE_RUN;
-        App_Power_SetOutput(true, false);
+        App_Power_SetOutput(true, true);
     }
     else
     {
