@@ -27,7 +27,27 @@ Project File Date:  06/30/2026
 <h2>Output:</h2>
 *** Using Compiler 'V5.06 update 7 (build 960)', folder: 'D:\App\Keil\ARM\ARMCC\Bin'
 Build target 'bms24v_platform'
-compiling Int_SC8815.c...
+compiling gpio.c...
+compiling App_Main.c...
+../../App/App_Main.c(137): warning:  #870-D: invalid multibyte character sequence
+      printf("APP初始�?: LED\r\n");
+../../App/App_Main.c(145): warning:  #870-D: invalid multibyte character sequence
+      printf("APP初始�?: 按键\r\n");
+../../App/App_Main.c(147): warning:  #870-D: invalid multibyte character sequence
+      printf("APP初始�?: CANFD\r\n");
+../../App/App_Main.c(149): warning:  #870-D: invalid multibyte character sequence
+      printf("APP初始�?: EEPROM\r\n");
+../../App/App_Main.c(152): warning:  #870-D: invalid multibyte character sequence
+      printf("APP初始�?: OLED\r\n");
+../../App/App_Main.c(154): warning:  #870-D: invalid multibyte character sequence
+      printf("APP初始�?: SC8815\r\n");
+../../App/App_Main.c(156): warning:  #870-D: invalid multibyte character sequence
+      printf("APP初始�?: 电池管理\r\n");
+../../App/App_Main.c(158): warning:  #870-D: invalid multibyte character sequence
+      printf("APP初始�?: 电源管理\r\n");
+../../App/App_Main.c(160): warning:  #870-D: invalid multibyte character sequence
+      printf("APP初始�?: 完成\r\n");
+../../App/App_Main.c: 9 warnings, 0 errors
 compiling App_SC8815.c...
 ../../App/App_SC8815.c(321): warning:  #870-D: invalid multibyte character sequence
       printf("SC 通信:%u �?:%u 交换:%u 总线:%02x 请求:%u 使能:%u 待机:%u 状�?:%02x AC:%u 短路:%u 过温:%u 充满:%u VBUS:%lu VBAT:%lu IBUS:%lu IBAT:%lu\r\n",
@@ -47,9 +67,9 @@ compiling App_SC8815.c...
       printf("SC初始化待机监�? 通信:%u\r\n", s_sc.comm_ok ? 1u : 0u);
 ../../App/App_SC8815.c: 8 warnings, 0 errors
 linking...
-Program Size: Code=36912 RO-data=8628 RW-data=300 ZI-data=36028  
+Program Size: Code=36908 RO-data=8648 RW-data=300 ZI-data=36028  
 FromELF: creating hex file...
-"bms24v_platform\bms24v_platform.axf" - 0 Error(s), 8 Warning(s).
+"bms24v_platform\bms24v_platform.axf" - 0 Error(s), 17 Warning(s).
 
 <h2>Software Packages used:</h2>
 

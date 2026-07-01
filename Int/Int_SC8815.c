@@ -337,7 +337,7 @@ static Int_SC8815_StatusTypeDef Int_SC8815_GuardWrite(uint8_t reg,
         }
 
         if (((new_value & SC8815_RATIO_IBUS_RATIO_MASK) >> SC8815_RATIO_IBUS_RATIO_SHIFT) !=
-            SC8815_RATIO_IBUS_RATIO_3X)
+            SC8815_RATIO_IBUS_RATIO_6X)
         {
             return INT_SC8815_ERROR_GUARD;
         }

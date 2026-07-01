@@ -63,18 +63,18 @@
 #define SC8815_PROJECT_VBATS_TARGET_FROM_DIVIDER_MV  (24729u)
 
 /* 项目要求的电流采样比例。 */
-#define SC8815_PROJECT_IBUS_RATIO_X                  (3u)
+#define SC8815_PROJECT_IBUS_RATIO_X                  (6u)
 #define SC8815_PROJECT_IBAT_RATIO_X                  (6u)
 #define SC8815_PROJECT_VBUS_MON_RATIO_X10            (125u)
 #define SC8815_PROJECT_VBAT_MON_RATIO_X10            (125u)
 
 /* Bring-up 与软件约束电流，单位 mA。限流值禁止为 0，项目最低不低于 300mA。 */
 #define SC8815_PROJECT_MIN_LIMIT_CURRENT_MA          (300u)
-#define SC8815_PROJECT_BRINGUP_IBUS_LIMIT_MA         (3000u)
+#define SC8815_PROJECT_BRINGUP_IBUS_LIMIT_MA         (5000u)
 #define SC8815_PROJECT_BRINGUP_IBAT_LIMIT_MA         (1000u)
 #define SC8815_PROJECT_DEFAULT_IBUS_LIMIT_MA         (1500u)
 #define SC8815_PROJECT_DEFAULT_IBAT_LIMIT_MA         (3000u)
-#define SC8815_PROJECT_MAX_IBUS_LIMIT_MA             (3000u)
+#define SC8815_PROJECT_MAX_IBUS_LIMIT_MA             (6000u)
 #define SC8815_PROJECT_MAX_IBAT_LIMIT_MA             (5000u)
 
 /* 6S 不能用内部 CSEL/VCELL_SET 生成目标电压；必须 VBAT_SEL=1，使用 VBATS 外部分压。 */
@@ -266,7 +266,7 @@
 #define SC8815_RATIO_IBAT_RATIO_SHIFT                (4u)
 #define SC8815_RATIO_IBAT_RATIO_6X                   (0u)
 #define SC8815_RATIO_IBAT_RATIO_12X                  (1u)
-/* 0x08 RATIO：IBUS_RATIO，10=3x，01=6x，00/11 不允许；本项目必须 10。 */
+/* 0x08 RATIO：IBUS_RATIO，10=3x，01=6x，00/11 不允许；本项目使用 6x 支持 5A 输入侧测试。 */
 #define SC8815_RATIO_IBUS_RATIO_MASK                 (0x0Cu)
 #define SC8815_RATIO_IBUS_RATIO_SHIFT                (2u)
 #define SC8815_RATIO_IBUS_RATIO_NOT_ALLOWED_0        (0u)
@@ -479,7 +479,7 @@
 #define SC8815_ADC_CURRENT_NUMERATOR                 (2u)
 #define SC8815_ADC_CURRENT_DENOMINATOR               (1200u)
 #define SC8815_ADC_CURRENT_REF_RSENSE_MOHM           (10u)
-#define SC8815_ADC_IBUS_RATIO_PROJECT_X              (3u)
+#define SC8815_ADC_IBUS_RATIO_PROJECT_X              (6u)
 #define SC8815_ADC_IBAT_RATIO_PROJECT_X              (6u)
 
 /* 限流 DAC 公式：I(A)=(SET+1)/256*RATIO*10mOhm/RSENSE；手册禁止低于 0.3A。 */
@@ -511,12 +511,12 @@
 #define SC8815_PROJECT_VBAT_SET_VALUE                (SC8815_VBAT_SET_VBAT_SEL_EXTERNAL << \
                                                       SC8815_VBAT_SET_VBAT_SEL_SHIFT)
 
-/* 0x08：保留 bit5=1，IBAT_RATIO=6x，IBUS_RATIO=3x，VBUS/VBAT 监测比例保持 12.5x。 */
+/* 0x08：保留 bit5=1，IBAT_RATIO=6x，IBUS_RATIO=6x，VBUS/VBAT 监测比例保持 12.5x。 */
 #define SC8815_PROJECT_RATIO_VALUE                   ((SC8815_DEFAULT_RATIO & \
                                                       SC8815_RATIO_RESERVED_MASK) | \
                                                      (SC8815_RATIO_IBAT_RATIO_6X << \
                                                       SC8815_RATIO_IBAT_RATIO_SHIFT) | \
-                                                     (SC8815_RATIO_IBUS_RATIO_3X << \
+                                                     (SC8815_RATIO_IBUS_RATIO_6X << \
                                                       SC8815_RATIO_IBUS_RATIO_SHIFT) | \
                                                      (SC8815_RATIO_VBAT_MON_RATIO_12P5X << \
                                                       SC8815_RATIO_VBAT_MON_RATIO_SHIFT) | \

@@ -512,7 +512,7 @@ I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
 I (../../App/App_Buzzer.h)(0x6A43A87B)
 I (../../App/App_OLED.h)(0x6A3E60BD)
 I (../../App/App_Power.h)(0x6A4399C0)
-I (../../App/App_SC8815.h)(0x6A4397D9)
+I (../../App/App_SC8815.h)(0x6A449B24)
 I (../../Int/Int_Button.h)(0x6A42145E)
 I (../Core/Inc/main.h)(0x6A438A16)
 I (../../Int/Int_Buzzer.h)(0x6A422164)
@@ -690,17 +690,17 @@ I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_tim_ex.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart_ex.h)(0x6A329DE5)
 F (../../App/App_OLED.h)(0x6A3E60BD)()
-F (../../App/App_Power.c)(0x6A4496A4)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I FreeRTOS/include -I FreeRTOS/portable/RVDS/ARM_CM0 -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_power.o --omf_browse bms24v_platform\app_power.crf --depend bms24v_platform\app_power.d)
+F (../../App/App_Power.c)(0x6A449B3D)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I FreeRTOS/include -I FreeRTOS/portable/RVDS/ARM_CM0 -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_power.o --omf_browse bms24v_platform\app_power.crf --depend bms24v_platform\app_power.d)
 I (../../App/App_Power.h)(0x6A4399C0)
 I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
 I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
 I (D:\App\Keil\ARM\ARMCC\include\stdio.h)(0x5E8E3CC2)
 I (../../App/App_BatMan.h)(0x6A44826E)
 I (../../App/App_Buzzer.h)(0x6A43A87B)
-I (../../App/App_SC8815.h)(0x6A4397D9)
+I (../../App/App_SC8815.h)(0x6A449B24)
 F (../../App/App_Power.h)(0x6A4399C0)()
-F (../../App/App_SC8815.c)(0x6A448DF8)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I FreeRTOS/include -I FreeRTOS/portable/RVDS/ARM_CM0 -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_sc8815.o --omf_browse bms24v_platform\app_sc8815.crf --depend bms24v_platform\app_sc8815.d)
-I (../../App/App_SC8815.h)(0x6A4397D9)
+F (../../App/App_SC8815.c)(0x6A449B37)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I FreeRTOS/include -I FreeRTOS/portable/RVDS/ARM_CM0 -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\app_sc8815.o --omf_browse bms24v_platform\app_sc8815.crf --depend bms24v_platform\app_sc8815.d)
+I (../../App/App_SC8815.h)(0x6A449B24)
 I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
 I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
 I (D:\App\Keil\ARM\ARMCC\include\stdio.h)(0x5E8E3CC2)
@@ -749,13 +749,13 @@ I (FreeRTOS/include/deprecated_definitions.h)(0x6A329DBE)
 I (FreeRTOS/portable/RVDS/ARM_CM0/portmacro.h)(0x6A329DBE)
 I (FreeRTOS/include/mpu_wrappers.h)(0x6A329DBE)
 I (../../Int/Int_SC8815.h)(0x6A448DF8)
-I (../../Int/Int_SC8815_BSP.h)(0x6A4499AD)
+I (../../Int/Int_SC8815_BSP.h)(0x6A44A987)
 I (../Core/Inc/gpio.h)(0x6A3DE251)
 I (../Core/Inc/main.h)(0x6A438A16)
 I (FreeRTOS/include/queue.h)(0x6A329DBE)
 I (FreeRTOS/include/task.h)(0x6A329DBE)
 I (FreeRTOS/include/list.h)(0x6A329DBE)
-F (../../App/App_SC8815.h)(0x6A4397D9)()
+F (../../App/App_SC8815.h)(0x6A449B24)()
 F (../../Com/Com_BQ76952.c)(0x6A435F04)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I FreeRTOS/include -I FreeRTOS/portable/RVDS/ARM_CM0 -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\com_bq76952.o --omf_browse bms24v_platform\com_bq76952.crf --depend bms24v_platform\com_bq76952.d)
 I (../../Com/Com_BQ76952.h)(0x6A435F4B)
 I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
@@ -870,11 +870,11 @@ I (../../Int/Int_font.h)(0x6A3E645B)
 I (D:\App\Keil\ARM\ARMCC\include\string.h)(0x5E8E3CC2)
 F (../../Int/Int_OLED.h)(0x6A42154B)()
 F (../../Int/Int_font.h)(0x6A3E645B)()
-F (../../Int/Int_SC8815.c)(0x6A448DF8)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I FreeRTOS/include -I FreeRTOS/portable/RVDS/ARM_CM0 -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\int_sc8815.o --omf_browse bms24v_platform\int_sc8815.crf --depend bms24v_platform\int_sc8815.d)
+F (../../Int/Int_SC8815.c)(0x6A44A98D)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I FreeRTOS/include -I FreeRTOS/portable/RVDS/ARM_CM0 -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\int_sc8815.o --omf_browse bms24v_platform\int_sc8815.crf --depend bms24v_platform\int_sc8815.d)
 I (../../Int/Int_SC8815.h)(0x6A448DF8)
 I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
 I (D:\App\Keil\ARM\ARMCC\include\stdint.h)(0x5E8E3CC2)
-I (../../Int/Int_SC8815_BSP.h)(0x6A4499AD)
+I (../../Int/Int_SC8815_BSP.h)(0x6A44A987)
 I (../Core/Inc/main.h)(0x6A438A16)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal.h)(0x6A329DE5)
 I (../Core/Inc/stm32g0xx_hal_conf.h)(0x6A3DE253)
@@ -914,7 +914,7 @@ I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_tim_ex.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart.h)(0x6A329DE5)
 I (../Drivers/STM32G0xx_HAL_Driver/Inc/stm32g0xx_hal_uart_ex.h)(0x6A329DE5)
 F (../../Int/Int_SC8815.h)(0x6A448DF8)()
-F (../../Int/Int_SC8815_BSP.h)(0x6A4499AD)()
+F (../../Int/Int_SC8815_BSP.h)(0x6A44A987)()
 F (../../Int/Int_Button.c)(0x6A42145E)(--c99 -c --cpu Cortex-M0+ -D__MICROLIB -g -O3 --apcs=interwork --split_sections -I ../Core/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc -I ../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy -I ../Drivers/CMSIS/Device/ST/STM32G0xx/Include -I ../Drivers/CMSIS/Include -I FreeRTOS/include -I FreeRTOS/portable/RVDS/ARM_CM0 -I Int -I ../../App -I ../../Com -I ../../Int-I.\RTE\_bms24v_platform-ID:\App\Keil\ARM\CMSIS\5.9.0\CMSIS\Core\Include-D__UVISION_VERSION="537" -D_RTE_ -DSTM32G0B1xx -D_RTE_ -DUSE_HAL_DRIVER -DSTM32G0B1xx-o bms24v_platform\int_button.o --omf_browse bms24v_platform\int_button.crf --depend bms24v_platform\int_button.d)
 I (../../Int/Int_Button.h)(0x6A42145E)
 I (D:\App\Keil\ARM\ARMCC\include\stdbool.h)(0x5E8E3CC2)
