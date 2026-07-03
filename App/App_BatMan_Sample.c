@@ -60,6 +60,24 @@ static bool App_BatMan_IsTempValid(int16_t temp_c)
     return (temp_c >= -40) && (temp_c <= 100);
 }
 
+/* BQ CC Gain 已按 5mΩ 实板采样电阻配置；APP 层只保留方向/比例兜底。 */
+static int32_t App_BatMan_ScaleCc2CurrentMa(int32_t raw_current_ma)
+{
+    int32_t scaled;
+
+    scaled = raw_current_ma * APP_BATMAN_CC2_RAW_NUMERATOR;
+    if (scaled >= 0)
+    {
+        scaled += (int32_t)(APP_BATMAN_CC2_RAW_DENOMINATOR / 2u);
+    }
+    else
+    {
+        scaled -= (int32_t)(APP_BATMAN_CC2_RAW_DENOMINATOR / 2u);
+    }
+
+    return scaled / (int32_t)APP_BATMAN_CC2_RAW_DENOMINATOR;
+}
+
 /**
  * @brief 读取 6 串实际电芯电压并计算 min/max/avg/delta。
  *
@@ -130,7 +148,7 @@ static void App_BatMan_LoadBatVoltage(void)
 
     if (App_BatMan_ReadDirectU16(BQ76952_CMD_STACK_VOLTAGE, &raw))
     {
-        stack_mv = raw;
+        stack_mv = (uint32_t)raw * APP_BATMAN_STACK_RAW_TO_MV;
         pack_mv = stack_mv;
     }
 }
@@ -144,11 +162,13 @@ static void App_BatMan_LoadBatVoltage(void)
 static void App_BatMan_LoadCurrent(void)
 {
     uint16_t raw_u16;
+    int32_t raw_current_ma;
 
     s_current_sample_valid = false;
     if (App_BatMan_ReadDirectU16(BQ76952_CMD_CC2_CURRENT, &raw_u16))
     {
-        current_ma = (int32_t)((int16_t)raw_u16) * APP_BATMAN_CC2_RAW_POLARITY;
+        raw_current_ma = (int32_t)((int16_t)raw_u16) * APP_BATMAN_CC2_RAW_POLARITY;
+        current_ma = App_BatMan_ScaleCc2CurrentMa(raw_current_ma);
         current_a = (float)current_ma / 1000.0f;
         s_current_sample_valid = true;
     }

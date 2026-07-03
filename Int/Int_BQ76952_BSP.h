@@ -14,7 +14,7 @@
  *---------------------------------------------------------------------------*/
 #define BQ76952_CELL_COUNT_MAX                  (16u)     /* BQ76952 最多支持 16 串，不能把芯片写死为 6S。 */
 #define BQ76952_PROJECT_SERIES_CELL_COUNT       (6u)      /* 本项目目标电池为 6S 三元锂 21700，仅作硬件事实说明。 */
-#define BQ76952_SHUNT_RESISTOR_UOHM             (500u)    /* 低边采样电阻 0.5 mΩ/6W；电流换算需按实际校准确认。 */
+#define BQ76952_SHUNT_RESISTOR_UOHM             (5000u)   /* 低边采样电阻 5 mΩ/6W；以实板 R18 焊接值为准。 */
 #define BQ76952_FULL_CHARGE_MV                  (25200u)  /* 6S 满充 25.2V；这是系统参数，不是 BQ 保护阈值。 */
 
 #define BQ76952_PROJECT_CELL_FULL_MV            (4200u)   /* 6S ternary Li-ion: one cell full voltage is 4.2V. */
@@ -210,6 +210,8 @@
 #define BQ76952_DM_POWER_CONFIG                 (0x9234u) /* H2，默认 0x2982，电源/SLEEP 配置；写错可能影响唤醒。 */
 #define BQ76952_DM_COMM_TYPE                    (0x9239u) /* U1，默认 0x00，I2C/SPI/HDQ/CRC 配置；误写可能断开通信。 */
 #define BQ76952_DM_I2C_ADDRESS                  (0x923Au) /* U1，默认 0x00，I2C 地址配置；改写前必须准备恢复方案。 */
+#define BQ76952_DM_CC_GAIN                      (0x91A8u) /* F4，CC Gain，32-bit IEEE-754，小端写入。 */
+#define BQ76952_DM_CAPACITY_GAIN                (0x91ACu) /* F4，Capacity Gain，32-bit IEEE-754，小端写入。 */
 #define BQ76952_DM_DA_CONFIGURATION             (0x9303u) /* H1，默认 0x05，DA/温度配置入口；影响采样解释。 */
 #define BQ76952_DM_VCELL_MODE                   (0x9304u) /* H2，默认 0x0000，有效 cell mask；本项目 6S 使用 0x8923。 */
 #define BQ76952_DM_PROTECTION_CONFIGURATION     (0x925Fu) /* H2，默认 0x0002，保护总配置；误写可能关闭关键保护。 */

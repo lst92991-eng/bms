@@ -15,10 +15,13 @@
 #define APP_BATMAN_CELL_VALID_MIN_MV             (2500u)
 #define APP_BATMAN_CELL_VALID_MAX_MV             (4300u)
 #define APP_BATMAN_CURRENT_LOW_CURRENT_A         (0.10f)
-#define APP_BATMAN_DEBUG_PERIOD_MS               (1000u)
+#define APP_BATMAN_DEBUG_PERIOD_MS               (5000u)
 #define APP_BATMAN_DEFAULT_SOC_PERCENT           (50.0f)
 #define APP_BATMAN_CAPACITY_MAH                  (5000u)
 #define APP_BATMAN_CC2_RAW_POLARITY              (1)
+#define APP_BATMAN_CC2_RAW_NUMERATOR             (1)
+#define APP_BATMAN_CC2_RAW_DENOMINATOR           (1)
+#define APP_BATMAN_STACK_RAW_TO_MV               (10u)
 
 /**
  * @brief 初始化 BQ76952，写入基线 Data Memory，并保持主 FET 默认关断。
@@ -30,6 +33,31 @@ void App_BatMan_Init(void);
  * @param interval_ms 调用周期，用于 SOC/SOH 积分。
  */
 void App_BatMan_Task(uint32_t interval_ms);
+
+/**
+ * @brief 打印一帧完整 BQ 中文诊断快照。
+ */
+void App_BatMan_PrintSnapshot(void);
+
+/**
+ * @brief 打印一帧简短 BQ 监视摘要。
+ */
+void App_BatMan_PrintMonitor(void);
+
+/**
+ * @brief 打印一行 bqfast 专用的紧凑监视数据。
+ */
+void App_BatMan_PrintFastMonitor(void);
+
+/**
+ * @brief 判断当前 BQ/采样快照是否已经出现需要停表记录的异常。
+ */
+bool App_BatMan_IsMonitorFaultActive(void);
+
+/**
+ * @brief 打印 bqfast 自动停表时的 BQ 侧原因。
+ */
+void App_BatMan_PrintMonitorStopReason(void);
 
 /**
  * @brief 设置主充放电 MOS。
@@ -47,6 +75,12 @@ bool App_BatMan_SetMainFets(bool charge_enable, bool discharge_enable);
  * @return true 写入成功。
  */
 bool App_BatMan_SetPreDischargeFet(bool charge_enable);
+
+/**
+ * @brief 手动测试 PDSG：只允许 PDSG，强制关闭 CHG/PCHG/DSG，并释放 FET_INIT_OFF。
+ * @return true 写入成功。
+ */
+bool App_BatMan_TestPreDischargeOnly(void);
 
 /**
  * @brief 强制关闭 CHG/DSG/PCHG/PDSG。

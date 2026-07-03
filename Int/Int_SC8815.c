@@ -521,6 +521,28 @@ static Int_SC8815_StatusTypeDef Int_SC8815_WriteRegRawOnce(uint8_t reg, uint8_t 
     return ret;
 }
 
+static Int_SC8815_StatusTypeDef Int_SC8815_ProbeAddressRawOnce(uint8_t addr_7bit)
+{
+    uint32_t primask;
+    Int_SC8815_StatusTypeDef ret = INT_SC8815_OK;
+
+    if (addr_7bit > 0x7Fu)
+    {
+        return INT_SC8815_ERROR_PARAM;
+    }
+
+    primask = Int_SC8815_EnterCritical();
+    Int_SC8815_BusStart();
+    if (!Int_SC8815_BusWriteByte((uint8_t)(addr_7bit << 1u)))
+    {
+        ret = INT_SC8815_ERROR_ACK;
+    }
+    Int_SC8815_BusStop();
+    Int_SC8815_ExitCritical(primask);
+
+    return ret;
+}
+
 static Int_SC8815_StatusTypeDef Int_SC8815_ReadRegRaw(uint8_t reg, uint8_t *value)
 {
     Int_SC8815_StatusTypeDef ret;
@@ -917,6 +939,30 @@ Int_SC8815_StatusTypeDef Int_SC8815_SetCurrentLimitMa(Int_SC8815_CurrentLimitTyp
     code = Int_SC8815_CurrentLimitMaToCode(current_ma, ratio, rsense_mohm);
 
     return Int_SC8815_WriteReg(reg, code);
+}
+
+Int_SC8815_StatusTypeDef Int_SC8815_ProbeAddress(uint8_t addr_7bit, bool swapped)
+{
+    bool old_swapped = s_sc8815_iic_swapped;
+    Int_SC8815_StatusTypeDef ret;
+
+    s_sc8815_iic_swapped = swapped;
+    ret = Int_SC8815_ProbeAddressRawOnce(addr_7bit);
+    s_sc8815_iic_swapped = old_swapped;
+
+    return ret;
+}
+
+Int_SC8815_StatusTypeDef Int_SC8815_ReadRegWithLineOrder(uint8_t reg, bool swapped, uint8_t *value)
+{
+    bool old_swapped = s_sc8815_iic_swapped;
+    Int_SC8815_StatusTypeDef ret;
+
+    s_sc8815_iic_swapped = swapped;
+    ret = Int_SC8815_ReadRegRawOnce(reg, value);
+    s_sc8815_iic_swapped = old_swapped;
+
+    return ret;
 }
 
 bool Int_SC8815_IsIicLineSwapped(void)

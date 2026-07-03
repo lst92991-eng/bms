@@ -426,7 +426,11 @@ void Inf_OLED_ShowPicture(uint8_t x, uint8_t y, uint8_t sizex, uint8_t sizey, ui
 
 void Inf_OLED_Init(void)
 {
-    HAL_Delay(800u);
+    volatile uint32_t i;
+
+    for (i = 0u; i < 5120000u; i++)
+    {
+    }
 
     Inf_OLED_WR_Byte(0xAEu, OLED_CMD);
     Inf_OLED_WR_Byte(0x00u, OLED_CMD);

@@ -11,7 +11,8 @@
  */
 #define APP_BATMAN_DM_DA_CONFIGURATION_DEFAULT          (0x05u)
 #define APP_BATMAN_DM_PROTECTION_CONFIGURATION_DEFAULT  (0x0002u)
-#define APP_BATMAN_DM_ENABLED_PROTECTIONS_A_DEFAULT     (BQ76952_ENABLED_PROTECTIONS_A_COV_MASK) /* bring-up 临时关闭 SCD，原 0x88。 */
+#define APP_BATMAN_DM_ENABLED_PROTECTIONS_A_DEFAULT     (BQ76952_ENABLED_PROTECTIONS_A_SCD_MASK | \
+                                                         BQ76952_ENABLED_PROTECTIONS_A_COV_MASK)
 #define APP_BATMAN_DM_ENABLED_PROTECTIONS_B_DEFAULT     (0x00u)
 #define APP_BATMAN_DM_ENABLED_PROTECTIONS_C_DEFAULT     (0x00u)
 #define APP_BATMAN_DM_CHG_FET_PROTECTIONS_A_DEFAULT     (0x98u)
@@ -21,7 +22,9 @@
 #define APP_BATMAN_DM_DSG_FET_PROTECTIONS_B_DEFAULT     (0xE6u)
 #define APP_BATMAN_DM_DSG_FET_PROTECTIONS_C_DEFAULT     (0xE2u)
 #define APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT        (0xF800u)
-#define APP_BATMAN_DM_SCD_THRESHOLD_10MV                (0x00u) /* 手册 0 对应 10mV。 */
+#define APP_BATMAN_DM_CC_GAIN_5_MOHM_IEEE754            (0x3FBF67F5u) /* 1.49536f = 7.4768 / 5mΩ。 */
+#define APP_BATMAN_DM_CAPACITY_GAIN_5_MOHM_IEEE754      (0x48D9C710u) /* 446008.49f = CC Gain * 298261.6178。 */
+#define APP_BATMAN_DM_SCD_THRESHOLD_80MV                (0x04u) /* 80mV/5mΩ≈16A，给12A放电测试留余量。 */
 #define APP_BATMAN_DM_SCD_DELAY_400US_TEST              (0x1Cu) /* 近似 400us，实际约 405us。 */
 #define APP_BATMAN_DM_FET_OPTIONS_DEFAULT               (BQ76952_FET_OPTIONS_FET_INIT_OFF_MASK | \
                                                          BQ76952_FET_OPTIONS_PDSG_EN_MASK | \
@@ -102,6 +105,24 @@ static bool App_BatMan_WriteConfigU16(uint16_t address, uint16_t value)
 }
 
 /**
+ * @brief 写入 4 字节 Data Memory 配置。
+ */
+static bool App_BatMan_WriteConfigU32(uint16_t address, uint32_t value)
+{
+    uint8_t data[4];
+
+    App_BatMan_WriteU32Le(value, data);
+    if (Int_BQ76952_WriteDataMemory(address, data, 4u) == INT_BQ76952_OK)
+    {
+        return true;
+    }
+
+    s_comm_fault = true;
+    App_BatMan_PrintDmWrite32Fail(address);
+    return false;
+}
+
+/**
  * @brief 写入 BQ76952 bring-up 阶段的项目基线配置。
  *
  * 与旧 APP 的关键区别：这里配置 BQ 的保护和均衡能力，但主充放电
@@ -123,6 +144,18 @@ bool App_BatMan_ConfigBq(void)
     }
 
     /*
+     * 实板低边采样电阻为 5mΩ。把 BQ 自身的 CC Gain/Capacity Gain
+     * 配准到硬件值后，APP 层电流读数保持 1:1，避免 SOC 和日志使用临时比例。
+     */
+    if (!App_BatMan_WriteConfigU32(BQ76952_DM_CC_GAIN,
+                                   APP_BATMAN_DM_CC_GAIN_5_MOHM_IEEE754) ||
+        !App_BatMan_WriteConfigU32(BQ76952_DM_CAPACITY_GAIN,
+                                   APP_BATMAN_DM_CAPACITY_GAIN_5_MOHM_IEEE754))
+    {
+        return false;
+    }
+
+    /*
      * 保护配置与告警掩码决定 BQ 上报哪些事件，以及哪些事件进入
      * BQ 自己的保护/FET 判定路径。
      */
@@ -131,7 +164,7 @@ bool App_BatMan_ConfigBq(void)
         !App_BatMan_WriteConfigU16(BQ76952_DM_DEFAULT_ALARM_MASK,
                                    APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT) ||
         !App_BatMan_WriteConfigU8(BQ76952_DM_SCD_THRESHOLD,
-                                  APP_BATMAN_DM_SCD_THRESHOLD_10MV) ||
+                                  APP_BATMAN_DM_SCD_THRESHOLD_80MV) ||
         !App_BatMan_WriteConfigU8(BQ76952_DM_SCD_DELAY,
                                   APP_BATMAN_DM_SCD_DELAY_400US_TEST))
     {
@@ -241,6 +274,27 @@ bool App_BatMan_SetPreDischargeFet(bool charge_enable)
      * 否则器件永远收不到“允许放电”的请求。
      */
     if (App_BatMan_WriteMainFetControl(off_mask) == INT_BQ76952_OK)
+    {
+        return true;
+    }
+
+    s_comm_fault = true;
+    return false;
+}
+
+bool App_BatMan_TestPreDischargeOnly(void)
+{
+    const uint8_t off_mask = (uint8_t)(BQ76952_FET_CONTROL_PCHG_OFF_MASK |
+                                       BQ76952_FET_CONTROL_CHG_OFF_MASK |
+                                       BQ76952_FET_CONTROL_DSG_OFF_MASK);
+
+    /*
+     * 串口定位专用：只清 PDSG_OFF，保持 DSG_OFF，确认 BQ 和硬件是否
+     * 真的能单独拉起预放电通道。FET_CONTROL 只表达关断掩码，随后还需
+     * ALL_FETS_ON 释放 FET_INIT_OFF/host off latch，否则 PDSG 可能保持关闭。
+     */
+    if ((App_BatMan_WriteMainFetControl(off_mask) == INT_BQ76952_OK) &&
+        (Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_ALL_FETS_ON) == INT_BQ76952_OK))
     {
         return true;
     }

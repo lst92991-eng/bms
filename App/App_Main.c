@@ -7,6 +7,7 @@
 
 #include "App_BatMan.h"
 #include "App_Buzzer.h"
+#include "App_DebugCli.h"
 #include "App_OLED.h"
 #include "App_Power.h"
 #include "App_SC8815.h"
@@ -23,6 +24,7 @@
 #define APP_MAIN_CAN_TASK_PERIOD_MS        100u
 #define APP_MAIN_NVM_TASK_PERIOD_MS        1000u
 #define APP_MAIN_DISPLAY_TASK_PERIOD_MS    1000u
+#define APP_MAIN_DEBUG_CLI_TASK_PERIOD_MS  20u
 #define APP_MAIN_BUZZER_ENABLE             0u
 
 /**
@@ -127,6 +129,22 @@ void display_task(void *arg)
 }
 
 /**
+ * @brief 串口 bring-up 命令任务。
+ *
+ * 只轮询 USART1 RX 并分发少量调试命令，避免把临时测试入口塞进功率或芯片驱动状态机。
+ */
+void debug_cli_task(void *arg)
+{
+    (void)arg;
+
+    while (1)
+    {
+        App_DebugCli_Task(APP_MAIN_DEBUG_CLI_TASK_PERIOD_MS);
+        vTaskDelay(APP_MAIN_DEBUG_CLI_TASK_PERIOD_MS);
+    }
+}
+
+/**
  * @brief 启动前的 APP/INT 层初始化。
  *
  * 统一在调度器启动前完成硬件接口初始化，可以避免多个任务同时抢 I2C/SPI/CAN
@@ -157,6 +175,8 @@ static void App_Main_Init(void)
     App_BatMan_Init();
     printf("APP初始化: 电源管理\r\n");
     App_Power_Init();
+    printf("APP init CLI\r\n");
+    App_DebugCli_Init();
     printf("APP初始化: 完成\r\n");
 }
 
@@ -177,6 +197,7 @@ void App_Main(void)
     xTaskCreate(sc8815_task, "sc8815_task", 512, NULL, 2, NULL);
     xTaskCreate(nvm_task, "nvm_task", 384, NULL, 1, NULL);
     xTaskCreate(display_task, "display_task", 384, NULL, 1, NULL);
+    xTaskCreate(debug_cli_task, "debug_cli_task", 512, NULL, 1, NULL);
 
     printf("RTOS: 启动调度器\r\n");
     vTaskStartScheduler();

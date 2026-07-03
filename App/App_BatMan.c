@@ -116,6 +116,17 @@ void App_BatMan_WriteU16Le(uint16_t value, uint8_t data[2])
 }
 
 /**
+ * @brief 按 BQ76952 little-endian 格式写入 32-bit 值。
+ */
+void App_BatMan_WriteU32Le(uint32_t value, uint8_t data[4])
+{
+    data[0] = (uint8_t)(value & 0xFFu);
+    data[1] = (uint8_t)((value >> 8u) & 0xFFu);
+    data[2] = (uint8_t)((value >> 16u) & 0xFFu);
+    data[3] = (uint8_t)((value >> 24u) & 0xFFu);
+}
+
+/**
  * @brief 复位 APP 层公开快照和内部估算状态。
  *
  * 即使 BQ 初始化中途失败，OLED、串口或后续 CAN 输出也能看到确定的

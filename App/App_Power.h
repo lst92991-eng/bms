@@ -20,5 +20,8 @@ void App_Power_Task(uint32_t interval_ms);
 App_Power_StateTypeDef App_Power_GetState(void);
 bool App_Power_IsChargeAllowed(void);
 bool App_Power_IsDischargeAllowed(void);
+void App_Power_PrintSnapshot(void);
+void App_Power_PrintStopReason(void);
+bool App_Power_ClearDischargeFault(void);
 
 #endif /* APP_POWER_H */

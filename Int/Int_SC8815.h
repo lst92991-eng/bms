@@ -112,6 +112,8 @@ Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentMa(Int_SC8815_CurrentChannelTy
  * @note 小于 300mA 或超过项目上限会被拒绝。
  */
 Int_SC8815_StatusTypeDef Int_SC8815_SetCurrentLimitMa(Int_SC8815_CurrentLimitTypeDef type, uint16_t current_ma);
+Int_SC8815_StatusTypeDef Int_SC8815_ProbeAddress(uint8_t addr_7bit, bool swapped);
+Int_SC8815_StatusTypeDef Int_SC8815_ReadRegWithLineOrder(uint8_t reg, bool swapped, uint8_t *value);
 
 bool Int_SC8815_IsIicLineSwapped(void);
 uint8_t Int_SC8815_GetBusLevels(void);

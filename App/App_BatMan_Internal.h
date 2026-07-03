@@ -20,6 +20,7 @@ extern bool s_temp_cell_sample_valid;
 
 uint16_t App_BatMan_ReadU16Le(const uint8_t data[2]);
 void App_BatMan_WriteU16Le(uint16_t value, uint8_t data[2]);
+void App_BatMan_WriteU32Le(uint32_t value, uint8_t data[4]);
 
 void App_BatMan_ResetSampleState(void);
 void App_BatMan_ResetEstimatorState(void);
@@ -43,6 +44,7 @@ void App_BatMan_UpdateDebugOutput(uint32_t interval_ms);
 
 void App_BatMan_PrintDmWrite8Fail(uint16_t address);
 void App_BatMan_PrintDmWrite16Fail(uint16_t address);
+void App_BatMan_PrintDmWrite32Fail(uint16_t address);
 void App_BatMan_PrintBqResetFail(Int_BQ76952_StatusTypeDef ret);
 void App_BatMan_PrintBqDeviceFail(Int_BQ76952_StatusTypeDef ret);
 void App_BatMan_PrintBqOkDev(uint16_t device_number);

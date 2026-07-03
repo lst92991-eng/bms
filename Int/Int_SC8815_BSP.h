@@ -33,7 +33,7 @@
  * 线序不可直接使用。软件 IIC 默认先按网表线序访问，ACK 失败时 INT 层会
  * 自动尝试交换线序，便于 bring-up 阶段确认真实接线。
  */
-#define SC8815_PROJECT_IIC_LINE_SWAPPED              (0u)
+#define SC8815_PROJECT_IIC_LINE_SWAPPED              (1u)
 /* 软 I2C 网表连接：PA7=MCU_SCL_NET，PA6=MCU_SDA_NET；这里只记录硬件事实，不提供 GPIO 操作。 */
 #define SC8815_PROJECT_SCL_PORT_LETTER               ('A')
 #define SC8815_PROJECT_SCL_PIN_NUMBER                (7u)

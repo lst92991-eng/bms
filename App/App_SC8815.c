@@ -3,6 +3,7 @@
 #include <stdio.h>
 
 #include "FreeRTOS.h"
+#include "App_DebugCli.h"
 #include "Int_SC8815.h"
 #include "Int_SC8815_BSP.h"
 #include "gpio.h"
@@ -23,7 +24,7 @@
  */
 
 #define APP_SC8815_BIT(value, mask)                (((value) & (mask)) != 0u ? 1u : 0u)
-#define APP_SC8815_DEBUG_PERIOD_MS              (1000u)
+#define APP_SC8815_DEBUG_PERIOD_MS              (5000u)
 #define APP_SC8815_CHARGE_QUEUE_LEN             (1u)
 
 /*
@@ -259,40 +260,6 @@ static void App_SC8815_Sample(void)
                                                         &s_sc.ibat_raw));
 }
 
-static uint8_t App_SC8815_ReadPinLevel(GPIO_TypeDef *port, uint16_t pin)
-{
-    return (HAL_GPIO_ReadPin(port, pin) == GPIO_PIN_SET) ? 1u : 0u;
-}
-
-static void App_SC8815_UpdateDebugRegs(void)
-{
-    s_sc.ce_n_pin = App_SC8815_ReadPinLevel(SC8815_CE_N_GPIO_Port,
-                                            SC8815_CE_N_Pin);
-    s_sc.pstop_pin = App_SC8815_ReadPinLevel(SC8815_PSTOP_GPIO_Port,
-                                             SC8815_PSTOP_Pin);
-
-    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_VBAT_SET,
-                                              &s_sc.vbat_set_reg));
-    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_RATIO,
-                                              &s_sc.ratio_reg));
-    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_IBUS_LIM_SET,
-                                              &s_sc.ibus_lim_reg));
-    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_IBAT_LIM_SET,
-                                              &s_sc.ibat_lim_reg));
-    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_VINREG_SET,
-                                              &s_sc.vinreg_reg));
-    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_CTRL0_SET,
-                                              &s_sc.ctrl0_reg));
-    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_CTRL1_SET,
-                                              &s_sc.ctrl1_reg));
-    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_CTRL2_SET,
-                                              &s_sc.ctrl2_reg));
-    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_CTRL3_SET,
-                                              &s_sc.ctrl3_reg));
-    (void)App_SC8815_Check(Int_SC8815_ReadReg(SC8815_REG_MASK,
-                                              &s_sc.mask_reg));
-}
-
 /**
  * @brief 输出 SC8815 紧凑调试信息。
  *
@@ -301,30 +268,11 @@ static void App_SC8815_UpdateDebugRegs(void)
  */
 static void App_SC8815_PrintDebug(void)
 {
-    uint32_t ibus_limit_ma;
-    uint32_t ibat_limit_ma;
-
-    App_SC8815_UpdateDebugRegs();
-    ibus_limit_ma = (((uint32_t)s_sc.ibus_lim_reg + SC8815_CURRENT_LIMIT_CODE_OFFSET) *
-                     SC8815_PROJECT_IBUS_RATIO_X *
-                     SC8815_CURRENT_LIMIT_REF_RSENSE_MOHM *
-                     1000u) /
-                    (SC8815_CURRENT_LIMIT_CODE_DENOMINATOR *
-                     SC8815_PROJECT_RSNS_IBUS_MOHM);
-    ibat_limit_ma = (((uint32_t)s_sc.ibat_lim_reg + SC8815_CURRENT_LIMIT_CODE_OFFSET) *
-                     SC8815_PROJECT_IBAT_RATIO_X *
-                     SC8815_CURRENT_LIMIT_REF_RSENSE_MOHM *
-                     1000u) /
-                    (SC8815_CURRENT_LIMIT_CODE_DENOMINATOR *
-                     SC8815_PROJECT_RSNS_IBAT_MOHM);
-
-    printf("SC 通信:%u 错:%u 交换:%u 总线:%02x 请求:%u 使能:%u 待机:%u 状态:%02x AC:%u 短路:%u 过温:%u 充满:%u VBUS:%lu VBAT:%lu IBUS:%lu IBAT:%lu\r\n",
+    printf("---------- SC8815 ----------\r\n");
+    printf("SC 摘要 通信:%u 错:%u 请求:%u 待机:%u 状态:%02x AC:%u 短路:%u 过温:%u 充满:%u VBUS:%lu VBAT:%lu IBUS:%lu IBAT:%lu\r\n",
            s_sc.comm_ok ? 1u : 0u,
            (unsigned int)s_sc.last_error,
-           Int_SC8815_IsIicLineSwapped() ? 1u : 0u,
-           (unsigned int)Int_SC8815_GetBusLevels(),
            s_sc.charge_requested ? 1u : 0u,
-           s_sc.chip_enabled ? 1u : 0u,
            s_sc.standby ? 1u : 0u,
            (unsigned int)s_sc.status_raw,
            s_sc.ac_ok ? 1u : 0u,
@@ -335,44 +283,6 @@ static void App_SC8815_PrintDebug(void)
            (unsigned long)s_sc.vbat_mv,
            (unsigned long)s_sc.ibus_ma,
            (unsigned long)s_sc.ibat_ma);
-    printf("SC硬件 CE_N:%u PSTOP:%u REG VBAT:%02x RATIO:%02x LIM:%02x/%02x CTRL:%02x/%02x/%02x/%02x MASK:%02x\r\n",
-           (unsigned int)s_sc.ce_n_pin,
-           (unsigned int)s_sc.pstop_pin,
-           (unsigned int)s_sc.vbat_set_reg,
-           (unsigned int)s_sc.ratio_reg,
-           (unsigned int)s_sc.ibus_lim_reg,
-           (unsigned int)s_sc.ibat_lim_reg,
-           (unsigned int)s_sc.ctrl0_reg,
-           (unsigned int)s_sc.ctrl1_reg,
-           (unsigned int)s_sc.ctrl2_reg,
-           (unsigned int)s_sc.ctrl3_reg,
-           (unsigned int)s_sc.mask_reg);
-    printf("SC原始ADC VBUS:%u VBAT:%u IBUS:%u IBAT:%u 限流换算:%lu/%lu mA\r\n",
-           (unsigned int)s_sc.vbus_raw,
-           (unsigned int)s_sc.vbat_raw,
-           (unsigned int)s_sc.ibus_raw,
-           (unsigned int)s_sc.ibat_raw,
-           (unsigned long)ibus_limit_ma,
-           (unsigned long)ibat_limit_ma);
-    printf("SC配置 VINREG:%02x 状态位 AC_OK:%u INDET:%u VBUS_SHORT:%u OTP:%u EOC:%u RSV:%02x\r\n",
-           (unsigned int)s_sc.vinreg_reg,
-           APP_SC8815_BIT(s_sc.status_raw, SC8815_STATUS_AC_OK_MASK),
-           APP_SC8815_BIT(s_sc.status_raw, SC8815_STATUS_INDET_MASK),
-           APP_SC8815_BIT(s_sc.status_raw, SC8815_STATUS_VBUS_SHORT_MASK),
-           APP_SC8815_BIT(s_sc.status_raw, SC8815_STATUS_OTP_MASK),
-           APP_SC8815_BIT(s_sc.status_raw, SC8815_STATUS_EOC_MASK),
-           (unsigned int)(s_sc.status_raw & SC8815_STATUS_RESERVED_MASK));
-    printf("SC控制位 OTG:%u PGATE开:%u GPO低:%u ADC:%u FACTORY:%u IBAT基准:%u 禁涓流:%u 禁终止:%u 禁短路折返:%u MASK:%02x\r\n",
-           APP_SC8815_BIT(s_sc.ctrl0_reg, SC8815_CTRL0_SET_EN_OTG_MASK),
-           APP_SC8815_BIT(s_sc.ctrl3_reg, SC8815_CTRL3_SET_EN_PGATE_MASK),
-           APP_SC8815_BIT(s_sc.ctrl3_reg, SC8815_CTRL3_SET_GPO_CTRL_MASK),
-           APP_SC8815_BIT(s_sc.ctrl3_reg, SC8815_CTRL3_SET_AD_START_MASK),
-           APP_SC8815_BIT(s_sc.ctrl2_reg, SC8815_CTRL2_SET_FACTORY_MASK),
-           APP_SC8815_BIT(s_sc.ctrl1_reg, SC8815_CTRL1_SET_ICHAR_SEL_MASK),
-           APP_SC8815_BIT(s_sc.ctrl1_reg, SC8815_CTRL1_SET_DIS_TRICKLE_MASK),
-           APP_SC8815_BIT(s_sc.ctrl1_reg, SC8815_CTRL1_SET_DIS_TERM_MASK),
-           APP_SC8815_BIT(s_sc.ctrl3_reg, SC8815_CTRL3_SET_DIS_SHORT_FOLDBACK_MASK),
-           (unsigned int)s_sc.mask_reg);
 }
 
 /**
@@ -449,11 +359,14 @@ void App_SC8815_Task(uint16_t interval_ms)
     App_SC8815_LoadChargeRequest();
     App_SC8815_ApplyChargeRequest();
 
-    s_debug_ms = (uint16_t)(s_debug_ms + interval_ms);
-    if (s_debug_ms >= APP_SC8815_DEBUG_PERIOD_MS)
+    if (!App_DebugCli_IsVofaStreaming() && !App_DebugCli_IsBqMonitoring())
     {
-        s_debug_ms = 0u;
-        App_SC8815_PrintDebug();
+        s_debug_ms = (uint16_t)(s_debug_ms + interval_ms);
+        if (s_debug_ms >= APP_SC8815_DEBUG_PERIOD_MS)
+        {
+            s_debug_ms = 0u;
+            App_SC8815_PrintDebug();
+        }
     }
 }
 
