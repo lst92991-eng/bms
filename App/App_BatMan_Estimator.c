@@ -23,6 +23,12 @@
 #define APP_BATMAN_SOC_DISPLAY_RISE_PER_S       (1.5f)
 #define APP_BATMAN_SOC_DISPLAY_FALL_PER_S       (2.5f)
 
+#define APP_BATMAN_RC_R0_MOHM                   (35)
+#define APP_BATMAN_RC_RP_MOHM                   (20)
+#define APP_BATMAN_RC_TAU_MS                    (4000u)
+#define APP_BATMAN_RC_CURRENT_DEADBAND_MA       (200)
+#define APP_BATMAN_RC_COMP_MAX_MV               (550)
+
 #define APP_BATMAN_BALANCE_START_MIN_MV         (3900u)
 #define APP_BATMAN_BALANCE_STOP_MIN_MV          (3850u)
 #define APP_BATMAN_BALANCE_START_DELTA_MV       (40u)
@@ -40,6 +46,7 @@
 
 static uint32_t s_balance_ms = 0u;
 static uint16_t s_last_balance_mask = BQ76952_CELL_MASK_NONE;
+static int32_t s_rc_polar_mv = 0;
 
 static const uint16_t s_balance_cell_mask[APP_BATMAN_CELL_COUNT] =
 {
@@ -55,6 +62,7 @@ void App_BatMan_ResetEstimatorState(void)
 {
     s_balance_ms = 0u;
     s_last_balance_mask = BQ76952_CELL_MASK_NONE;
+    s_rc_polar_mv = 0;
 }
 
 /**
@@ -93,6 +101,85 @@ void App_BatMan_InitAlgorithms(void)
     soh_config.temp_warn_c = APP_BATMAN_HEALTH_TEMP_WARN_C;
     soh_config.cycle_warn_count = 300u;
     Com_SOH_Init(&soh_config);
+}
+
+static int32_t App_BatMan_LimitRcCompMv(int32_t value_mv)
+{
+    if (value_mv < 0)
+    {
+        return 0;
+    }
+    if (value_mv > APP_BATMAN_RC_COMP_MAX_MV)
+    {
+        return APP_BATMAN_RC_COMP_MAX_MV;
+    }
+
+    return value_mv;
+}
+
+static uint16_t App_BatMan_AddCompToCellMv(uint16_t cell_raw_mv, int32_t comp_mv)
+{
+    uint32_t value_mv;
+
+    if (cell_raw_mv == 0u)
+    {
+        return 0u;
+    }
+
+    value_mv = (uint32_t)cell_raw_mv + (uint32_t)App_BatMan_LimitRcCompMv(comp_mv);
+    if (value_mv > APP_BATMAN_CELL_VALID_MAX_MV)
+    {
+        value_mv = APP_BATMAN_CELL_VALID_MAX_MV;
+    }
+
+    return (uint16_t)value_mv;
+}
+
+void App_BatMan_UpdateRcModel(uint32_t interval_ms)
+{
+    int32_t discharge_current_ma = 0;
+    int32_t ohmic_mv = 0;
+    int32_t polar_target_mv = 0;
+    int32_t total_comp_mv;
+
+    if (!s_cells_sample_valid || !s_current_sample_valid)
+    {
+        cell_min_rc_mv = cell_min_mv;
+        cell_avg_rc_mv = cell_avg_mv;
+        cell_rc_ohmic_mv = 0;
+        cell_rc_polar_mv = (int16_t)App_BatMan_LimitRcCompMv(s_rc_polar_mv);
+        cell_rc_total_mv = cell_rc_polar_mv;
+        return;
+    }
+
+    if (current_ma < -APP_BATMAN_RC_CURRENT_DEADBAND_MA)
+    {
+        discharge_current_ma = -current_ma;
+    }
+
+    /*
+     * Thevenin 一阶 RC 模型：实测端电压 = OCV - I*R0 - Vp。
+     * 这里反推 OCV 估计值，只用于 APP 软欠压策略和日志，不替代 BQ 硬保护。
+     */
+    ohmic_mv = (discharge_current_ma * APP_BATMAN_RC_R0_MOHM) / 1000;
+    polar_target_mv = (discharge_current_ma * APP_BATMAN_RC_RP_MOHM) / 1000;
+
+    if (interval_ms == 0u)
+    {
+        s_rc_polar_mv = polar_target_mv;
+    }
+    else
+    {
+        s_rc_polar_mv += ((polar_target_mv - s_rc_polar_mv) * (int32_t)interval_ms) /
+                         (int32_t)(APP_BATMAN_RC_TAU_MS + interval_ms);
+    }
+
+    total_comp_mv = App_BatMan_LimitRcCompMv(ohmic_mv + s_rc_polar_mv);
+    cell_min_rc_mv = App_BatMan_AddCompToCellMv(cell_min_mv, total_comp_mv);
+    cell_avg_rc_mv = App_BatMan_AddCompToCellMv(cell_avg_mv, total_comp_mv);
+    cell_rc_ohmic_mv = (int16_t)App_BatMan_LimitRcCompMv(ohmic_mv);
+    cell_rc_polar_mv = (int16_t)App_BatMan_LimitRcCompMv(s_rc_polar_mv);
+    cell_rc_total_mv = (int16_t)total_comp_mv;
 }
 
 /**

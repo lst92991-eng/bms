@@ -193,7 +193,7 @@ void App_Power_PrintStopReason(void)
                                     (temp_cell_c <= APP_POWER_DISCHARGE_TEMP_MAX_C));
 
     App_Power_PrintSeparator("BQFAST停表-电源原因");
-    printf("BQFAST电源 状态:%u 充:%u 放:%u 预:%u SCD锁存:%u I:%ldmA CellMin:%u CellMax:%u d:%u Temp:%d 限流:%u\r\n",
+    printf("BQFAST电源 状态:%u 充:%u 放:%u 预:%u SCD锁存:%u I:%ldmA CellMin:%u RcMin:%u CellMax:%u d:%u Temp:%d 限流:%u\r\n",
            (unsigned int)s_power_state,
            s_charge_allowed ? 1u : 0u,
            s_discharge_allowed ? 1u : 0u,
@@ -201,6 +201,7 @@ void App_Power_PrintStopReason(void)
            s_discharge_scd_latched ? 1u : 0u,
            (long)current_ma,
            (unsigned int)cell_min_mv,
+           (unsigned int)cell_min_rc_mv,
            (unsigned int)cell_max_mv,
            (unsigned int)cell_delta_mv,
            temp_cell_c,
@@ -211,8 +212,8 @@ void App_Power_PrintStopReason(void)
     App_Power_PrintReasonFlag(s_discharge_scd_latched, "APP已经锁存SCD，需排查后发送 fault clear");
     App_Power_PrintReasonFlag(cell_min_mv <= APP_POWER_CELL_LOW_MV, "最低单体达到低电压阈值，APP关闭放电");
     App_Power_PrintReasonFlag((s_power_state == APP_POWER_STATE_MONITOR) &&
-                              (cell_min_mv < APP_POWER_CELL_RECOVER_MV),
-                              "最低单体低于放电恢复阈值3200mV，APP进入MONITOR并关闭放电");
+                              (cell_min_rc_mv < APP_POWER_CELL_RECOVER_MV),
+                              "RC补偿最低单体低于放电恢复阈值3200mV，APP进入MONITOR并关闭放电");
     App_Power_PrintReasonFlag(discharge_over_current, "电流超过APP软件放电限流，APP关闭放电");
     App_Power_PrintReasonFlag(!discharge_temp_ok, "放电温度不在允许范围，APP关闭放电");
     App_Power_PrintReasonFlag(!s_discharge_allowed, "电源状态机当前不允许放电");
@@ -468,7 +469,7 @@ void App_Power_Task(uint32_t interval_ms)
         s_discharge_allowed = false;
         App_Power_SetOutput(s_charge_allowed, s_discharge_allowed);
     }
-    else if (cell_min_mv < APP_POWER_CELL_RECOVER_MV)
+    else if (cell_min_rc_mv < APP_POWER_CELL_RECOVER_MV)
     {
         s_bq_wake_ms = 0u;
         s_predischarge_ms = 0u;

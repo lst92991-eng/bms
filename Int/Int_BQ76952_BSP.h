@@ -225,8 +225,25 @@
 #define BQ76952_DM_DSG_FET_PROTECTIONS_B        (0x926Au) /* U1，默认 0xE6，B 类故障关闭 DSG 的掩码。 */
 #define BQ76952_DM_DSG_FET_PROTECTIONS_C        (0x926Bu) /* U1，默认 0xE2，C 类故障关闭 DSG 的掩码。 */
 #define BQ76952_DM_DEFAULT_ALARM_MASK           (0x926Du) /* H2，默认 0xF800，Alarm Enable 默认值；影响 ALERT 输出。 */
+#define BQ76952_DM_CUV_THRESHOLD                (0x9275u) /* U1，单体欠压阈值，单位 50.6mV。 */
+#define BQ76952_DM_CUV_DELAY                    (0x9276u) /* U2，单体欠压延时，单位 3.3ms，实际有 6.6ms 偏移。 */
+#define BQ76952_DM_CUV_RECOVERY_HYSTERESIS      (0x927Bu) /* U1，单体欠压恢复回差，单位 50.6mV。 */
+#define BQ76952_DM_OCC_THRESHOLD                (0x9280u) /* U1，充电过流阈值，单位 2mV，需按采样电阻换算。 */
+#define BQ76952_DM_OCC_DELAY                    (0x9281u) /* U1，充电过流延时，单位 3.3ms，实际有 6.6ms 偏移。 */
+#define BQ76952_DM_OCD1_THRESHOLD               (0x9282u) /* U1，放电过流一级阈值，单位 2mV。 */
+#define BQ76952_DM_OCD1_DELAY                   (0x9283u) /* U1，放电过流一级延时，单位 3.3ms，实际有 6.6ms 偏移。 */
+#define BQ76952_DM_OCD2_THRESHOLD               (0x9284u) /* U1，放电过流二级阈值，单位 2mV。 */
+#define BQ76952_DM_OCD2_DELAY                   (0x9285u) /* U1，放电过流二级延时，单位 3.3ms，实际有 6.6ms 偏移。 */
 #define BQ76952_DM_SCD_THRESHOLD                (0x9286u) /* U1，SCD 阈值；0 对应 10mV，需按采样电阻换算电流。 */
 #define BQ76952_DM_SCD_DELAY                    (0x9287u) /* U1，SCD 延时；步进 15us，短路验证前不要长期放宽。 */
+#define BQ76952_DM_OCC_RECOVERY_THRESHOLD       (0x9288u) /* I2，充电过流恢复阈值，单位 mA。 */
+#define BQ76952_DM_OCD_RECOVERY_THRESHOLD       (0x928Du) /* I2，OCD1/2/3 恢复阈值，单位 mA。 */
+#define BQ76952_DM_OTC_THRESHOLD                (0x929Au) /* I1，充电过温阈值，单位 °C。 */
+#define BQ76952_DM_OTC_DELAY                    (0x929Bu) /* U1，充电过温延时，单位 s。 */
+#define BQ76952_DM_OTC_RECOVERY                 (0x929Cu) /* I1，充电过温恢复阈值，单位 °C。 */
+#define BQ76952_DM_OTD_THRESHOLD                (0x929Du) /* I1，放电过温阈值，单位 °C。 */
+#define BQ76952_DM_OTD_DELAY                    (0x929Eu) /* U1，放电过温延时，单位 s。 */
+#define BQ76952_DM_OTD_RECOVERY                 (0x929Fu) /* I1，放电过温恢复阈值，单位 °C。 */
 #define BQ76952_DM_FET_OPTIONS                  (0x9308u) /* H1，默认 0x0D，FET 控制策略；误写可能改变功率路径。 */
 #define BQ76952_DM_CHG_PUMP_CONTROL             (0x9309u) /* U1，默认 0x01，电荷泵控制；影响高边 FET 驱动。 */
 #define BQ76952_DM_BALANCING_CONFIGURATION      (0x9335u) /* H1，默认 0x00，均衡配置；策略未定前不要自动开启。 */

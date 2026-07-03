@@ -33,6 +33,7 @@ void App_BatMan_ClearStartupAlarms(void);
 void App_BatMan_Sample(void);
 
 void App_BatMan_InitAlgorithms(void);
+void App_BatMan_UpdateRcModel(uint32_t interval_ms);
 void App_BatMan_UpdateSoc(uint32_t interval_ms);
 void App_BatMan_UpdateHealth(uint32_t interval_ms);
 void App_BatMan_UpdateBalance(uint32_t interval_ms);

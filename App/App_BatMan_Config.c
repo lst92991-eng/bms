@@ -12,8 +12,13 @@
 #define APP_BATMAN_DM_DA_CONFIGURATION_DEFAULT          (0x05u)
 #define APP_BATMAN_DM_PROTECTION_CONFIGURATION_DEFAULT  (0x0002u)
 #define APP_BATMAN_DM_ENABLED_PROTECTIONS_A_DEFAULT     (BQ76952_ENABLED_PROTECTIONS_A_SCD_MASK | \
+                                                         BQ76952_ENABLED_PROTECTIONS_A_OCD2_MASK | \
+                                                         BQ76952_ENABLED_PROTECTIONS_A_OCD1_MASK | \
+                                                         BQ76952_ENABLED_PROTECTIONS_A_OCC_MASK | \
+                                                         BQ76952_ENABLED_PROTECTIONS_A_CUV_MASK | \
                                                          BQ76952_ENABLED_PROTECTIONS_A_COV_MASK)
-#define APP_BATMAN_DM_ENABLED_PROTECTIONS_B_DEFAULT     (0x00u)
+#define APP_BATMAN_DM_ENABLED_PROTECTIONS_B_DEFAULT     (BQ76952_ENABLED_PROTECTIONS_B_OTD_MASK | \
+                                                         BQ76952_ENABLED_PROTECTIONS_B_OTC_MASK)
 #define APP_BATMAN_DM_ENABLED_PROTECTIONS_C_DEFAULT     (0x00u)
 #define APP_BATMAN_DM_CHG_FET_PROTECTIONS_A_DEFAULT     (0x98u)
 #define APP_BATMAN_DM_CHG_FET_PROTECTIONS_B_DEFAULT     (0xD5u)
@@ -24,8 +29,25 @@
 #define APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT        (0xF800u)
 #define APP_BATMAN_DM_CC_GAIN_5_MOHM_IEEE754            (0x3FBF67F5u) /* 1.49536f = 7.4768 / 5mΩ。 */
 #define APP_BATMAN_DM_CAPACITY_GAIN_5_MOHM_IEEE754      (0x48D9C710u) /* 446008.49f = CC Gain * 298261.6178。 */
+#define APP_BATMAN_DM_CUV_THRESHOLD_2V83                (56u)   /* 56*50.6mV≈2.83V，低于 APP 3.0V 实测硬底线。 */
+#define APP_BATMAN_DM_CUV_DELAY_1S                      (300u)  /* 约 6.6ms + 300*3.3ms = 996.6ms。 */
+#define APP_BATMAN_DM_CUV_RECOVERY_HYS_200MV            (4u)    /* 4*50.6mV≈202mV，避免低压打嗝。 */
+#define APP_BATMAN_DM_OCC_THRESHOLD_6A                  (15u)   /* 15*2mV/5mΩ=6A，作为 SC8815 充电限流后备。 */
+#define APP_BATMAN_DM_OCC_DELAY_426MS                   (127u)  /* U1 最大档附近，约 6.6ms + 127*3.3ms = 425.7ms。 */
+#define APP_BATMAN_DM_OCD1_THRESHOLD_14A                (35u)   /* 35*2mV/5mΩ=14A，位于 APP 12A 和 SCD 16A 之间。 */
+#define APP_BATMAN_DM_OCD1_DELAY_300MS                  (89u)   /* 约 6.6ms + 89*3.3ms = 300.3ms。 */
+#define APP_BATMAN_DM_OCD2_THRESHOLD_15A2               (38u)   /* 38*2mV/5mΩ=15.2A，SCD 前的快速过流层。 */
+#define APP_BATMAN_DM_OCD2_DELAY_80MS                   (22u)   /* 约 79.2ms。 */
 #define APP_BATMAN_DM_SCD_THRESHOLD_80MV                (0x04u) /* 80mV/5mΩ≈16A，给12A放电测试留余量。 */
 #define APP_BATMAN_DM_SCD_DELAY_400US_TEST              (0x1Cu) /* 近似 400us，实际约 405us。 */
+#define APP_BATMAN_DM_OCC_RECOVERY_NEG_200MA            ((uint16_t)0xFF38u) /* I2 -200mA，回到轻微放电/零电流再恢复。 */
+#define APP_BATMAN_DM_OCD_RECOVERY_500MA                (500u)  /* I2 500mA，负载明显降下来后再恢复。 */
+#define APP_BATMAN_DM_OTC_THRESHOLD_50C                 (50u)   /* APP 45C 先停充，BQ 50C 作为硬后备。 */
+#define APP_BATMAN_DM_OTC_DELAY_3S                      (3u)
+#define APP_BATMAN_DM_OTC_RECOVERY_45C                  (45u)
+#define APP_BATMAN_DM_OTD_THRESHOLD_60C                 (60u)   /* 与放电温度上限一致，BQ 直接兜底关 DSG。 */
+#define APP_BATMAN_DM_OTD_DELAY_3S                      (3u)
+#define APP_BATMAN_DM_OTD_RECOVERY_55C                  (55u)
 #define APP_BATMAN_DM_FET_OPTIONS_DEFAULT               (BQ76952_FET_OPTIONS_FET_INIT_OFF_MASK | \
                                                          BQ76952_FET_OPTIONS_PDSG_EN_MASK | \
                                                          BQ76952_FET_OPTIONS_FET_CTRL_EN_MASK | \
@@ -163,10 +185,44 @@ bool App_BatMan_ConfigBq(void)
                                    APP_BATMAN_DM_PROTECTION_CONFIGURATION_DEFAULT) ||
         !App_BatMan_WriteConfigU16(BQ76952_DM_DEFAULT_ALARM_MASK,
                                    APP_BATMAN_DM_DEFAULT_ALARM_MASK_DEFAULT) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_CUV_THRESHOLD,
+                                  APP_BATMAN_DM_CUV_THRESHOLD_2V83) ||
+        !App_BatMan_WriteConfigU16(BQ76952_DM_CUV_DELAY,
+                                   APP_BATMAN_DM_CUV_DELAY_1S) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_CUV_RECOVERY_HYSTERESIS,
+                                  APP_BATMAN_DM_CUV_RECOVERY_HYS_200MV) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_OCC_THRESHOLD,
+                                  APP_BATMAN_DM_OCC_THRESHOLD_6A) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_OCC_DELAY,
+                                  APP_BATMAN_DM_OCC_DELAY_426MS) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_OCD1_THRESHOLD,
+                                  APP_BATMAN_DM_OCD1_THRESHOLD_14A) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_OCD1_DELAY,
+                                  APP_BATMAN_DM_OCD1_DELAY_300MS) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_OCD2_THRESHOLD,
+                                  APP_BATMAN_DM_OCD2_THRESHOLD_15A2) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_OCD2_DELAY,
+                                  APP_BATMAN_DM_OCD2_DELAY_80MS) ||
         !App_BatMan_WriteConfigU8(BQ76952_DM_SCD_THRESHOLD,
                                   APP_BATMAN_DM_SCD_THRESHOLD_80MV) ||
         !App_BatMan_WriteConfigU8(BQ76952_DM_SCD_DELAY,
-                                  APP_BATMAN_DM_SCD_DELAY_400US_TEST))
+                                  APP_BATMAN_DM_SCD_DELAY_400US_TEST) ||
+        !App_BatMan_WriteConfigU16(BQ76952_DM_OCC_RECOVERY_THRESHOLD,
+                                   APP_BATMAN_DM_OCC_RECOVERY_NEG_200MA) ||
+        !App_BatMan_WriteConfigU16(BQ76952_DM_OCD_RECOVERY_THRESHOLD,
+                                   APP_BATMAN_DM_OCD_RECOVERY_500MA) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_OTC_THRESHOLD,
+                                  APP_BATMAN_DM_OTC_THRESHOLD_50C) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_OTC_DELAY,
+                                  APP_BATMAN_DM_OTC_DELAY_3S) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_OTC_RECOVERY,
+                                  APP_BATMAN_DM_OTC_RECOVERY_45C) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_OTD_THRESHOLD,
+                                  APP_BATMAN_DM_OTD_THRESHOLD_60C) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_OTD_DELAY,
+                                  APP_BATMAN_DM_OTD_DELAY_3S) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_OTD_RECOVERY,
+                                  APP_BATMAN_DM_OTD_RECOVERY_55C))
     {
         return false;
     }

@@ -38,6 +38,11 @@ uint16_t cell_min_mv;
 uint16_t cell_max_mv;
 uint16_t cell_avg_mv;
 uint16_t cell_delta_mv;
+uint16_t cell_min_rc_mv;
+uint16_t cell_avg_rc_mv;
+int16_t cell_rc_ohmic_mv;
+int16_t cell_rc_polar_mv;
+int16_t cell_rc_total_mv;
 int16_t temp_ic_c;
 int16_t temp_ts1_c;
 int16_t temp_ts3_c;
@@ -149,6 +154,11 @@ static void App_BatMan_ResetState(void)
     cell_max_mv = 0u;
     cell_avg_mv = 0u;
     cell_delta_mv = 0u;
+    cell_min_rc_mv = 0u;
+    cell_avg_rc_mv = 0u;
+    cell_rc_ohmic_mv = 0;
+    cell_rc_polar_mv = 0;
+    cell_rc_total_mv = 0;
     temp_ic_c = 0;
     temp_ts1_c = 0;
     temp_ts3_c = 0;
@@ -338,6 +348,7 @@ void App_BatMan_Init(void)
      */
     printf("电池管理首帧采样: 开始\r\n");
     App_BatMan_Sample();
+    App_BatMan_UpdateRcModel(0u);
     App_BatMan_UpdateHealth(0u);
     App_BatMan_UpdateSoc(0u);
     App_BatMan_UpdateBalance(APP_BATMAN_BALANCE_PERIOD_MS);
@@ -360,6 +371,7 @@ void App_BatMan_Task(uint32_t interval_ms)
     s_comm_fault = false;
 
     App_BatMan_Sample();
+    App_BatMan_UpdateRcModel(interval_ms);
     App_BatMan_UpdateHealth(interval_ms);
     App_BatMan_UpdateSoc(interval_ms);
     App_BatMan_UpdateBalance(interval_ms);
