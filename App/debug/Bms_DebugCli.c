@@ -1,3 +1,5 @@
+#include "Bms_DebugCli.h"
+
 #include "App_DebugCli.h"
 
 #include <stdbool.h>
@@ -5,8 +7,9 @@
 #include <string.h>
 
 #include "App_BatMan.h"
-#include "App_Power.h"
-#include "App_SC8815.h"
+#include "Bms_PowerService.h"
+#include "Bms_Sc8815Port.h"
+#include "Bms_Model.h"
 #include "Int_BQ76952.h"
 #include "Int_BQ76952_BSP.h"
 #include "Int_SC8815.h"
@@ -20,6 +23,7 @@
 #define APP_DEBUG_CLI_VOFA_PERIOD_MS 100u
 #define APP_DEBUG_CLI_BQ_PERIOD_MS 1000u
 #define APP_DEBUG_CLI_BQ_FAST_PERIOD_MS 200u
+#define APP_DEBUG_CLI_SOC_CSV_PERIOD_MS 1000u
 #define APP_DEBUG_CLI_PACK_RAW_MAX_MV 5000u
 #define APP_DEBUG_CLI_PDSG_PROBE_COUNT 20u
 
@@ -35,6 +39,8 @@ static bool s_bq_monitor_enabled;
 static bool s_bq_monitor_stop_on_fault;
 static uint16_t s_bq_monitor_period_ms;
 static uint16_t s_bq_monitor_ms;
+static bool s_soc_csv_enabled;
+static uint16_t s_soc_csv_ms;
 
 static void App_DebugCli_StartRx(void)
 {
@@ -104,7 +110,7 @@ static void App_DebugCli_Normalize(char *line)
 
 static void App_DebugCli_PrintHelp(void)
 {
-    printf("CLI help: help ping diag bq bq on bqfast on bq off power fault clear scd clear dsg clear pdsg test pdsg probe pdsg off sc scprobe charge on charge off vofa vofa on vofa off\r\n");
+    printf("CLI help: help ping diag bq bq on bqfast on bq off power fault clear scd clear dsg clear pdsg test pdsg probe pdsg off sc scprobe charge on charge off vofa vofa on vofa off csv csv off soccsv soccsv on soccsv off\r\n");
 }
 
 static void App_DebugCli_PrintSignedMilli(int32_t milli_value)
@@ -148,24 +154,135 @@ static void App_DebugCli_PrintVofaFrame(void)
     printf("\r\n");
 }
 
+static int32_t App_DebugCli_AbsI32(int32_t value)
+{
+    if (value < 0)
+    {
+        return -value;
+    }
+
+    return value;
+}
+
+static int32_t App_DebugCli_FloatToCenti(float value)
+{
+    if (value < 0.0f)
+    {
+        return (int32_t)((value * 100.0f) - 0.5f);
+    }
+
+    return (int32_t)((value * 100.0f) + 0.5f);
+}
+
+static void App_DebugCli_PrintSignedCenti(int32_t centi_value)
+{
+    uint32_t abs_value;
+
+    if (centi_value < 0)
+    {
+        printf("-");
+        abs_value = (uint32_t)(-centi_value);
+    }
+    else
+    {
+        abs_value = (uint32_t)centi_value;
+    }
+
+    printf("%lu.%02lu",
+           (unsigned long)(abs_value / 100u),
+           (unsigned long)(abs_value % 100u));
+}
+
+static void App_DebugCli_PrintSocCsvHeader(void)
+{
+    printf("BMSCSV,MS,VOLTAGE(V),CURRENT(A),POWER(W),E_CAPACITY(mAh),SOC(%%),DISPLAY_SOC(%%),SOC_CONF(%%),SOC_RESIDUAL(%%),SOC_KALMAN_GAIN,SOC_P,CELL1(mV),CELL2(mV),CELL3(mV),CELL4(mV),CELL5(mV),CELL6(mV),CELL_MIN(mV),CELL_AVG(mV),CELL_MAX(mV),RC_MIN(mV),RC_AVG(mV),DROP(mV),DROP_OHMIC(mV),DROP_POLAR(mV),TEMP_CELL(C),TEMP_FET(C),FET,SAFE_A,SAFE_B,SAFE_C,PF_A,PF_B,PF_C,PF_D,ALARM_RAW,CHG_mAh,DSG_mAh,CYCLE,SOH(%%)\r\n");
+}
+
+static void App_DebugCli_PrintSocCsvFrame(void)
+{
+    const Bms_ContextTypeDef *ctx = Bms_Model_GetContext();
+    int32_t power_mw;
+    uint32_t power_abs_mw;
+
+    power_mw = (int32_t)(((int64_t)ctx->pack.pack_mv *
+                          (int64_t)ctx->pack.current_ma) / 1000);
+    power_abs_mw = (uint32_t)App_DebugCli_AbsI32(power_mw);
+
+    printf("BMSCSV,%lu,",
+           (unsigned long)HAL_GetTick());
+    App_DebugCli_PrintUnsignedMilli(ctx->pack.pack_mv);
+    printf(",");
+    App_DebugCli_PrintSignedMilli(ctx->pack.current_ma);
+    printf(",");
+    App_DebugCli_PrintUnsignedMilli(power_abs_mw);
+    printf(",%lu,",
+           (unsigned long)ctx->estimate.discharge_throughput_mah);
+    App_DebugCli_PrintSignedCenti(App_DebugCli_FloatToCenti(ctx->estimate.soc_percent));
+    printf(",");
+    App_DebugCli_PrintSignedCenti(App_DebugCli_FloatToCenti(ctx->estimate.display_soc_percent));
+    printf(",%u,",
+           (unsigned int)ctx->estimate.soc_confidence_percent);
+    App_DebugCli_PrintSignedCenti(App_DebugCli_FloatToCenti(ctx->estimate.soc_residual_percent));
+    printf(",");
+    App_DebugCli_PrintSignedCenti(App_DebugCli_FloatToCenti(ctx->estimate.soc_kalman_gain));
+    printf(",");
+    App_DebugCli_PrintSignedCenti(App_DebugCli_FloatToCenti(ctx->estimate.soc_p));
+    printf(",%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%u,%d,%d,%d,%d,%d,%02x,%02x,%02x,%02x,%02x,%02x,%02x,%02x,%04x,%lu,%lu,%lu,%u\r\n",
+           (unsigned int)ctx->pack.mv[0],
+           (unsigned int)ctx->pack.mv[1],
+           (unsigned int)ctx->pack.mv[2],
+           (unsigned int)ctx->pack.mv[3],
+           (unsigned int)ctx->pack.mv[4],
+           (unsigned int)ctx->pack.mv[5],
+           (unsigned int)ctx->pack.min_mv,
+           (unsigned int)ctx->pack.avg_mv,
+           (unsigned int)ctx->pack.max_mv,
+           (unsigned int)ctx->pack.min_rc_mv,
+           (unsigned int)ctx->pack.avg_rc_mv,
+           (int)ctx->pack.rc_total_mv,
+           (int)ctx->pack.rc_ohmic_mv,
+           (int)ctx->pack.rc_polar_mv,
+           ctx->pack.temp_cell_c,
+           ctx->pack.temp_fet_c,
+           ctx->protection.fet_status,
+           ctx->protection.safety_status_a,
+           ctx->protection.safety_status_b,
+           ctx->protection.safety_status_c,
+           ctx->protection.pf_status_a,
+           ctx->protection.pf_status_b,
+           ctx->protection.pf_status_c,
+           ctx->protection.pf_status_d,
+           (unsigned int)ctx->protection.alarm_raw,
+           (unsigned long)ctx->estimate.charge_throughput_mah,
+           (unsigned long)ctx->estimate.discharge_throughput_mah,
+           (unsigned long)ctx->estimate.cycle_count,
+           (unsigned int)ctx->estimate.soh_percent);
+}
+
+static void App_DebugCli_StartSocCsv(void)
+{
+    s_soc_csv_enabled = true;
+    s_soc_csv_ms = APP_DEBUG_CLI_SOC_CSV_PERIOD_MS;
+    App_DebugCli_PrintSocCsvHeader();
+    printf("CLI csv:1 period:%u ms\r\n",
+           (unsigned int)APP_DEBUG_CLI_SOC_CSV_PERIOD_MS);
+}
+
+static void App_DebugCli_StopSocCsv(void)
+{
+    s_soc_csv_enabled = false;
+    s_soc_csv_ms = 0u;
+    printf("CLI csv:0\r\n");
+}
+
 static void App_DebugCli_PrintSc(void)
 {
-    printf("---------- SC8815详细 ----------\r\n");
-    printf("CLI sc comm:%u ac:%u fault:%u charging:%u vbus:%lu vbat:%lu input_lim:%lu bus:%02x swap:%u\r\n",
-           App_SC8815_IsCommOk() ? 1u : 0u,
-           App_SC8815_IsAcOk() ? 1u : 0u,
-           App_SC8815_HasFault() ? 1u : 0u,
-           App_SC8815_IsCharging() ? 1u : 0u,
-           (unsigned long)App_SC8815_GetVbusMv(),
-           (unsigned long)App_SC8815_GetVbatMv(),
-           (unsigned long)App_SC8815_GetInputLimitMa(),
-           (unsigned int)Int_SC8815_GetBusLevels(),
-           Int_SC8815_IsIicLineSwapped() ? 1u : 0u);
+    Bms_Sc8815Port_PrintCliSnapshot();
 }
 
 static void App_DebugCli_PrintPower(void)
 {
-    App_Power_PrintSnapshot();
+    Bms_PowerService_PrintSnapshot();
 }
 
 static void App_DebugCli_PrintDiag(void)
@@ -182,9 +299,9 @@ static bool App_DebugCli_ShouldStopBqFast(void)
         return true;
     }
 
-    if ((App_Power_GetState() == APP_POWER_STATE_LOW) ||
-        (App_Power_GetState() == APP_POWER_STATE_FAULT) ||
-        !App_Power_IsDischargeAllowed())
+    if ((Bms_PowerService_GetState() == APP_POWER_STATE_LOW) ||
+        (Bms_PowerService_GetState() == APP_POWER_STATE_FAULT) ||
+        !Bms_PowerService_IsDischargeAllowed())
     {
         return true;
     }
@@ -200,11 +317,11 @@ static void App_DebugCli_StopBqFastAndPrintReason(void)
 
     printf("---------- BQFAST自动停表 ----------\r\n");
     printf("BQFAST: 检测到放电异常，已停止连续输出，下面是停表瞬间原因。\r\n");
-    App_Power_PrintStopReason();
+    Bms_PowerService_PrintStopReason();
     App_BatMan_PrintMonitorStopReason();
-    App_Power_PrintSnapshot();
+    Bms_PowerService_PrintSnapshot();
     App_BatMan_PrintSnapshot();
-    printf("BQFAST: 处理后可发送 fault clear，再发送 bqfast on 重新监视。\r\n");
+    printf("BQFAST: 处理后可发�?fault clear，再发�?bqfast on 重新监视。\r\n");
 }
 
 static void App_DebugCli_PrintScProbe(void)
@@ -334,7 +451,7 @@ static void App_DebugCli_ProcessLine(char *line)
         s_bq_monitor_stop_on_fault = false;
         s_bq_monitor_period_ms = APP_DEBUG_CLI_BQ_PERIOD_MS;
         s_bq_monitor_ms = APP_DEBUG_CLI_BQ_PERIOD_MS;
-        printf("CLI BQ连续监视: 开启 周期:%u ms\r\n",
+        printf("CLI BQ连续监视: 开�?周期:%u ms\r\n",
                (unsigned int)s_bq_monitor_period_ms);
     }
     else if ((strcmp(line, "bqfast on") == 0) || (strcmp(line, "bq fast") == 0))
@@ -361,7 +478,7 @@ static void App_DebugCli_ProcessLine(char *line)
              (strcmp(line, "scd clear") == 0) ||
              (strcmp(line, "dsg clear") == 0))
     {
-        if (App_Power_ClearDischargeFault())
+        if (Bms_PowerService_ClearDischargeFault())
         {
             printf("CLI 放电SCD锁存: 已清除，可重新尝试放电\r\n");
         }
@@ -374,7 +491,7 @@ static void App_DebugCli_ProcessLine(char *line)
     {
         if (App_BatMan_TestPreDischargeOnly())
         {
-            printf("CLI PDSG测试: 已写入0x0d并发送ALL_FETS_ON，建议立刻发送 bq 查看FET位\r\n");
+            printf("CLI PDSG测试: 已写�?x0d并发送ALL_FETS_ON，建议立刻发�?bq 查看FET位\r\n");
         }
         else
         {
@@ -416,14 +533,30 @@ static void App_DebugCli_ProcessLine(char *line)
         s_vofa_ms = 0u;
         printf("CLI vofa:0\r\n");
     }
+    else if (strcmp(line, "soccsv") == 0)
+    {
+        App_DebugCli_PrintSocCsvHeader();
+        App_DebugCli_PrintSocCsvFrame();
+    }
+    else if ((strcmp(line, "csv") == 0) ||
+             (strcmp(line, "csv on") == 0) ||
+             (strcmp(line, "soccsv on") == 0))
+    {
+        App_DebugCli_StartSocCsv();
+    }
+    else if ((strcmp(line, "csv off") == 0) ||
+             (strcmp(line, "soccsv off") == 0))
+    {
+        App_DebugCli_StopSocCsv();
+    }
     else if ((strcmp(line, "charge on") == 0) || (strcmp(line, "sc on") == 0))
     {
-        App_SC8815_RequestCharge(true);
+        Bms_Sc8815Port_RequestCharge(true);
         printf("CLI charge request:1\r\n");
     }
     else if ((strcmp(line, "charge off") == 0) || (strcmp(line, "sc off") == 0))
     {
-        App_SC8815_RequestCharge(false);
+        Bms_Sc8815Port_RequestCharge(false);
         printf("CLI charge request:0\r\n");
     }
     else
@@ -471,7 +604,7 @@ static void App_DebugCli_PushByte(uint8_t byte)
     }
 }
 
-void App_DebugCli_Init(void)
+void Bms_DebugCli_Init(void)
 {
     s_cli_pos = 0u;
     s_rx_head = 0u;
@@ -482,11 +615,13 @@ void App_DebugCli_Init(void)
     s_bq_monitor_stop_on_fault = false;
     s_bq_monitor_period_ms = APP_DEBUG_CLI_BQ_PERIOD_MS;
     s_bq_monitor_ms = 0u;
+    s_soc_csv_enabled = false;
+    s_soc_csv_ms = 0u;
     App_DebugCli_StartRx();
     printf("CLI ready: type help\r\n");
 }
 
-void App_DebugCli_Task(uint16_t interval_ms)
+void Bms_DebugCli_Task(uint16_t interval_ms)
 {
     uint8_t byte;
 
@@ -527,18 +662,48 @@ void App_DebugCli_Task(uint16_t interval_ms)
             }
         }
     }
+
+    if (s_soc_csv_enabled && !s_vofa_enabled && !s_bq_monitor_enabled)
+    {
+        s_soc_csv_ms = (uint16_t)(s_soc_csv_ms + interval_ms);
+        if (s_soc_csv_ms >= APP_DEBUG_CLI_SOC_CSV_PERIOD_MS)
+        {
+            s_soc_csv_ms = 0u;
+            App_DebugCli_PrintSocCsvFrame();
+        }
+    }
 }
 
-bool App_DebugCli_IsVofaStreaming(void)
+bool Bms_DebugCli_IsVofaStreaming(void)
 {
     return s_vofa_enabled;
 }
 
-bool App_DebugCli_IsBqMonitoring(void)
+bool Bms_DebugCli_IsBqMonitoring(void)
 {
-    return s_bq_monitor_enabled;
+    return s_bq_monitor_enabled || s_soc_csv_enabled;
 }
 
+
+void App_DebugCli_Init(void)
+{
+    Bms_DebugCli_Init();
+}
+
+void App_DebugCli_Task(uint16_t interval_ms)
+{
+    Bms_DebugCli_Task(interval_ms);
+}
+
+bool App_DebugCli_IsVofaStreaming(void)
+{
+    return Bms_DebugCli_IsVofaStreaming();
+}
+
+bool App_DebugCli_IsBqMonitoring(void)
+{
+    return Bms_DebugCli_IsBqMonitoring();
+}
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     uint8_t next_head;

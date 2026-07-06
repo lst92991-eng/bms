@@ -29,7 +29,7 @@
 /* USER CODE BEGIN Includes */
 #include <string.h>
 
-#include "App_Main.h"
+#include "Bms_Main.h"
 
 /* USER CODE END Includes */
 
@@ -118,7 +118,7 @@ int main(void)
   Bringup_UartPrint("SC8815 初始化后保持监控待机: CE_N=0 PSTOP=1 充电请求关闭\r\n");
   Bringup_UartPrint("串口 USART1 115200 8N1\r\n");
   Bringup_UartPrint("进入 App_Main 任务层\r\n");
-  App_Main();
+  Bms_Main();
 
   /* USER CODE END 2 */
 

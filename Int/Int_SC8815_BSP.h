@@ -71,11 +71,16 @@
 /* Bring-up 与软件约束电流，单位 mA。限流值禁止为 0，项目最低不低于 300mA。 */
 #define SC8815_PROJECT_MIN_LIMIT_CURRENT_MA          (300u)
 #define SC8815_PROJECT_BRINGUP_IBUS_LIMIT_MA         (5000u)
-#define SC8815_PROJECT_BRINGUP_IBAT_LIMIT_MA         (3000u)
+#define SC8815_PROJECT_BRINGUP_IBAT_LIMIT_MA         (5000u)
 #define SC8815_PROJECT_DEFAULT_IBUS_LIMIT_MA         (1500u)
-#define SC8815_PROJECT_DEFAULT_IBAT_LIMIT_MA         (3000u)
+#define SC8815_PROJECT_DEFAULT_IBAT_LIMIT_MA         (5000u)
 #define SC8815_PROJECT_MAX_IBUS_LIMIT_MA             (6000u)
 #define SC8815_PROJECT_MAX_IBAT_LIMIT_MA             (5000u)
+/*
+ * 顶端均衡测试：EOC 后不让 SC8815 自动切断功率级，而是继续按 VBATS
+ * 外部分压目标做 CV 保压；最终停充由 APP/BQ 的 4.18V/4.20V 保护接管。
+ */
+#define SC8815_PROJECT_BRINGUP_DISABLE_AUTO_TERM     (1u)
 
 /* 6S 不能用内部 CSEL/VCELL_SET 生成目标电压；必须 VBAT_SEL=1，使用 VBATS 外部分压。 */
 #define SC8815_PROJECT_MUST_USE_EXTERNAL_VBATS       (1u)
@@ -528,18 +533,30 @@
                                                       SC8815_CTRL0_SET_EN_OTG_SHIFT)
 #define SC8815_PROJECT_CTRL0_SAFE_CLEAR_MASK         (SC8815_CTRL0_SET_EN_OTG_MASK)
 
-/* 0x0A：充电电流以 IBAT 为基准；保留 bit0=1；禁止危险位。 */
-#define SC8815_PROJECT_CTRL1_SAFE_SET_MASK           (SC8815_CTRL1_SET_ICHAR_SEL_MASK)
+/* 0x0A：充电电流以 IBAT 为基准；bring-up 可临时关闭自动终止排查 EOC。 */
+#if (SC8815_PROJECT_BRINGUP_DISABLE_AUTO_TERM != 0u)
+#define SC8815_PROJECT_CTRL1_TERM_SET_MASK           (SC8815_CTRL1_SET_DIS_TERM_MASK)
+#define SC8815_PROJECT_CTRL1_TERM_CLEAR_MASK         (0u)
+#define SC8815_PROJECT_FORBID_DIS_TERM_MASK          (0u)
+#else
+#define SC8815_PROJECT_CTRL1_TERM_SET_MASK           (0u)
+#define SC8815_PROJECT_CTRL1_TERM_CLEAR_MASK         (SC8815_CTRL1_SET_DIS_TERM_MASK)
+#define SC8815_PROJECT_FORBID_DIS_TERM_MASK          (SC8815_CTRL1_SET_DIS_TERM_MASK)
+#endif
+
+#define SC8815_PROJECT_CTRL1_SAFE_SET_MASK           (SC8815_CTRL1_SET_ICHAR_SEL_MASK | \
+                                                      SC8815_PROJECT_CTRL1_TERM_SET_MASK)
 #define SC8815_PROJECT_CTRL1_SAFE_CLEAR_MASK         (SC8815_CTRL1_SET_DIS_TRICKLE_MASK | \
-                                                      SC8815_CTRL1_SET_DIS_TERM_MASK | \
+                                                      SC8815_PROJECT_CTRL1_TERM_CLEAR_MASK | \
                                                       SC8815_CTRL1_SET_FB_SEL_MASK | \
                                                       SC8815_CTRL1_SET_DIS_OVP_MASK)
 
 /* 0x0B：手册要求 MCU 上电后 FACTORY 写 1；其它位读改写保留。 */
 #define SC8815_PROJECT_CTRL2_SAFE_SET_MASK           (SC8815_CTRL2_SET_FACTORY_MASK)
 
-/* 0x0C：禁止 DIS_ShortFoldBack 和 EN_PFM 置 1。 */
+/* 0x0C：EOC_SET 清 0 选择 1/25；禁止 DIS_ShortFoldBack 和 EN_PFM 置 1。 */
 #define SC8815_PROJECT_CTRL3_SAFE_CLEAR_MASK         (SC8815_CTRL3_SET_DIS_SHORT_FOLDBACK_MASK | \
+                                                      SC8815_CTRL3_SET_EOC_SET_MASK | \
                                                       SC8815_CTRL3_SET_EN_PFM_MASK)
 
 /* 0x19：保留内部 bit7/4，且按手册要求上电后置 bit0。 */
@@ -560,8 +577,7 @@
 #define SC8815_PROJECT_FORBID_EN_PFM_MASK            (SC8815_CTRL3_SET_EN_PFM_MASK)
 /* DIS_TRICKLE 会禁用涓流保护策略，属于危险配置，本项目禁止。 */
 #define SC8815_PROJECT_FORBID_DIS_TRICKLE_MASK       (SC8815_CTRL1_SET_DIS_TRICKLE_MASK)
-/* DIS_TERM 会禁用自动终止，属于危险配置，本项目禁止。 */
-#define SC8815_PROJECT_FORBID_DIS_TERM_MASK          (SC8815_CTRL1_SET_DIS_TERM_MASK)
+/* DIS_TERM 会禁用自动终止；仅允许在 bring-up 排查 EOC 时由上面的开关放行。 */
 
 #define SC8815_PROJECT_FORBID_CTRL0_SET_MASK         (SC8815_PROJECT_FORBID_EN_OTG_MASK)
 #define SC8815_PROJECT_FORBID_CTRL1_SET_MASK         (SC8815_PROJECT_FORBID_FB_SEL_MASK | \

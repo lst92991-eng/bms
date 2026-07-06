@@ -1,3 +1,5 @@
+#include "Bms_BuzzerService.h"
+
 #include "App_Buzzer.h"
 
 #include "Int_Buzzer.h"
@@ -6,10 +8,10 @@
 #define APP_BUZZER_MARIO_DELAY_MS  5000u
 
 /*
- * 无源蜂鸣器只能输出方波，这里用音符表模拟短提示音。
- * 若后续要换真正的音频文件，需要先离线转成这样的 freq/duration 表。
+ * 无源蜂鸣器只能输出方波，这里用音符表模拟短提示音�?
+ * 若后续要换真正的音频文件，需要先离线转成这样�?freq/duration 表�?
  */
-static const App_BuzzerNoteTypeDef s_power_on_notes[] =
+static const Bms_BuzzerNoteTypeDef s_power_on_notes[] =
 {
     {659u, 100u, 35u},    /* E5 */
     {587u, 100u, 35u},    /* D5 */
@@ -26,7 +28,7 @@ static const App_BuzzerNoteTypeDef s_power_on_notes[] =
     {440u, 260u, 60u},    /* A4 */
 };
 
-static const App_BuzzerNoteTypeDef s_mario_notes[] =
+static const Bms_BuzzerNoteTypeDef s_mario_notes[] =
 {
     {659u,  90u, 35u},    /* E5 */
     {659u,  90u, 90u},    /* E5 */
@@ -44,7 +46,7 @@ static const App_BuzzerNoteTypeDef s_mario_notes[] =
     {440u, 120u, 80u},    /* A4 */
 };
 
-static const App_BuzzerNoteTypeDef s_low_power_notes[] =
+static const Bms_BuzzerNoteTypeDef s_low_power_notes[] =
 {
     {784u, 140u, 35u},    /* G5 */
     {659u, 140u, 35u},    /* E5 */
@@ -53,7 +55,7 @@ static const App_BuzzerNoteTypeDef s_low_power_notes[] =
     {262u, 260u, 80u},    /* C4 */
 };
 
-static const App_BuzzerNoteTypeDef *s_notes = 0;
+static const Bms_BuzzerNoteTypeDef *s_notes = 0;
 static uint16_t s_note_count = 0u;
 static uint16_t s_note_index = 0u;
 static uint32_t s_next_note_tick = 0u;
@@ -61,7 +63,7 @@ static uint32_t s_mario_tick = 0u;
 static bool s_playing = false;
 static bool s_mario_played = false;
 
-static void App_Buzzer_StartTable(const App_BuzzerNoteTypeDef *notes,
+static void App_Buzzer_StartTable(const Bms_BuzzerNoteTypeDef *notes,
                                   uint16_t count)
 {
     s_notes = notes;
@@ -72,16 +74,16 @@ static void App_Buzzer_StartTable(const App_BuzzerNoteTypeDef *notes,
     Int_Buzzer_Stop();
 }
 
-void App_Buzzer_Init(void)
+void Bms_BuzzerService_Init(void)
 {
     s_mario_tick = HAL_GetTick() + APP_BUZZER_MARIO_DELAY_MS;
     s_mario_played = false;
-    App_Buzzer_PlayPowerOn();
+    Bms_BuzzerService_PlayPowerOn();
 }
 
 static void App_Buzzer_PlayNext(uint32_t now_ms)
 {
-    const App_BuzzerNoteTypeDef *note;
+    const Bms_BuzzerNoteTypeDef *note;
 
     if (!s_playing || (s_notes == 0))
     {
@@ -110,7 +112,7 @@ static void App_Buzzer_PlayNext(uint32_t now_ms)
     s_next_note_tick = now_ms + note->duration_ms + note->gap_ms;
 }
 
-void App_Buzzer_Task(uint32_t now_ms)
+void Bms_BuzzerService_Task(uint32_t now_ms)
 {
     Int_Buzzer_Task(now_ms);
 
@@ -118,7 +120,7 @@ void App_Buzzer_Task(uint32_t now_ms)
         !s_playing &&
         ((int32_t)(now_ms - s_mario_tick) >= 0))
     {
-        App_Buzzer_PlayMario();
+        Bms_BuzzerService_PlayMario();
     }
 
     if (!s_playing)
@@ -133,22 +135,47 @@ void App_Buzzer_Task(uint32_t now_ms)
     }
 }
 
-void App_Buzzer_PlayPowerOn(void)
+void Bms_BuzzerService_PlayPowerOn(void)
 {
     App_Buzzer_StartTable(s_power_on_notes,
                           (uint16_t)(sizeof(s_power_on_notes) / sizeof(s_power_on_notes[0])));
 }
 
-void App_Buzzer_PlayMario(void)
+void Bms_BuzzerService_PlayMario(void)
 {
     s_mario_played = true;
     App_Buzzer_StartTable(s_mario_notes,
                           (uint16_t)(sizeof(s_mario_notes) / sizeof(s_mario_notes[0])));
 }
 
-void App_Buzzer_PlayLowPower(void)
+void Bms_BuzzerService_PlayLowPower(void)
 {
     s_mario_played = true;
     App_Buzzer_StartTable(s_low_power_notes,
                           (uint16_t)(sizeof(s_low_power_notes) / sizeof(s_low_power_notes[0])));
+}
+
+void App_Buzzer_Init(void)
+{
+    Bms_BuzzerService_Init();
+}
+
+void App_Buzzer_Task(uint32_t now_ms)
+{
+    Bms_BuzzerService_Task(now_ms);
+}
+
+void App_Buzzer_PlayPowerOn(void)
+{
+    Bms_BuzzerService_PlayPowerOn();
+}
+
+void App_Buzzer_PlayMario(void)
+{
+    Bms_BuzzerService_PlayMario();
+}
+
+void App_Buzzer_PlayLowPower(void)
+{
+    Bms_BuzzerService_PlayLowPower();
 }

@@ -1,3 +1,5 @@
+#include "Bms_BqSamplePort.h"
+
 #include "App_BatMan_Internal.h"
 
 #include "Com_BQ76952.h"
@@ -7,7 +9,7 @@
 static bool s_temp_ts1_sample_valid = false;
 static bool s_temp_ts3_sample_valid = false;
 
-void App_BatMan_ResetSampleState(void)
+void Bms_BqSamplePort_ResetState(void)
 {
     s_cells_sample_valid = false;
     s_current_sample_valid = false;
@@ -17,9 +19,9 @@ void App_BatMan_ResetSampleState(void)
 }
 
 /**
- * @brief 读取 BQ direct command 的 1 字节数据。
+ * @brief 读取 BQ direct command �?1 字节数据�?
  *
- * 单次失败只标记当前采样周期通信异常，下一次任务周期会重新尝试。
+ * 单次失败只标记当前采样周期通信异常，下一次任务周期会重新尝试�?
  */
 static bool App_BatMan_ReadDirectU8(uint8_t command, uint8_t *value)
 {
@@ -33,7 +35,7 @@ static bool App_BatMan_ReadDirectU8(uint8_t command, uint8_t *value)
 }
 
 /**
- * @brief 读取 BQ direct command 的 2 字节 little-endian 数据。
+ * @brief 读取 BQ direct command �?2 字节 little-endian 数据�?
  */
 static bool App_BatMan_ReadDirectU16(uint8_t command, uint16_t *value)
 {
@@ -50,17 +52,17 @@ static bool App_BatMan_ReadDirectU16(uint8_t command, uint16_t *value)
 }
 
 /**
- * @brief 判断温度值是否适合作为 APP 层温度输入。
+ * @brief 判断温度值是否适合作为 APP 层温度输入�?
  *
  * TS 通道未接或未正确配置时可能读到极端值。这里过滤掉明显异常值，
- * 后续用 IC 温度兜底，避免 SOC/SOH 或日志出现 -273C 一类假数据。
+ * 后续�?IC 温度兜底，避�?SOC/SOH 或日志出�?-273C 一类假数据�?
  */
 static bool App_BatMan_IsTempValid(int16_t temp_c)
 {
     return (temp_c >= -40) && (temp_c <= 100);
 }
 
-/* BQ CC Gain 已按 5mΩ 实板采样电阻配置；APP 层只保留方向/比例兜底。 */
+/* BQ CC Gain 已按 5mΩ 实板采样电阻配置；APP 层只保留方向/比例兜底�?*/
 static int32_t App_BatMan_ScaleCc2CurrentMa(int32_t raw_current_ma)
 {
     int32_t scaled;
@@ -79,11 +81,9 @@ static int32_t App_BatMan_ScaleCc2CurrentMa(int32_t raw_current_ma)
 }
 
 /**
- * @brief 读取 6 串实际电芯电压并计算 min/max/avg/delta。
- *
+ * @brief 读取 6 串实际电芯电压并计算 min/max/avg/delta�? *
  * 命令表体现了本硬件的稀疏采样映射；维护时不要按连续 Cell1..Cell6
- * 直觉改写。
- */
+ * 直觉改写�? */
 static void App_BatMan_LoadCellsVoltage(void)
 {
     static const uint8_t commands[APP_BATMAN_CELL_COUNT] =
@@ -137,10 +137,10 @@ static void App_BatMan_LoadCellsVoltage(void)
 }
 
 /**
- * @brief 读取电池总压快照。
+ * @brief 读取电池总压快照�?
  *
- * 当前 `pack_mv` 暂时镜像 `stack_mv`。若后续需要 PACK/LD pin 电压，
- * 应新增独立字段，避免复用 `stack_mv` 造成语义混淆。
+ * 当前 `pack_mv` 暂时镜像 `stack_mv`。若后续需�?PACK/LD pin 电压�?
+ * 应新增独立字段，避免复用 `stack_mv` 造成语义混淆�?
  */
 static void App_BatMan_LoadBatVoltage(void)
 {
@@ -154,10 +154,10 @@ static void App_BatMan_LoadBatVoltage(void)
 }
 
 /**
- * @brief 读取 CC2 电流并转换为 APP 约定方向。
+ * @brief 读取 CC2 电流并转换为 APP 约定方向�?
  *
- * 当前约定：`current_ma > 0` 表示充电，`current_ma < 0` 表示放电。
- * 若实测方向相反，只改 `APP_BATMAN_CC2_RAW_POLARITY`。
+ * 当前约定：`current_ma > 0` 表示充电，`current_ma < 0` 表示放电�?
+ * 若实测方向相反，只改 `APP_BATMAN_CC2_RAW_POLARITY`�?
  */
 static void App_BatMan_LoadCurrent(void)
 {
@@ -175,10 +175,10 @@ static void App_BatMan_LoadCurrent(void)
 }
 
 /**
- * @brief 读取 IC/TS 温度并生成 APP 层温度快照。
+ * @brief 读取 IC/TS 温度并生�?APP 层温度快照�?
  *
- * TS1/TS3 有效时用于估算 cell temperature；无效时降级为 IC 温度，
- * 这样 SOH 和日志仍保持可读。
+ * TS1/TS3 有效时用于估�?cell temperature；无效时降级�?IC 温度�?
+ * 这样 SOH 和日志仍保持可读�?
  */
 static void App_BatMan_LoadTemperature(void)
 {
@@ -243,10 +243,10 @@ static void App_BatMan_LoadTemperature(void)
 }
 
 /**
- * @brief 读取 BQ 告警、FET 和 safety 状态。
+ * @brief 读取 BQ 告警、FET �?safety 状态�?
  *
- * 这些字段用于解释 BQ 为什么打开或关闭 MOS。APP 只记录状态，
- * 不覆盖 BQ 的保护决策。
+ * 这些字段用于解释 BQ 为什么打开或关�?MOS。APP 只记录状态，
+ * 不覆�?BQ 的保护决策�?
  */
 static void App_BatMan_LoadBqStatus(void)
 {
@@ -317,10 +317,10 @@ static void App_BatMan_LoadBqStatus(void)
 }
 
 /**
- * @brief 更新 APP 层故障摘要。
+ * @brief 更新 APP 层故障摘要�?
  *
- * 这是显示/日志用的软件摘要，不是硬件保护动作。通信失败、明显异常
- * 电芯电压或 safety status 非零都会让 `fault_active` 置位。
+ * 这是显示/日志用的软件摘要，不是硬件保护动作。通信失败、明显异�?
+ * 电芯电压�?safety status 非零都会�?`fault_active` 置位�?
  */
 static void App_BatMan_UpdateFaultState(void)
 {
@@ -344,11 +344,11 @@ static void App_BatMan_UpdateFaultState(void)
 }
 
 /**
- * @brief 执行一次完整 BQ 采样。
+ * @brief 执行一次完�?BQ 采样�?
  *
- * 固定采样顺序便于对比不同固件版本的串口日志。
+ * 固定采样顺序便于对比不同固件版本的串口日志�?
  */
-void App_BatMan_Sample(void)
+void Bms_BqSamplePort_Sample(void)
 {
     App_BatMan_LoadCellsVoltage();
     App_BatMan_LoadBatVoltage();
@@ -356,4 +356,14 @@ void App_BatMan_Sample(void)
     App_BatMan_LoadTemperature();
     App_BatMan_LoadBqStatus();
     App_BatMan_UpdateFaultState();
+}
+
+void App_BatMan_ResetSampleState(void)
+{
+    Bms_BqSamplePort_ResetState();
+}
+
+void App_BatMan_Sample(void)
+{
+    Bms_BqSamplePort_Sample();
 }

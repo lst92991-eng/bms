@@ -18,3 +18,5 @@ compile_commands.json
 *.htm
 *.build_log.htm
 *.pack
+logs/
+*.raw.log

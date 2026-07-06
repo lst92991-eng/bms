@@ -25,6 +25,7 @@ void App_BatMan_WriteU32Le(uint32_t value, uint8_t data[4]);
 void App_BatMan_ResetSampleState(void);
 void App_BatMan_ResetEstimatorState(void);
 void App_BatMan_ResetDebugState(void);
+void App_BatMan_SyncModelSnapshot(void);
 
 bool App_BatMan_ConfigBq(void);
 Int_BQ76952_StatusTypeDef App_BatMan_KeepMainFetsOff(void);
