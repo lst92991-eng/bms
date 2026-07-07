@@ -18,29 +18,35 @@
    - 保留当前采样、保护、充电、放电策略的行为。
    - 只做命名、注释、薄封装删除、参数归属收口。
 
-2. 低耦合 INT/COM 模块
-   - 优先清洗 `Int_EEPROM`、`Int_CanFd`、`Com_SOC`、`Com_SOH` 等不直接驱动功率 FET 的模块。
+2. BQ/SC INT 层
+   - INT 层主要清洗对象是 `Int_BQ76952` 和 `Int_SC8815`，因为它们承载 BQ/SC 芯片协议、寄存器保护、I2C/软 I2C 时序和硬件安全约束。
+   - 第一阶段只收口重复通信辅助函数、错误返回、注释边界和命名；不能改寄存器值、保护阈值、CRC/校验算法、软 I2C 时序、PSTOP/CE_N 行为。
+   - 每次触碰 BQ/SC INT 后至少编译；触碰寄存器配置或功率请求相关路径后必须上板复测 `bq`、`sc`、`power`。
+
+3. 其他低耦合 INT/COM 模块
+   - `Int_EEPROM`、`Int_CanFd`、`Com_SOC`、`Com_SOH` 等暂时靠后；它们不是当前 INT 层主要矛盾。
    - 对 I2C2 共享资源保持谨慎：EEPROM 和 OLED 共用 I2C2，不能引入长时间阻塞或抢总线风险。
 
-3. OLED/显示层
+4. OLED/显示层
    - OLED 属于观测输出，不应该反向影响 BMS 策略。
    - 清洗时保持显示失败不影响充放电主链路。
 
-4. 功率链路深清洗
+5. 功率链路深清洗
    - 只有在前面模块稳定后，再整理 `App_Power` 的状态机、停充原因、放电保护锁存和预放电策略。
    - 每次修改后都要通过串口命令和上板充放电确认。
 
-5. Debug CLI 最后清洗
+6. Debug CLI 最后清洗
    - 最后根据 `docs/rules/debug_cli_removal.md` 判断是否删除或迁移。
    - 删除前必须确认已有生产诊断、产测、故障恢复和日志替代路径。
 
 ## 当前下一步
 
-下一轮优先清洗 `Int_EEPROM` 或 `Int_CanFd` 这类低耦合模块，原因是它们不会直接改变 BQ/SC/FET 功率行为。清洗目标是统一命名、错误返回、边界检查和注释质量，而不是新增持久化业务。
+下一轮优先清洗 `Int_BQ76952` 和 `Int_SC8815` 中低风险的通信辅助代码。清洗目标是减少重复、统一错误返回和强化注释边界，不改变 BQ/SC/FET 的任何可观测行为。
 
 ## 证据
 
 - Debug CLI 当前由 `App_Main` 创建独立任务，说明它仍是运行期上板工具：`App/App_Main.c:57-69`、`App/App_Main.c:96-97`、`App/App_Main.c:114`。
 - Debug CLI 删除步骤已有单独规则，不能提前执行：`docs/rules/debug_cli_removal.md:15-31`。
+- BQ76952 INT 层承载 direct/subcommand/Data Memory/ConfigUpdate 通信路径：`Int/Int_BQ76952.c:288-648`。
+- SC8815 INT 层承载软 I2C、线序反接兜底、寄存器保护和功率相关引脚：`Int/Int_SC8815.c:27-168`、`Int/Int_SC8815.c:247-431`、`Int/Int_SC8815.c:434-554`。
 - EEPROM 和 OLED 共用 I2C2，清洗 EEPROM/OLED 时要注意总线阻塞：`Int/Int_EEPROM.c:5`、`Int/Int_OLED.c:30`。
-- EEPROM 当前只在启动时初始化，未进入功率控制闭环，适合作为下一轮低风险清洗对象：`App/App_Main.c:83-86`。

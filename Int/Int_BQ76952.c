@@ -223,6 +223,47 @@ static Int_BQ76952_StatusTypeDef Int_BQ76952_ReadCfgUpdateBit(bool *is_set)
     return INT_BQ76952_OK;
 }
 
+static Int_BQ76952_StatusTypeDef Int_BQ76952_WriteTransfer(uint16_t command_or_address,
+                                                           const uint8_t *data,
+                                                           uint8_t len)
+{
+    uint8_t transfer[2u + INT_BQ76952_TRANSFER_MAX_LEN];
+    uint8_t meta[2];
+    Int_BQ76952_StatusTypeDef ret;
+
+    if (data == NULL)
+    {
+        return INT_BQ76952_ERROR_PARAM;
+    }
+
+    ret = Int_BQ76952_CheckLen(len);
+    if (ret != INT_BQ76952_OK)
+    {
+        return ret;
+    }
+
+    transfer[0] = (uint8_t)(command_or_address & 0xFFu);
+    transfer[1] = (uint8_t)(command_or_address >> 8u);
+
+    for (uint8_t i = 0u; i < len; i++)
+    {
+        transfer[2u + i] = data[i];
+    }
+
+    ret = Int_BQ76952_WriteDirect(BQ76952_SUBCMD_ADDR_LSB,
+                                  transfer,
+                                  (uint8_t)(len + 2u));
+    if (ret != INT_BQ76952_OK)
+    {
+        return ret;
+    }
+
+    meta[0] = Int_BQ76952_BufferChecksum(command_or_address, data, len);
+    meta[1] = (uint8_t)(len + BQ76952_TRANSFER_LENGTH_OVERHEAD);
+
+    return Int_BQ76952_WriteDirect(BQ76952_TRANSFER_CHECKSUM, meta, 2u);
+}
+
 void Int_BQ76952_InitBoard(void)
 {
     s_bq76952_crc_enabled = (BQ76952_I2C_CRC_DEFAULT_ENABLED != 0u);
@@ -479,39 +520,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteSubcommandData(uint16_t subcommand,
                                                           const uint8_t *data,
                                                           uint8_t len)
 {
-    uint8_t transfer[2u + INT_BQ76952_TRANSFER_MAX_LEN];
-    uint8_t meta[2];
-    Int_BQ76952_StatusTypeDef ret;
-
-    if (data == NULL)
-    {
-        return INT_BQ76952_ERROR_PARAM;
-    }
-
-    ret = Int_BQ76952_CheckLen(len);
-    if (ret != INT_BQ76952_OK)
-    {
-        return ret;
-    }
-
-    transfer[0] = (uint8_t)(subcommand & 0xFFu);
-    transfer[1] = (uint8_t)(subcommand >> 8u);
-
-    for (uint8_t i = 0u; i < len; i++)
-    {
-        transfer[2u + i] = data[i];
-    }
-
-    ret = Int_BQ76952_WriteDirect(BQ76952_SUBCMD_ADDR_LSB, transfer, (uint8_t)(len + 2u));
-    if (ret != INT_BQ76952_OK)
-    {
-        return ret;
-    }
-
-    meta[0] = Int_BQ76952_BufferChecksum(subcommand, data, len);
-    meta[1] = (uint8_t)(len + BQ76952_TRANSFER_LENGTH_OVERHEAD);
-
-    return Int_BQ76952_WriteDirect(BQ76952_TRANSFER_CHECKSUM, meta, 2u);
+    return Int_BQ76952_WriteTransfer(subcommand, data, len);
 }
 
 Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDataMemory(uint16_t address, uint8_t *data, uint8_t len)
@@ -539,39 +548,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDataMemory(uint16_t address, uint8_t *
 
 Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDataMemory(uint16_t address, const uint8_t *data, uint8_t len)
 {
-    uint8_t transfer[2u + INT_BQ76952_TRANSFER_MAX_LEN];
-    uint8_t meta[2];
-    Int_BQ76952_StatusTypeDef ret;
-
-    if (data == NULL)
-    {
-        return INT_BQ76952_ERROR_PARAM;
-    }
-
-    ret = Int_BQ76952_CheckLen(len);
-    if (ret != INT_BQ76952_OK)
-    {
-        return ret;
-    }
-
-    transfer[0] = (uint8_t)(address & 0xFFu);
-    transfer[1] = (uint8_t)(address >> 8u);
-
-    for (uint8_t i = 0u; i < len; i++)
-    {
-        transfer[2u + i] = data[i];
-    }
-
-    ret = Int_BQ76952_WriteDirect(BQ76952_SUBCMD_ADDR_LSB, transfer, (uint8_t)(len + 2u));
-    if (ret != INT_BQ76952_OK)
-    {
-        return ret;
-    }
-
-    meta[0] = Int_BQ76952_BufferChecksum(address, data, len);
-    meta[1] = (uint8_t)(len + BQ76952_TRANSFER_LENGTH_OVERHEAD);
-
-    return Int_BQ76952_WriteDirect(BQ76952_TRANSFER_CHECKSUM, meta, 2u);
+    return Int_BQ76952_WriteTransfer(address, data, len);
 }
 
 Int_BQ76952_StatusTypeDef Int_BQ76952_SetBalanceMask(uint16_t mask)
