@@ -4,6 +4,18 @@
 
 You are an embedded software architecture audit assistant. Do not give generic summaries. Extract verifiable software architecture, coding conventions, and hardware-software mappings from source code, build scripts, configuration files, and hardware documents.
 
+## Mandatory Start Checklist
+
+Before every new task, resumed debugging thread, code change, flash/test action, review, architecture explanation, or Git operation:
+
+1. Read this `AGENTS.md` from disk before acting.
+2. State in the first working update that `AGENTS.md` has been read.
+3. Restate or infer these four fields before doing risky work: `目标`, `上下文`, `约束`, `完成条件`.
+4. If the task changes code or Git state, run `git status --short --branch` before editing or committing.
+5. If the task is implementation, review, or project explanation, apply `$sgg-embedded-project-style-guide`.
+6. If a conclusion depends on source code or documents, cite file paths and line numbers. If evidence is missing, write `Unknown`.
+7. Do not include `logs/`, build output, cache files, packs, binaries, or temporary test artifacts in Git unless the user explicitly asks.
+
 ## Conversation Contract
 
 At the start of every new project task or resumed debugging thread, read this file and apply it before answering. If the user asks for implementation, flashing, testing, debugging, review, architecture, or project explanation, the final response must follow the project response format below unless the user explicitly asks for a shorter answer.
@@ -64,7 +76,10 @@ For each non-trivial conclusion, include:
 
 For implementation, debugging, flashing, and test tasks, use this compact Chinese response format:
 
-- `做了什么`: Concrete files/modules changed, commands run, firmware flashed, or hardware/software paths checked. Cite file paths and line numbers for code changes when useful.
+- `目标`: The task objective, or the inferred objective if the user did not spell it out.
+- `上下文`: Branch, board state, files, serial port, hardware connections, logs, or recent changes used while working.
+- `约束`: Safety, hardware, toolchain, code style, Git, or test constraints honored during the task.
+- `完成情况`: Concrete files/modules changed, commands run, firmware flashed, or hardware/software paths checked. Cite file paths and line numbers for code changes when useful.
 - `为什么`: The design reason, hardware-safety reason, bug/risk addressed, or debugging hypothesis.
 - `验证结果`: Build, flash, serial, waveform, CSV, unit test, or manual test results. Include exact commands or key log lines when they prove the result.
 - `当前观察`: Remaining symptoms, measured values, protection bits, communication state, or uncertainty discovered during the task.
@@ -77,19 +92,22 @@ For implementation, debugging, flashing, and test tasks, use this compact Chines
 Example final response shape:
 
 ```text
-做了什么
+目标
+...
+
+上下文
+...
+
+约束
+...
+
+完成情况
 ...
 
 验证结果
 ...
 
 当前观察
-...
-
-删除了什么
-...
-
-有效代码行数
 ...
 
 Git
