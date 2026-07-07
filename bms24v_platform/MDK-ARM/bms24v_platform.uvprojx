@@ -676,16 +676,6 @@
               <FilePath>../../Int/Int_SC8815_BSP.h</FilePath>
             </File>
             <File>
-              <FileName>Int_Button.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../../Int/Int_Button.c</FilePath>
-            </File>
-            <File>
-              <FileName>Int_Button.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>../../Int/Int_Button.h</FilePath>
-            </File>
-            <File>
               <FileName>Int_CanFd.c</FileName>
               <FileType>1</FileType>
               <FilePath>../../Int/Int_CanFd.c</FilePath>

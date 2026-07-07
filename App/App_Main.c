@@ -10,7 +10,6 @@
 #include "App_OLED.h"
 #include "App_Power.h"
 #include "App_SC8815.h"
-#include "Int_Button.h"
 #include "Int_CanFd.h"
 #include "Int_EEPROM.h"
 #include "Int_Led.h"
@@ -18,25 +17,7 @@
 
 #define APP_MAIN_BATMAN_TASK_PERIOD_MS     1000u
 #define APP_MAIN_SC8815_TASK_PERIOD_MS     1000u
-#define APP_MAIN_BOARD_IO_TASK_PERIOD_MS   10u
 #define APP_MAIN_DEBUG_CLI_TASK_PERIOD_MS  20u
-
-/**
- * @brief 板载按键等轻量 IO 任务。
- *
- * 这些接口内部只做短时间状态机推进，周期放短一点，保证按键消抖
- * 不被 BQ/SC 的 I2C 访问节奏拖慢。
- */
-static void board_io_task(void *arg)
-{
-    (void)arg;
-
-    while (1)
-    {
-        Int_Button_Task(HAL_GetTick());
-        vTaskDelay(APP_MAIN_BOARD_IO_TASK_PERIOD_MS);
-    }
-}
 
 /**
  * @brief BQ76952 电池监控任务。
@@ -99,8 +80,6 @@ static void App_Main_Init(void)
 {
     printf("APP初始化: LED\r\n");
     Int_Led_Init();
-    printf("APP初始化: 按键\r\n");
-    Int_Button_Init();
     printf("APP初始化: CANFD\r\n");
     (void)Int_CanFd_Init();
     printf("APP初始化: EEPROM\r\n");
@@ -130,7 +109,6 @@ void App_Main(void)
     App_Main_Init();
 
     printf("RTOS: 创建任务\r\n");
-    xTaskCreate(board_io_task, "board_io_task", 256, NULL, 3, NULL);
     xTaskCreate(batman_task, "batman_task", 768, NULL, 3, NULL);
     xTaskCreate(sc8815_task, "sc8815_task", 512, NULL, 2, NULL);
     xTaskCreate(debug_cli_task, "debug_cli_task", 512, NULL, 1, NULL);

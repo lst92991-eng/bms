@@ -48,7 +48,6 @@ target_sources(${TARGET_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_BQ76952.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_OLED.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_SC8815.c
-        ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_Button.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_CanFd.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_Led.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_EEPROM.c
