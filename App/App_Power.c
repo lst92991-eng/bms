@@ -3,7 +3,6 @@
 #include <stdio.h>
 
 #include "App_BatMan.h"
-#include "App_Buzzer.h"
 #include "App_DebugCli.h"
 #include "App_SC8815.h"
 
@@ -25,7 +24,6 @@
 #define APP_POWER_BQ_WAKE_TIMEOUT_MS            (60000u)
 #define APP_POWER_PREDISCHARGE_TIME_MS          (5000u)
 #define APP_POWER_BQ_SAFETY_A_SCD_MASK          (0x80u)
-#define APP_POWER_BUZZER_ENABLE                 0u
 #define APP_POWER_DEBUG_PERIOD_MS               (5000u)
 typedef enum
 {
@@ -377,9 +375,6 @@ void App_Power_Task(uint32_t interval_ms)
         if (!s_low_power_sound_played)
         {
             s_low_power_sound_played = true;
-#if APP_POWER_BUZZER_ENABLE
-            App_Buzzer_PlayLowPower();
-#endif
         }
         s_charge_allowed = input_ok && sc_charge_ok && charge_temp_ok && charge_voltage_ok;
         s_discharge_allowed = false;
@@ -422,11 +417,6 @@ void App_Power_Task(uint32_t interval_ms)
 App_Power_StateTypeDef App_Power_GetState(void)
 {
     return s_power_state;
-}
-
-bool App_Power_IsChargeAllowed(void)
-{
-    return s_charge_allowed;
 }
 
 bool App_Power_IsDischargeAllowed(void)

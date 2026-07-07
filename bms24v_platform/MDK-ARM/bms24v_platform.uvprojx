@@ -551,16 +551,6 @@
               <FilePath>../../App/App_BatMan_Internal.h</FilePath>
             </File>
             <File>
-              <FileName>App_Buzzer.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../../App/App_Buzzer.c</FilePath>
-            </File>
-            <File>
-              <FileName>App_Buzzer.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>../../App/App_Buzzer.h</FilePath>
-            </File>
-            <File>
               <FileName>App_OLED.c</FileName>
               <FileType>1</FileType>
               <FilePath>../../App/App_OLED.c</FilePath>
@@ -694,16 +684,6 @@
               <FileName>Int_Button.h</FileName>
               <FileType>5</FileType>
               <FilePath>../../Int/Int_Button.h</FilePath>
-            </File>
-            <File>
-              <FileName>Int_Buzzer.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>../../Int/Int_Buzzer.c</FilePath>
-            </File>
-            <File>
-              <FileName>Int_Buzzer.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>../../Int/Int_Buzzer.h</FilePath>
             </File>
             <File>
               <FileName>Int_CanFd.c</FileName>

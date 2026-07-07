@@ -68,15 +68,6 @@ void App_BatMan_PrintMonitorStopReason(void);
 bool App_BatMan_SetMainFets(bool charge_enable, bool discharge_enable);
 
 /**
- * @brief 请求 BQ 自动执行预放电流程。
- * @param charge_enable true 时充电路径按当前策略释放，false 时保持关断。
- *
- * PDSG_EN 打开后，允许 DSG 时 BQ 会先开 PDSG，再按器件条件切到 DSG。
- * @return true 写入成功。
- */
-bool App_BatMan_SetPreDischargeFet(bool charge_enable);
-
-/**
  * @brief 手动测试 PDSG：只允许 PDSG，强制关闭 CHG/PCHG/DSG，并释放 FET_INIT_OFF。
  * @return true 写入成功。
  */

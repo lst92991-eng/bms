@@ -322,30 +322,6 @@ bool App_BatMan_SetMainFets(bool charge_enable, bool discharge_enable)
     return false;
 }
 
-bool App_BatMan_SetPreDischargeFet(bool charge_enable)
-{
-    uint8_t off_mask = 0u;
-
-    if (!charge_enable)
-    {
-        off_mask |= BQ76952_FET_CONTROL_PCHG_OFF_MASK;
-        off_mask |= BQ76952_FET_CONTROL_CHG_OFF_MASK;
-    }
-
-    /*
-     * FET_CONTROL 写 1 是强制关断。BQ76952 的 PDSG_EN 会在 DSG 被允许打开时
-     * 自动先走 PDSG 预放电，再由器件切到 DSG；这里不能把 DSG_OFF 置 1，
-     * 否则器件永远收不到“允许放电”的请求。
-     */
-    if (App_BatMan_WriteMainFetControl(off_mask) == INT_BQ76952_OK)
-    {
-        return true;
-    }
-
-    s_comm_fault = true;
-    return false;
-}
-
 bool App_BatMan_TestPreDischargeOnly(void)
 {
     const uint8_t off_mask = (uint8_t)(BQ76952_FET_CONTROL_PCHG_OFF_MASK |
