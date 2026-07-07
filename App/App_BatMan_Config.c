@@ -87,6 +87,14 @@ static Int_BQ76952_StatusTypeDef App_BatMan_WriteMainFetControl(uint8_t off_mask
     if (ret == INT_BQ76952_OK)
     {
         fet_control_request = off_mask;
+        if (off_mask != (uint8_t)APP_BATMAN_MAIN_FET_OFF_MASK)
+        {
+            /*
+             * FET_CONTROL 只清 host off bit；FET_INIT_OFF/host latch 仍可能压住输出。
+             * 释放任一主功率 MOS 时补发 ALL_FETS_ON，让 BQ 在无保护条件下真正打开通道。
+             */
+            ret = Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_ALL_FETS_ON);
+        }
     }
     return ret;
 }
