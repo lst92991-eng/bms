@@ -329,8 +329,8 @@ void App_BatMan_Init(void)
     printf("BQ Sleep禁用: 完成\r\n");
 
     /*
-     * ConfigUpdate 退出后，只清启动噪声告警，并保持 CHG/DSG/PCHG/PDSG 关断。
-     * 后续如需接通主功率路径，必须增加单独的业务入口和保护条件。
+     * ConfigUpdate 退出后，只清启动噪声告警，并先保持 CHG/DSG/PCHG/PDSG 关断。
+     * 主功率路径随后由 App_Power 按保护、充电器和放电条件统一释放。
      */
     printf("BQ启动告警: 清除\r\n");
     App_BatMan_ClearStartupAlarms();

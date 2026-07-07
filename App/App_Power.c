@@ -7,7 +7,6 @@
 #include "App_DebugCli.h"
 #include "App_SC8815.h"
 
-#define APP_POWER_CHARGE_CURRENT_MA             (1000)
 #define APP_POWER_DISCHARGE_CURRENT_MA          (12000)
 #define APP_POWER_DISCHARGE_OVER_MARGIN_MA      (0)
 #define APP_POWER_CELL_LOW_MV                   (3000u)
@@ -28,7 +27,6 @@
 #define APP_POWER_BQ_SAFETY_A_SCD_MASK          (0x80u)
 #define APP_POWER_BUZZER_ENABLE                 0u
 #define APP_POWER_DEBUG_PERIOD_MS               (5000u)
-#define APP_POWER_CHARGE_ONLY_TEST_ENABLE       0u
 typedef enum
 {
     APP_POWER_CHARGE_STOP_NONE = 0,
@@ -48,7 +46,6 @@ static bool s_charge_full_latched;
 static App_Power_ChargeStopReasonTypeDef s_charge_stop_reason;
 static bool s_discharge_scd_latched;
 static bool s_low_power_sound_played;
-static bool s_predischarge_done_printed;
 static uint32_t s_bq_wake_ms;
 static uint16_t s_predischarge_ms;
 static uint16_t s_debug_ms;
@@ -203,48 +200,8 @@ bool App_Power_ClearDischargeFault(void)
 
     s_discharge_scd_latched = false;
     s_predischarge_ms = 0u;
-    s_predischarge_done_printed = false;
     return true;
 }
-
-#if APP_POWER_CHARGE_ONLY_TEST_ENABLE
-static bool App_Power_RunChargeOnlyTest(bool cell_ok,
-                                        bool input_ok,
-                                        bool sc_charge_ok,
-                                        bool charge_temp_ok,
-                                        bool charge_voltage_ok)
-{
-    if (!cell_ok)
-    {
-        return false;
-    }
-
-    s_bq_wake_ms = 0u;
-    s_predischarge_ms = 0u;
-    s_predischarge_done_printed = false;
-    s_low_power_sound_played = false;
-
-    s_charge_allowed = input_ok && sc_charge_ok && charge_temp_ok && charge_voltage_ok;
-    s_discharge_allowed = s_charge_allowed;
-
-    if (s_charge_allowed)
-    {
-        /*
-         * 临时联调：24V 接入后同时释放 BQ CHG/DSG，
-         * 先确认 SC8815 的 VBAT 采样点能否被电池包拉到真实电压。
-         */
-        s_power_state = APP_POWER_STATE_RUN;
-        App_Power_SetOutput(true, true, s_charge_allowed);
-    }
-    else
-    {
-        s_power_state = APP_POWER_STATE_MONITOR;
-        App_Power_SetOutput(false, false, false);
-    }
-
-    return true;
-}
-#endif
 
 void App_Power_Init(void)
 {
@@ -260,7 +217,6 @@ void App_Power_Init(void)
     s_charge_stop_reason = APP_POWER_CHARGE_STOP_NONE;
     s_discharge_scd_latched = false;
     s_low_power_sound_played = false;
-    s_predischarge_done_printed = false;
     s_bq_wake_ms = 0u;
     s_predischarge_ms = 0u;
     s_debug_ms = 0u;
@@ -356,26 +312,6 @@ void App_Power_Task(uint32_t interval_ms)
         s_discharge_scd_latched = true;
     }
 
-#if APP_POWER_CHARGE_ONLY_TEST_ENABLE
-    if (App_Power_RunChargeOnlyTest(cell_ok,
-                                    input_ok,
-                                    sc_charge_ok,
-                                    charge_temp_ok,
-                                    charge_voltage_ok))
-    {
-        if (!App_DebugCli_IsVofaStreaming() && !App_DebugCli_IsBqMonitoring())
-        {
-            s_debug_ms = (uint16_t)(s_debug_ms + interval_ms);
-            if (s_debug_ms >= APP_POWER_DEBUG_PERIOD_MS)
-            {
-                s_debug_ms = 0u;
-                App_Power_PrintDebug();
-            }
-        }
-        return;
-    }
-#endif
-
     if (!cell_ok)
     {
         /*
@@ -384,7 +320,6 @@ void App_Power_Task(uint32_t interval_ms)
         */
         s_discharge_allowed = false;
         s_predischarge_ms = 0u;
-        s_predischarge_done_printed = false;
         s_charge_allowed = input_ok && sc_charge_ok;
         if (s_charge_allowed)
         {
@@ -419,7 +354,6 @@ void App_Power_Task(uint32_t interval_ms)
     {
         s_bq_wake_ms = 0u;
         s_predischarge_ms = 0u;
-        s_predischarge_done_printed = false;
         s_power_state = APP_POWER_STATE_FAULT;
         s_charge_allowed = false;
         s_discharge_allowed = false;
@@ -430,7 +364,6 @@ void App_Power_Task(uint32_t interval_ms)
     {
         s_bq_wake_ms = 0u;
         s_predischarge_ms = 0u;
-        s_predischarge_done_printed = false;
         s_power_state = APP_POWER_STATE_FAULT;
         s_charge_allowed = false;
         s_discharge_allowed = false;
@@ -440,7 +373,6 @@ void App_Power_Task(uint32_t interval_ms)
     {
         s_bq_wake_ms = 0u;
         s_predischarge_ms = 0u;
-        s_predischarge_done_printed = false;
         s_power_state = APP_POWER_STATE_LOW;
         if (!s_low_power_sound_played)
         {
@@ -457,7 +389,6 @@ void App_Power_Task(uint32_t interval_ms)
     {
         s_bq_wake_ms = 0u;
         s_predischarge_ms = 0u;
-        s_predischarge_done_printed = false;
         s_power_state = APP_POWER_STATE_MONITOR;
         s_charge_allowed = input_ok && sc_charge_ok && charge_temp_ok && charge_voltage_ok;
         s_discharge_allowed = false;
@@ -467,7 +398,6 @@ void App_Power_Task(uint32_t interval_ms)
     {
         s_bq_wake_ms = 0u;
         s_predischarge_ms = APP_POWER_PREDISCHARGE_TIME_MS;
-        s_predischarge_done_printed = true;
         s_power_state = APP_POWER_STATE_RUN;
         s_low_power_sound_played = false;
         s_charge_allowed = input_ok &&

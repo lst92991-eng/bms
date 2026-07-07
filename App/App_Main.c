@@ -148,7 +148,7 @@ void debug_cli_task(void *arg)
  * @brief 启动前的 APP/INT 层初始化。
  *
  * 统一在调度器启动前完成硬件接口初始化，可以避免多个任务同时抢 I2C/SPI/CAN
- * bring-up。功率相关模块仍保持安全默认态：BQ 主 FET 关断，SC8815 不请求充电。
+ * bring-up。功率相关模块只在 BQ/APP 无故障时释放主 FET，SC8815 默认不请求充电。
  */
 static void App_Main_Init(void)
 {

@@ -39,7 +39,7 @@
 #define APP_BATMAN_DM_OCD2_THRESHOLD_15A2               (38u)   /* 38*2mV/5mΩ=15.2A，SCD 前的快速过流层。 */
 #define APP_BATMAN_DM_OCD2_DELAY_80MS                   (22u)   /* 约 79.2ms。 */
 #define APP_BATMAN_DM_SCD_THRESHOLD_80MV                (0x04u) /* 80mV/5mΩ≈16A，给12A放电测试留余量。 */
-#define APP_BATMAN_DM_SCD_DELAY_400US_TEST              (0x1Cu) /* 近似 400us，实际约 405us。 */
+#define APP_BATMAN_DM_SCD_DELAY_400US                   (0x1Cu) /* 近似 400us，实际约 405us。 */
 #define APP_BATMAN_DM_OCC_RECOVERY_NEG_200MA            ((uint16_t)0xFF38u) /* I2 -200mA，回到轻微放电/零电流再恢复。 */
 #define APP_BATMAN_DM_OCD_RECOVERY_500MA                (500u)  /* I2 500mA，负载明显降下来后再恢复。 */
 #define APP_BATMAN_DM_OTC_THRESHOLD_50C                 (50u)   /* APP 45C 先停充，BQ 50C 作为硬后备。 */
@@ -214,7 +214,7 @@ bool App_BatMan_ConfigBq(void)
         !App_BatMan_WriteConfigU8(BQ76952_DM_SCD_THRESHOLD,
                                   APP_BATMAN_DM_SCD_THRESHOLD_80MV) ||
         !App_BatMan_WriteConfigU8(BQ76952_DM_SCD_DELAY,
-                                  APP_BATMAN_DM_SCD_DELAY_400US_TEST) ||
+                                  APP_BATMAN_DM_SCD_DELAY_400US) ||
         !App_BatMan_WriteConfigU16(BQ76952_DM_OCC_RECOVERY_THRESHOLD,
                                    APP_BATMAN_DM_OCC_RECOVERY_NEG_200MA) ||
         !App_BatMan_WriteConfigU16(BQ76952_DM_OCD_RECOVERY_THRESHOLD,
@@ -287,11 +287,11 @@ bool App_BatMan_ConfigBq(void)
 }
 
 /**
- * @brief 让 BQ 进入 FET 固件控制态，并保持主充放电 MOS 关断。
+ * @brief 让 BQ 进入 FET 固件控制态，并在初始化阶段保持主充放电 MOS 关断。
  *
- * 默认安全策略是“能通信、能采样、能均衡，但主功率路径不自动接通”。
- * 这里先确保 FET_EN 为 firmware control，再写 FET_CONTROL off mask，
- * 明确关断 CHG/DSG/PCHG/PDSG。后续若要放开主功率 MOS，应新增单独业务入口。
+ * 上电配置阶段先确保 FET_EN 为 firmware control，再写 FET_CONTROL off mask，
+ * 明确关断 CHG/DSG/PCHG/PDSG；运行阶段由 App_Power 通过 App_BatMan_SetMainFets()
+ * 按保护条件释放主 MOS。
  */
 Int_BQ76952_StatusTypeDef App_BatMan_KeepMainFetsOff(void)
 {

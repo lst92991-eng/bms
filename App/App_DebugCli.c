@@ -4,6 +4,12 @@
 #include <stdio.h>
 #include <string.h>
 
+/*
+ * AI bring-up/debug 专用串口入口。
+ *
+ * 本模块允许临时读取 BQ/SC/Power 状态、输出 VOFA 数据、触发少量手动探测命令。
+ * 生产业务不能依赖这里的命令才能运行；删除步骤见 docs/rules/debug_cli_removal.md。
+ */
 #include "App_BatMan.h"
 #include "App_Power.h"
 #include "App_SC8815.h"

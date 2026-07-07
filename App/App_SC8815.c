@@ -20,10 +20,9 @@
  * 默认启动后状态：
  * - `CE_N = 0`：芯片使能，允许寄存器和 ADC 监控。
  * - `PSTOP = 1`：保持 standby，充电功率级停止。
- * - `charge_requested = false`：bring-up 阶段不会自动启动充电。
+ * - `charge_requested = false`：默认不会自动启动充电。
  */
 
-#define APP_SC8815_BIT(value, mask)                (((value) & (mask)) != 0u ? 1u : 0u)
 #define APP_SC8815_DEBUG_PERIOD_MS              (5000u)
 #define APP_SC8815_CHARGE_QUEUE_LEN             (1u)
 
@@ -52,18 +51,6 @@ typedef struct
     uint16_t ibus_raw;
     uint16_t ibat_raw;
     uint8_t last_error;
-    uint8_t ce_n_pin;
-    uint8_t pstop_pin;
-    uint8_t vbat_set_reg;
-    uint8_t ratio_reg;
-    uint8_t ibus_lim_reg;
-    uint8_t ibat_lim_reg;
-    uint8_t vinreg_reg;
-    uint8_t ctrl0_reg;
-    uint8_t ctrl1_reg;
-    uint8_t ctrl2_reg;
-    uint8_t ctrl3_reg;
-    uint8_t mask_reg;
 } App_SC8815_StateTypeDef;
 
 static App_SC8815_StateTypeDef s_sc;
@@ -199,9 +186,9 @@ static void App_SC8815_ApplyChargeRequest(void)
                                                0u,
                                                SC8815_PROJECT_MASK_SAFE_SET_MASK)) ||
         !App_SC8815_Check(Int_SC8815_SetCurrentLimitMa(INT_SC8815_LIMIT_IBUS,
-                                                       SC8815_PROJECT_BRINGUP_IBUS_LIMIT_MA)) ||
+                                                       SC8815_PROJECT_IBUS_LIMIT_MA)) ||
         !App_SC8815_Check(Int_SC8815_SetCurrentLimitMa(INT_SC8815_LIMIT_IBAT,
-                                                       SC8815_PROJECT_BRINGUP_IBAT_LIMIT_MA)) ||
+                                                       SC8815_PROJECT_IBAT_LIMIT_MA)) ||
         !App_SC8815_Check(Int_SC8815_SetAdcEnabled(true)))
     {
         s_sc.charge_requested = false;
@@ -210,7 +197,7 @@ static void App_SC8815_ApplyChargeRequest(void)
     }
 
     /*
-     * 这是唯一释放充电环路的动作。只有配置写入和 bring-up 限流全部成功后，
+     * 这是唯一释放充电环路的动作。只有配置写入和项目限流全部成功后，
      * 才允许 PSTOP 拉低。
      */
     (void)Int_SC8815_SetChipEnabled(true);
@@ -316,18 +303,6 @@ void App_SC8815_Init(void)
     s_sc.ibus_raw = 0u;
     s_sc.ibat_raw = 0u;
     s_sc.last_error = INT_SC8815_OK;
-    s_sc.ce_n_pin = 1u;
-    s_sc.pstop_pin = 1u;
-    s_sc.vbat_set_reg = 0u;
-    s_sc.ratio_reg = 0u;
-    s_sc.ibus_lim_reg = 0u;
-    s_sc.ibat_lim_reg = 0u;
-    s_sc.vinreg_reg = 0u;
-    s_sc.ctrl0_reg = 0u;
-    s_sc.ctrl1_reg = 0u;
-    s_sc.ctrl2_reg = 0u;
-    s_sc.ctrl3_reg = 0u;
-    s_sc.mask_reg = 0u;
     s_charge_queue = NULL;
     s_debug_ms = 0u;
 
@@ -424,5 +399,5 @@ uint32_t App_SC8815_GetVbatMv(void)
 
 uint32_t App_SC8815_GetInputLimitMa(void)
 {
-    return SC8815_PROJECT_BRINGUP_IBUS_LIMIT_MA;
+    return SC8815_PROJECT_IBUS_LIMIT_MA;
 }

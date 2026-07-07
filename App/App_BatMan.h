@@ -24,7 +24,7 @@
 #define APP_BATMAN_STACK_RAW_TO_MV               (10u)
 
 /**
- * @brief 初始化 BQ76952，写入基线 Data Memory，并保持主 FET 默认关断。
+ * @brief 初始化 BQ76952，写入基线 Data Memory，并让主 FET 进入受控默认关断态。
  */
 void App_BatMan_Init(void);
 

@@ -58,54 +58,28 @@ static void Int_SC8815_IicDelay(void)
     }
 }
 
-static void Int_SC8815_IicSclHigh(void)
+static void Int_SC8815_IicWriteScl(GPIO_PinState state)
 {
     if (s_sc8815_iic_swapped)
     {
-        HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, state);
     }
     else
     {
-        HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, GPIO_PIN_SET);
+        HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, state);
     }
     Int_SC8815_IicDelay();
 }
 
-static void Int_SC8815_IicSclLow(void)
+static void Int_SC8815_IicWriteSda(GPIO_PinState state)
 {
     if (s_sc8815_iic_swapped)
     {
-        HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, state);
     }
     else
     {
-        HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, GPIO_PIN_RESET);
-    }
-    Int_SC8815_IicDelay();
-}
-
-static void Int_SC8815_IicSdaHigh(void)
-{
-    if (s_sc8815_iic_swapped)
-    {
-        HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, GPIO_PIN_SET);
-    }
-    else
-    {
-        HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, GPIO_PIN_SET);
-    }
-    Int_SC8815_IicDelay();
-}
-
-static void Int_SC8815_IicSdaLow(void)
-{
-    if (s_sc8815_iic_swapped)
-    {
-        HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port, SC8815_SW_I2C_SCL_Pin, GPIO_PIN_RESET);
-    }
-    else
-    {
-        HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, GPIO_PIN_RESET);
+        HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port, SC8815_SW_I2C_SDA_Pin, state);
     }
     Int_SC8815_IicDelay();
 }
@@ -122,17 +96,17 @@ static bool Int_SC8815_IicSdaRead(void)
 
 static void Int_SC8815_BusStart(void)
 {
-    Int_SC8815_IicSdaHigh();
-    Int_SC8815_IicSclHigh();
-    Int_SC8815_IicSdaLow();
-    Int_SC8815_IicSclLow();
+    Int_SC8815_IicWriteSda(GPIO_PIN_SET);
+    Int_SC8815_IicWriteScl(GPIO_PIN_SET);
+    Int_SC8815_IicWriteSda(GPIO_PIN_RESET);
+    Int_SC8815_IicWriteScl(GPIO_PIN_RESET);
 }
 
 static void Int_SC8815_BusStop(void)
 {
-    Int_SC8815_IicSdaLow();
-    Int_SC8815_IicSclHigh();
-    Int_SC8815_IicSdaHigh();
+    Int_SC8815_IicWriteSda(GPIO_PIN_RESET);
+    Int_SC8815_IicWriteScl(GPIO_PIN_SET);
+    Int_SC8815_IicWriteSda(GPIO_PIN_SET);
 }
 
 static bool Int_SC8815_BusWriteByte(uint8_t data)
@@ -141,21 +115,21 @@ static bool Int_SC8815_BusWriteByte(uint8_t data)
     {
         if ((data & mask) != 0u)
         {
-            Int_SC8815_IicSdaHigh();
+            Int_SC8815_IicWriteSda(GPIO_PIN_SET);
         }
         else
         {
-            Int_SC8815_IicSdaLow();
+            Int_SC8815_IicWriteSda(GPIO_PIN_RESET);
         }
 
-        Int_SC8815_IicSclHigh();
-        Int_SC8815_IicSclLow();
+        Int_SC8815_IicWriteScl(GPIO_PIN_SET);
+        Int_SC8815_IicWriteScl(GPIO_PIN_RESET);
     }
 
-    Int_SC8815_IicSdaHigh();
-    Int_SC8815_IicSclHigh();
+    Int_SC8815_IicWriteSda(GPIO_PIN_SET);
+    Int_SC8815_IicWriteScl(GPIO_PIN_SET);
     const bool ack = !Int_SC8815_IicSdaRead();
-    Int_SC8815_IicSclLow();
+    Int_SC8815_IicWriteScl(GPIO_PIN_RESET);
 
     return ack;
 }
@@ -164,31 +138,31 @@ static uint8_t Int_SC8815_BusReadByte(bool ack)
 {
     uint8_t data = 0u;
 
-    Int_SC8815_IicSdaHigh();
+    Int_SC8815_IicWriteSda(GPIO_PIN_SET);
 
     for (uint8_t bit = 0u; bit < 8u; bit++)
     {
         data <<= 1u;
-        Int_SC8815_IicSclHigh();
+        Int_SC8815_IicWriteScl(GPIO_PIN_SET);
         if (Int_SC8815_IicSdaRead())
         {
             data |= 0x01u;
         }
-        Int_SC8815_IicSclLow();
+        Int_SC8815_IicWriteScl(GPIO_PIN_RESET);
     }
 
     if (ack)
     {
-        Int_SC8815_IicSdaLow();
+        Int_SC8815_IicWriteSda(GPIO_PIN_RESET);
     }
     else
     {
-        Int_SC8815_IicSdaHigh();
+        Int_SC8815_IicWriteSda(GPIO_PIN_SET);
     }
 
-    Int_SC8815_IicSclHigh();
-    Int_SC8815_IicSclLow();
-    Int_SC8815_IicSdaHigh();
+    Int_SC8815_IicWriteScl(GPIO_PIN_SET);
+    Int_SC8815_IicWriteScl(GPIO_PIN_RESET);
+    Int_SC8815_IicWriteSda(GPIO_PIN_SET);
 
     return data;
 }
@@ -606,12 +580,12 @@ Int_SC8815_StatusTypeDef Int_SC8815_InitSafe(void)
     for (i = 0u; i < 2u; i++)
     {
         s_sc8815_iic_swapped = (i != 0u);
-        Int_SC8815_IicSclHigh();
-        Int_SC8815_IicSdaHigh();
+        Int_SC8815_IicWriteScl(GPIO_PIN_SET);
+        Int_SC8815_IicWriteSda(GPIO_PIN_SET);
         for (uint8_t pulse = 0u; pulse < 9u; pulse++)
         {
-            Int_SC8815_IicSclLow();
-            Int_SC8815_IicSclHigh();
+            Int_SC8815_IicWriteScl(GPIO_PIN_RESET);
+            Int_SC8815_IicWriteScl(GPIO_PIN_SET);
         }
         Int_SC8815_BusStop();
     }

@@ -68,10 +68,10 @@
 #define SC8815_PROJECT_VBUS_MON_RATIO_X10            (125u)
 #define SC8815_PROJECT_VBAT_MON_RATIO_X10            (125u)
 
-/* Bring-up 与软件约束电流，单位 mA。限流值禁止为 0，项目最低不低于 300mA。 */
+/* 项目软件约束电流，单位 mA。限流值禁止为 0，项目最低不低于 300mA。 */
 #define SC8815_PROJECT_MIN_LIMIT_CURRENT_MA          (300u)
-#define SC8815_PROJECT_BRINGUP_IBUS_LIMIT_MA         (5000u)
-#define SC8815_PROJECT_BRINGUP_IBAT_LIMIT_MA         (3000u)
+#define SC8815_PROJECT_IBUS_LIMIT_MA                 (5000u)
+#define SC8815_PROJECT_IBAT_LIMIT_MA                 (3000u)
 #define SC8815_PROJECT_DEFAULT_IBUS_LIMIT_MA         (1500u)
 #define SC8815_PROJECT_DEFAULT_IBAT_LIMIT_MA         (3000u)
 #define SC8815_PROJECT_MAX_IBUS_LIMIT_MA             (6000u)
