@@ -378,3 +378,8 @@ void App_BatMan_Task(uint32_t interval_ms)
     App_BatMan_UpdateRuntimeOledStatus();
     App_BatMan_UpdateDebugOutput(interval_ms);
 }
+
+bool App_BatMan_IsOnline(void)
+{
+    return (!s_comm_fault && s_cells_sample_valid);
+}

@@ -110,7 +110,7 @@ static void App_DebugCli_Normalize(char *line)
 
 static void App_DebugCli_PrintHelp(void)
 {
-    printf("CLI help: help ping diag bq bq on bqfast on bq off power fault clear scd clear dsg clear pdsg test pdsg probe pdsg off sc scprobe charge on charge off vofa vofa on vofa off\r\n");
+    printf("CLI help: help ping diag bq bq on bqfast on bq off bq shutdown power fault clear scd clear dsg clear pdsg test pdsg probe pdsg off sc scprobe charge on charge off vofa vofa on vofa off\r\n");
 }
 
 static void App_DebugCli_PrintSignedMilli(int32_t milli_value)
@@ -358,6 +358,22 @@ static void App_DebugCli_ProcessLine(char *line)
         s_bq_monitor_stop_on_fault = false;
         s_bq_monitor_ms = 0u;
         printf("CLI BQ连续监视: 关闭\r\n");
+    }
+    else if (strcmp(line, "bq shutdown") == 0)
+    {
+        s_bq_monitor_enabled = false;
+        s_bq_monitor_stop_on_fault = false;
+        s_bq_monitor_ms = 0u;
+        s_vofa_enabled = false;
+        s_vofa_ms = 0u;
+        if (App_Power_RequestBqShutdown())
+        {
+            printf("CLI BQ shutdown: 已发送，等待芯片掉电；插入充电器后由BQ_WAKE逻辑尝试唤醒\r\n");
+        }
+        else
+        {
+            printf("CLI BQ shutdown: 失败，请发送 bq/power 查看状态\r\n");
+        }
     }
     else if (strcmp(line, "power") == 0)
     {

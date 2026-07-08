@@ -322,6 +322,101 @@ bool App_BatMan_SetMainFets(bool charge_enable, bool discharge_enable)
     return false;
 }
 
+bool App_BatMan_RecoverAfterWake(void)
+{
+    uint8_t data[2];
+    uint8_t fet;
+    uint16_t raw_alarm;
+    uint16_t status;
+    Int_BQ76952_StatusTypeDef ret;
+
+    /*
+     * BQ shutdown 唤醒后可能带 POR/SLEEP_EN/FET_INIT_OFF 等上电残留。
+     * 先恢复项目 Data Memory 基线，再释放主 FET，避免 XCHG 在无保护异常时一直压住 CHG。
+     */
+    if (Int_BQ76952_EnterConfigUpdate() != INT_BQ76952_OK)
+    {
+        s_comm_fault = true;
+        return false;
+    }
+
+    if (!App_BatMan_ConfigBq())
+    {
+        (void)Int_BQ76952_ExitConfigUpdate();
+        s_comm_fault = true;
+        return false;
+    }
+
+    if (Int_BQ76952_ExitConfigUpdate() != INT_BQ76952_OK)
+    {
+        s_comm_fault = true;
+        return false;
+    }
+
+    ret = Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_SLEEP_DISABLE);
+    if (ret != INT_BQ76952_OK)
+    {
+        s_comm_fault = true;
+        return false;
+    }
+
+    App_BatMan_ClearStartupAlarms();
+    if (!App_BatMan_SetMainFets(true, true))
+    {
+        return false;
+    }
+
+    if (Int_BQ76952_ReadDirect(BQ76952_CMD_ALARM_RAW_STATUS, data, 2u) != INT_BQ76952_OK)
+    {
+        s_comm_fault = true;
+        return false;
+    }
+
+    raw_alarm = App_BatMan_ReadU16Le(data);
+    if (Int_BQ76952_ReadDirect(BQ76952_CMD_BATTERY_STATUS, data, 2u) != INT_BQ76952_OK)
+    {
+        s_comm_fault = true;
+        return false;
+    }
+    status = App_BatMan_ReadU16Le(data);
+    if (Int_BQ76952_ReadDirect(BQ76952_CMD_FET_STATUS, &fet, 1u) != INT_BQ76952_OK)
+    {
+        s_comm_fault = true;
+        return false;
+    }
+
+    if (((status & BQ76952_BATTERY_STATUS_SDM_MASK) != 0u) ||
+        ((raw_alarm & (BQ76952_ALARM_XCHG_MASK | BQ76952_ALARM_XDSG_MASK)) != 0u) ||
+        ((fet & (BQ76952_FET_STATUS_CHG_FET_MASK | BQ76952_FET_STATUS_DSG_FET_MASK)) !=
+         (BQ76952_FET_STATUS_CHG_FET_MASK | BQ76952_FET_STATUS_DSG_FET_MASK)))
+    {
+        return false;
+    }
+
+    return true;
+}
+
+bool App_BatMan_RequestShutdown(void)
+{
+    /*
+     * SHUTDOWN 是危险子命令。进入前先关主 FET，避免 BQ 掉电过程中
+     * 充放电 MOS 仍保持在不明确状态。
+     */
+    if (App_BatMan_KeepMainFetsOff() != INT_BQ76952_OK)
+    {
+        s_comm_fault = true;
+        return false;
+    }
+
+    if (Int_BQ76952_Shutdown() != INT_BQ76952_OK)
+    {
+        s_comm_fault = true;
+        return false;
+    }
+
+    return true;
+}
+
 bool App_BatMan_TestPreDischargeOnly(void)
 {
     const uint8_t off_mask = (uint8_t)(BQ76952_FET_CONTROL_PCHG_OFF_MASK |

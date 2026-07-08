@@ -55,6 +55,12 @@ void App_BatMan_PrintFastMonitor(void);
 bool App_BatMan_IsMonitorFaultActive(void);
 
 /**
+ * @brief 判断最近一次 BQ 采样是否仍然在线。
+ * @return true 表示本周期通信正常且电芯采样有效。
+ */
+bool App_BatMan_IsOnline(void);
+
+/**
  * @brief 打印 bqfast 自动停表时的 BQ 侧原因。
  */
 void App_BatMan_PrintMonitorStopReason(void);
@@ -66,6 +72,13 @@ void App_BatMan_PrintMonitorStopReason(void);
  * @return true 写入成功。
  */
 bool App_BatMan_SetMainFets(bool charge_enable, bool discharge_enable);
+bool App_BatMan_RecoverAfterWake(void);
+
+/**
+ * @brief 关闭主 FET 后发送 BQ76952 SHUTDOWN 子命令。
+ * @return true 表示主 FET 关断命令和 SHUTDOWN 子命令都已成功发出。
+ */
+bool App_BatMan_RequestShutdown(void);
 
 /**
  * @brief 手动测试 PDSG：只允许 PDSG，强制关闭 CHG/PCHG/DSG，并释放 FET_INIT_OFF。

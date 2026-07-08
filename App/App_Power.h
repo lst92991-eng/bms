@@ -11,6 +11,7 @@ typedef enum
     APP_POWER_STATE_RUN,
     APP_POWER_STATE_LOW,
     APP_POWER_STATE_BQ_WAKE,
+    APP_POWER_STATE_BQ_SHUTDOWN,
     APP_POWER_STATE_FAULT
 } App_Power_StateTypeDef;
 
@@ -22,5 +23,6 @@ bool App_Power_IsDischargeAllowed(void);
 void App_Power_PrintSnapshot(void);
 void App_Power_PrintStopReason(void);
 bool App_Power_ClearDischargeFault(void);
+bool App_Power_RequestBqShutdown(void);
 
 #endif /* APP_POWER_H */

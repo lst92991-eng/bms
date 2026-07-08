@@ -5,6 +5,7 @@
 #include "App_BatMan.h"
 #include "App_DebugCli.h"
 #include "App_SC8815.h"
+#include "Int_BQ76952_BSP.h"
 
 #define APP_POWER_DISCHARGE_CURRENT_MA          (12000)
 #define APP_POWER_DISCHARGE_OVER_MARGIN_MA      (0)
@@ -22,6 +23,7 @@
 #define APP_POWER_DISCHARGE_TEMP_MAX_C          (60)
 #define APP_POWER_SC_INPUT_VALID_MV             (12000u)
 #define APP_POWER_BQ_WAKE_TIMEOUT_MS            (60000u)
+#define APP_POWER_BQ_SHUTDOWN_ONLINE_RECOVER_MS (3000u)
 #define APP_POWER_PREDISCHARGE_TIME_MS          (5000u)
 #define APP_POWER_BQ_SAFETY_A_SCD_MASK          (0x80u)
 #define APP_POWER_DEBUG_PERIOD_MS               (5000u)
@@ -44,6 +46,7 @@ static bool s_charge_full_latched;
 static App_Power_ChargeStopReasonTypeDef s_charge_stop_reason;
 static bool s_discharge_scd_latched;
 static bool s_low_power_sound_played;
+static bool s_bq_shutdown_seen_offline;
 static uint32_t s_bq_wake_ms;
 static uint16_t s_predischarge_ms;
 static uint16_t s_debug_ms;
@@ -101,6 +104,84 @@ static void App_Power_SetScWakeCharge(bool charge_enable)
     s_output_synced = false;
 }
 
+static bool App_Power_RecoverBqAfterShutdown(void)
+{
+    if (App_BatMan_RecoverAfterWake())
+    {
+        s_bq_shutdown_seen_offline = false;
+        s_bq_wake_ms = 0u;
+        s_power_state = APP_POWER_STATE_OFF;
+        s_output_synced = false;
+        App_Power_SetScWakeCharge(false);
+        return true;
+    }
+
+    s_power_state = APP_POWER_STATE_FAULT;
+    App_Power_SetScWakeCharge(false);
+    return false;
+}
+
+bool App_Power_RequestBqShutdown(void)
+{
+    App_SC8815_RequestCharge(false);
+    s_charge_allowed = false;
+    s_discharge_allowed = false;
+    s_output_charge = false;
+    s_output_discharge = false;
+    s_output_predischarge = false;
+    s_output_sc_charge = false;
+    s_output_synced = false;
+    s_bq_shutdown_seen_offline = false;
+    s_bq_wake_ms = 0u;
+
+    if (!App_BatMan_RequestShutdown())
+    {
+        s_power_state = APP_POWER_STATE_FAULT;
+        return false;
+    }
+
+    s_power_state = APP_POWER_STATE_BQ_SHUTDOWN;
+    return true;
+}
+
+static void App_Power_UpdateWakeState(uint32_t interval_ms,
+                                      bool input_ok,
+                                      bool sc_charge_ok)
+{
+    s_discharge_allowed = false;
+    s_predischarge_ms = 0u;
+    s_charge_allowed = input_ok && sc_charge_ok;
+
+    if (s_charge_allowed)
+    {
+        if (s_power_state != APP_POWER_STATE_BQ_WAKE)
+        {
+            s_bq_wake_ms = 0u;
+        }
+        else if (s_bq_wake_ms < APP_POWER_BQ_WAKE_TIMEOUT_MS)
+        {
+            s_bq_wake_ms += interval_ms;
+        }
+
+        if (s_bq_wake_ms < APP_POWER_BQ_WAKE_TIMEOUT_MS)
+        {
+            s_power_state = APP_POWER_STATE_BQ_WAKE;
+            App_Power_SetScWakeCharge(true);
+        }
+        else
+        {
+            s_power_state = APP_POWER_STATE_FAULT;
+            s_charge_allowed = false;
+            App_Power_SetScWakeCharge(false);
+        }
+    }
+    else
+    {
+        s_power_state = APP_POWER_STATE_FAULT;
+        App_Power_SetScWakeCharge(false);
+    }
+}
+
 static void App_Power_PrintSeparator(const char *title)
 {
     printf("---------- %s ----------\r\n", title);
@@ -155,7 +236,8 @@ static void App_Power_PrintReasonFlag(bool active, const char *text)
 
 void App_Power_PrintStopReason(void)
 {
-    const bool cell_ok = ((cell_min_mv >= APP_BATMAN_CELL_VALID_MIN_MV) &&
+    const bool cell_ok = App_BatMan_IsOnline() &&
+                         ((cell_min_mv >= APP_BATMAN_CELL_VALID_MIN_MV) &&
                           (cell_max_mv <= APP_BATMAN_CELL_VALID_MAX_MV));
     const bool discharge_over_current =
         (current_ma < -(APP_POWER_DISCHARGE_CURRENT_MA + APP_POWER_DISCHARGE_OVER_MARGIN_MA));
@@ -215,6 +297,7 @@ void App_Power_Init(void)
     s_charge_stop_reason = APP_POWER_CHARGE_STOP_NONE;
     s_discharge_scd_latched = false;
     s_low_power_sound_played = false;
+    s_bq_shutdown_seen_offline = false;
     s_bq_wake_ms = 0u;
     s_predischarge_ms = 0u;
     s_debug_ms = 0u;
@@ -244,8 +327,11 @@ void App_Power_Task(uint32_t interval_ms)
     bool charge_voltage_ok;
     bool discharge_temp_ok;
     bool discharge_over_current;
+    bool bq_online;
 
-    cell_ok = ((cell_min_mv >= APP_BATMAN_CELL_VALID_MIN_MV) &&
+    bq_online = App_BatMan_IsOnline();
+    cell_ok = bq_online &&
+              ((cell_min_mv >= APP_BATMAN_CELL_VALID_MIN_MV) &&
                (cell_max_mv <= APP_BATMAN_CELL_VALID_MAX_MV));
     input_ok = (App_SC8815_IsAcOk() ||
                 (App_SC8815_GetVbusMv() >= APP_POWER_SC_INPUT_VALID_MV));
@@ -310,43 +396,76 @@ void App_Power_Task(uint32_t interval_ms)
         s_discharge_scd_latched = true;
     }
 
-    if (!cell_ok)
+    if (bq_online && ((battery_status & BQ76952_BATTERY_STATUS_SDM_MASK) != 0u))
+    {
+        s_power_state = APP_POWER_STATE_BQ_SHUTDOWN;
+        s_charge_allowed = false;
+        s_discharge_allowed = false;
+        s_predischarge_ms = 0u;
+        App_Power_SetScWakeCharge(false);
+    }
+    else if (s_power_state == APP_POWER_STATE_BQ_SHUTDOWN)
+    {
+        s_predischarge_ms = 0u;
+        s_charge_allowed = false;
+        s_discharge_allowed = false;
+
+        if (!cell_ok)
+        {
+            s_bq_shutdown_seen_offline = true;
+            /*
+             * BQ 已经不可采样时，不能再写 BQ FET；只允许 SC8815 给 BMS+
+             * 建立唤醒条件，等 BQ 自己从 shutdown 恢复 I2C。
+             */
+            if (input_ok)
+            {
+                App_Power_UpdateWakeState(interval_ms, input_ok, sc_charge_ok);
+            }
+            else
+            {
+                App_Power_SetScWakeCharge(false);
+            }
+        }
+        else if (s_bq_shutdown_seen_offline)
+        {
+            /*
+             * 已经确认 BQ 曾掉线，随后电芯采样恢复，说明硬件唤醒闭环完成。
+             * 退出 shutdown 等待态，下一拍交回正常保护/充放电状态机重新开 MOS。
+             */
+            (void)App_Power_RecoverBqAfterShutdown();
+        }
+        else
+        {
+            /*
+             * 充电器已接入时，BQ 可能没有真正掉到 I2C 离线，但 SHUTDOWN 前写入的
+             * FET_CONTROL off latch 会留下来。无故障且持续在线一小段时间后直接恢复。
+             */
+            if (s_bq_wake_ms < APP_POWER_BQ_SHUTDOWN_ONLINE_RECOVER_MS)
+            {
+                s_bq_wake_ms += interval_ms;
+            }
+
+            if (s_bq_wake_ms >= APP_POWER_BQ_SHUTDOWN_ONLINE_RECOVER_MS)
+            {
+                (void)App_Power_RecoverBqAfterShutdown();
+            }
+            else
+            {
+                App_Power_SetScWakeCharge(false);
+            }
+        }
+    }
+    else if ((s_power_state == APP_POWER_STATE_BQ_WAKE) && cell_ok)
+    {
+        (void)App_Power_RecoverBqAfterShutdown();
+    }
+    else if (!cell_ok)
     {
         /*
          * BQ 可能已经因低压进入 shutdown：cell 全 0 或通信失败不能直接禁止
          * SC8815，否则插入 24V 后无法给 BMS+ 预充，也就唤不醒 BQ。
         */
-        s_discharge_allowed = false;
-        s_predischarge_ms = 0u;
-        s_charge_allowed = input_ok && sc_charge_ok;
-        if (s_charge_allowed)
-        {
-            if (s_power_state != APP_POWER_STATE_BQ_WAKE)
-            {
-                s_bq_wake_ms = 0u;
-            }
-            else if (s_bq_wake_ms < APP_POWER_BQ_WAKE_TIMEOUT_MS)
-            {
-                s_bq_wake_ms += interval_ms;
-            }
-
-            if (s_bq_wake_ms < APP_POWER_BQ_WAKE_TIMEOUT_MS)
-            {
-                s_power_state = APP_POWER_STATE_BQ_WAKE;
-                App_Power_SetScWakeCharge(true);
-            }
-            else
-            {
-                s_power_state = APP_POWER_STATE_FAULT;
-                s_charge_allowed = false;
-                App_Power_SetScWakeCharge(false);
-            }
-        }
-        else
-        {
-            s_power_state = APP_POWER_STATE_FAULT;
-            App_Power_SetScWakeCharge(false);
-        }
+        App_Power_UpdateWakeState(interval_ms, input_ok, sc_charge_ok);
     }
     else if (fault_active)
     {

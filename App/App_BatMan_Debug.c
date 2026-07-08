@@ -290,6 +290,8 @@ static void App_BatMan_PrintFetDetail(void)
            (battery_status & BQ76952_BATTERY_STATUS_PCHG_MODE_MASK) != 0u ? 1u : 0u,
            (battery_status & BQ76952_BATTERY_STATUS_SLEEP_EN_MASK) != 0u ? 1u : 0u,
            (battery_status & BQ76952_BATTERY_STATUS_POR_MASK) != 0u ? 1u : 0u);
+    printf("BQ SDM:%u\r\n",
+           (battery_status & BQ76952_BATTERY_STATUS_SDM_MASK) != 0u ? 1u : 0u);
 }
 
 void App_BatMan_PrintSnapshot(void)

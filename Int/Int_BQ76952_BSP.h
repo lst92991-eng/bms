@@ -135,6 +135,7 @@
 #define BQ76952_ALARM_ADSCAN_MASK               (0x0002u) /* bit1，ADC scan 状态。 */
 #define BQ76952_ALARM_WAKE_MASK                 (0x0001u) /* bit0，唤醒事件。 */
 
+#define BQ76952_BATTERY_STATUS_SDM_MASK         (0x2000u) /* bit13，Shutdown 命令或 RST_SHUT 引脚导致关断挂起。 */
 #define BQ76952_BATTERY_STATUS_WD_MASK          (0x10u)   /* bit4，上次复位是否由内部 watchdog 触发。 */
 #define BQ76952_BATTERY_STATUS_POR_MASK         (0x08u)   /* bit3，完整复位发生；退出 CONFIG_UPDATE 后清除。 */
 #define BQ76952_BATTERY_STATUS_SLEEP_EN_MASK    (0x04u)   /* bit2，SLEEP 是否被允许。 */
