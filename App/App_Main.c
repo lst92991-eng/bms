@@ -15,9 +15,12 @@
 #include "Int_Led.h"
 #include "main.h"
 
-#define APP_MAIN_BATMAN_TASK_PERIOD_MS     1000u
-#define APP_MAIN_SC8815_TASK_PERIOD_MS     1000u
-#define APP_MAIN_DEBUG_CLI_TASK_PERIOD_MS  20u
+enum
+{
+    APP_MAIN_BATMAN_TASK_PERIOD_MS = 1000u,
+    APP_MAIN_SC8815_TASK_PERIOD_MS = 1000u,
+    APP_MAIN_DEBUG_CLI_TASK_PERIOD_MS = 20u
+};
 
 /**
  * @brief BQ76952 电池监控任务。

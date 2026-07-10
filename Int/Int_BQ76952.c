@@ -5,16 +5,17 @@
 
 #include "Int_BQ76952_BSP.h"
 #include "i2c.h"
-#include "main.h"
 
-#define INT_BQ76952_I2C_ADDR             BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT
-#define INT_BQ76952_I2C_TIMEOUT_MS       (100u)
-#define INT_BQ76952_ECHO_POLL_COUNT      (100u)
-#define INT_BQ76952_CFG_POLL_COUNT       (100u)
-#define INT_BQ76952_POLL_DELAY_MS        (1u)
-#define INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS (2u)
-#define INT_BQ76952_DIRECT_MAX_LEN       (34u)
-#define INT_BQ76952_TRANSFER_MAX_LEN     BQ76952_TRANSFER_BUFFER_SIZE
+enum
+{
+    INT_BQ76952_I2C_TIMEOUT_MS = 100u,
+    INT_BQ76952_ECHO_POLL_COUNT = 100u,
+    INT_BQ76952_CFG_POLL_COUNT = 100u,
+    INT_BQ76952_POLL_DELAY_MS = 1u,
+    INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS = 2u,
+    INT_BQ76952_DIRECT_MAX_LEN = 34u,
+    INT_BQ76952_TRANSFER_MAX_LEN = BQ76952_TRANSFER_BUFFER_SIZE
+};
 
 static bool s_bq76952_crc_enabled = false;
 static uint32_t s_bq76952_last_hal_error = 0u;
@@ -269,11 +270,6 @@ void Int_BQ76952_InitBoard(void)
     s_bq76952_crc_enabled = (BQ76952_I2C_CRC_DEFAULT_ENABLED != 0u);
 }
 
-bool Int_BQ76952_IsAlertAsserted(void)
-{
-    return HAL_GPIO_ReadPin(BQ_INT_GPIO_Port, BQ_INT_Pin) == GPIO_PIN_RESET;
-}
-
 Int_BQ76952_StatusTypeDef Int_BQ76952_Reset(void)
 {
     return Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_RESET);
@@ -292,33 +288,6 @@ void Int_BQ76952_SetCrcEnabled(bool enabled)
 bool Int_BQ76952_IsCrcEnabled(void)
 {
     return s_bq76952_crc_enabled;
-}
-
-Int_BQ76952_StatusTypeDef Int_BQ76952_ProbeDevice(uint32_t *hal_error)
-{
-    HAL_StatusTypeDef hal_status;
-
-    s_bq76952_last_hal_error = 0u;
-    hal_status = HAL_I2C_IsDeviceReady(&hi2c1,
-                                       INT_BQ76952_I2C_ADDR,
-                                       3u,
-                                       INT_BQ76952_I2C_TIMEOUT_MS);
-    if (hal_status != HAL_OK)
-    {
-        Int_BQ76952_RecordHalError();
-        if (hal_error != NULL)
-        {
-            *hal_error = s_bq76952_last_hal_error;
-        }
-        return INT_BQ76952_ERROR_HAL;
-    }
-
-    if (hal_error != NULL)
-    {
-        *hal_error = 0u;
-    }
-
-    return INT_BQ76952_OK;
 }
 
 uint32_t Int_BQ76952_GetLastHalError(void)
@@ -341,7 +310,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data,
     if (!s_bq76952_crc_enabled)
     {
         if (HAL_I2C_Mem_Read(&hi2c1,
-                             INT_BQ76952_I2C_ADDR,
+                             BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT,
                              command,
                              I2C_MEMADD_SIZE_8BIT,
                              data,
@@ -359,7 +328,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data,
         uint8_t rx[INT_BQ76952_DIRECT_MAX_LEN * 2u];
 
         if (HAL_I2C_Mem_Read(&hi2c1,
-                             INT_BQ76952_I2C_ADDR,
+                             BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT,
                              command,
                              I2C_MEMADD_SIZE_8BIT,
                              rx,
@@ -432,7 +401,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDirect(uint8_t command, const uint8_t
     if (!s_bq76952_crc_enabled)
     {
         if (HAL_I2C_Mem_Write(&hi2c1,
-                              INT_BQ76952_I2C_ADDR,
+                              BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT,
                               command,
                               I2C_MEMADD_SIZE_8BIT,
                               (uint8_t *)data,
@@ -470,7 +439,7 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDirect(uint8_t command, const uint8_t
         }
 
         if (HAL_I2C_Master_Transmit(&hi2c1,
-                                    INT_BQ76952_I2C_ADDR,
+                                    BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT,
                                     tx,
                                     (uint16_t)(1u + (len * 2u)),
                                     INT_BQ76952_I2C_TIMEOUT_MS) != HAL_OK)

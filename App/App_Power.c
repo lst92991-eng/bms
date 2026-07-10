@@ -7,26 +7,29 @@
 #include "App_SC8815.h"
 #include "Int_BQ76952_BSP.h"
 
-#define APP_POWER_DISCHARGE_CURRENT_MA          (12000)
-#define APP_POWER_DISCHARGE_OVER_MARGIN_MA      (0)
-#define APP_POWER_CELL_LOW_MV                   (3000u)
-#define APP_POWER_CELL_RECOVER_MV               (3200u)
-#define APP_POWER_CELL_FULL_STOP_MV             (4200u)
-#define APP_POWER_CELL_FULL_RESUME_MV           (4180u)
-#define APP_POWER_TOP_BALANCE_STOP_MV           (4180u)
-#define APP_POWER_TOP_BALANCE_RESUME_MV         (4150u)
-#define APP_POWER_TOP_BALANCE_START_DELTA_MV    (40u)
-#define APP_POWER_TOP_BALANCE_STOP_DELTA_MV     (20u)
-#define APP_POWER_CHARGE_TEMP_MIN_C             (0)
-#define APP_POWER_CHARGE_TEMP_MAX_C             (45)
-#define APP_POWER_DISCHARGE_TEMP_MIN_C          (-20)
-#define APP_POWER_DISCHARGE_TEMP_MAX_C          (60)
-#define APP_POWER_SC_INPUT_VALID_MV             (12000u)
-#define APP_POWER_BQ_WAKE_TIMEOUT_MS            (60000u)
-#define APP_POWER_BQ_SHUTDOWN_ONLINE_RECOVER_MS (3000u)
-#define APP_POWER_PREDISCHARGE_TIME_MS          (5000u)
-#define APP_POWER_BQ_SAFETY_A_SCD_MASK          (0x80u)
-#define APP_POWER_DEBUG_PERIOD_MS               (5000u)
+enum
+{
+    APP_POWER_DISCHARGE_CURRENT_MA = 12000,
+    APP_POWER_DISCHARGE_OVER_MARGIN_MA = 0,
+    APP_POWER_CELL_LOW_MV = 3000u,
+    APP_POWER_CELL_RECOVER_MV = 3200u,
+    APP_POWER_CELL_FULL_STOP_MV = 4200u,
+    APP_POWER_CELL_FULL_RESUME_MV = 4180u,
+    APP_POWER_TOP_BALANCE_STOP_MV = 4180u,
+    APP_POWER_TOP_BALANCE_RESUME_MV = 4150u,
+    APP_POWER_TOP_BALANCE_START_DELTA_MV = 40u,
+    APP_POWER_TOP_BALANCE_STOP_DELTA_MV = 20u,
+    APP_POWER_CHARGE_TEMP_MIN_C = 0,
+    APP_POWER_CHARGE_TEMP_MAX_C = 45,
+    APP_POWER_DISCHARGE_TEMP_MIN_C = -20,
+    APP_POWER_DISCHARGE_TEMP_MAX_C = 60,
+    APP_POWER_SC_INPUT_VALID_MV = 12000u,
+    APP_POWER_BQ_WAKE_TIMEOUT_MS = 60000u,
+    APP_POWER_BQ_SHUTDOWN_ONLINE_RECOVER_MS = 3000u,
+    APP_POWER_PREDISCHARGE_TIME_MS = 5000u,
+    APP_POWER_BQ_SAFETY_A_SCD_MASK = 0x80u,
+    APP_POWER_DEBUG_PERIOD_MS = 5000u
+};
 typedef enum
 {
     APP_POWER_CHARGE_STOP_NONE = 0,
@@ -200,12 +203,6 @@ static void App_Power_PrintSummary(void)
            (unsigned int)cell_delta_mv,
            (long)current_ma,
            (unsigned long)App_SC8815_GetVbusMv());
-}
-
-static void App_Power_PrintDebug(void)
-{
-    App_Power_PrintSeparator("电源");
-    App_Power_PrintSummary();
 }
 
 void App_Power_PrintSnapshot(void)
@@ -522,13 +519,14 @@ void App_Power_Task(uint32_t interval_ms)
         App_Power_SetOutput(true, s_discharge_allowed, s_charge_allowed);
     }
 
-    if (!App_DebugCli_IsVofaStreaming() && !App_DebugCli_IsBqMonitoring())
+    if (!App_DebugCli_IsStreaming())
     {
         s_debug_ms = (uint16_t)(s_debug_ms + interval_ms);
         if (s_debug_ms >= APP_POWER_DEBUG_PERIOD_MS)
         {
             s_debug_ms = 0u;
-            App_Power_PrintDebug();
+            App_Power_PrintSeparator("电源");
+            App_Power_PrintSummary();
         }
     }
 }

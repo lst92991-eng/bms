@@ -516,6 +516,16 @@
               <FilePath>../../App/App_Main.h</FilePath>
             </File>
             <File>
+              <FileName>App_DebugCli.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../App/App_DebugCli.c</FilePath>
+            </File>
+            <File>
+              <FileName>App_DebugCli.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../App/App_DebugCli.h</FilePath>
+            </File>
+            <File>
               <FileName>App_BatMan.c</FileName>
               <FileType>1</FileType>
               <FilePath>../../App/App_BatMan.c</FilePath>

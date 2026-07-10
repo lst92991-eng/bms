@@ -11,10 +11,11 @@
  * 换实测 OCV 曲线、加入 SOC/T 二维参数表，都优先改本模块。
  */
 
-#define COM_BATTERY_PARAM_CELL_COUNT             (6u)
-#define COM_BATTERY_PARAM_CAP_TYP_MAH           (5000u)
-#define COM_BATTERY_PARAM_CELL_FULL_MV          (4200u)
-#define COM_BATTERY_PARAM_PACK_FULL_MV          (25200u)
+enum
+{
+    COM_BATTERY_PARAM_CAP_TYP_MAH = 5000u,
+    COM_BATTERY_PARAM_CELL_FULL_MV = 4200u
+};
 
 uint16_t Com_BatteryParam_GetSoc0p01ByVoltage(uint16_t cell_mv);
 

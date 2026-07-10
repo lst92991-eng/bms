@@ -22,26 +22,6 @@ static uint32_t Com_SOH_AbsCurrentMa(int32_t current_ma)
     return (uint32_t)current_ma;
 }
 
-static void Com_SOH_FillDefaultConfig(Com_SOH_ConfigTypeDef *config)
-{
-    config->capacity_mah = COM_BATTERY_PARAM_CAP_TYP_MAH;
-    config->delta_warn_mv = 80u;
-    config->temp_warn_c = 55;
-    config->cycle_warn_count = 300u;
-}
-
-static void Com_SOH_CheckConfig(Com_SOH_ConfigTypeDef *config)
-{
-    if (config->capacity_mah == 0u)
-    {
-        config->capacity_mah = COM_BATTERY_PARAM_CAP_TYP_MAH;
-    }
-    if (config->cycle_warn_count == 0u)
-    {
-        config->cycle_warn_count = 300u;
-    }
-}
-
 static void Com_SOH_AddWholeMah(float *bucket, uint32_t *total)
 {
     uint32_t whole_mah = (uint32_t)(*bucket);
@@ -102,12 +82,23 @@ static void Com_SOH_UpdateScore(void)
 
 void Com_SOH_Init(const Com_SOH_ConfigTypeDef *config)
 {
-    Com_SOH_FillDefaultConfig(&s_soh.config);
+    s_soh.config.capacity_mah = COM_BATTERY_PARAM_CAP_TYP_MAH;
+    s_soh.config.delta_warn_mv = 80u;
+    s_soh.config.temp_warn_c = 55;
+    s_soh.config.cycle_warn_count = 300u;
+
     if (config != 0)
     {
         s_soh.config = *config;
     }
-    Com_SOH_CheckConfig(&s_soh.config);
+    if (s_soh.config.capacity_mah == 0u)
+    {
+        s_soh.config.capacity_mah = COM_BATTERY_PARAM_CAP_TYP_MAH;
+    }
+    if (s_soh.config.cycle_warn_count == 0u)
+    {
+        s_soh.config.cycle_warn_count = 300u;
+    }
 
     s_soh.result.charge_throughput_mah = 0u;
     s_soh.result.discharge_throughput_mah = 0u;

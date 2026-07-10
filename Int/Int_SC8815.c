@@ -3,10 +3,13 @@
 #include "Int_SC8815_BSP.h"
 #include "main.h"
 
-#define INT_SC8815_REG_MAX                       SC8815_REG_RESERVED_1B
-#define INT_SC8815_CTRL3_STANDBY_CHANGE_MASK     (SC8815_CTRL3_SET_ILIM_BW_SEL_MASK | \
-                                                   SC8815_CTRL3_SET_LOOP_SET_MASK | \
-                                                   SC8815_CTRL3_SET_EOC_SET_MASK)
+enum
+{
+    INT_SC8815_REG_MAX = SC8815_REG_RESERVED_1B,
+    INT_SC8815_CTRL3_STANDBY_CHANGE_MASK = SC8815_CTRL3_SET_ILIM_BW_SEL_MASK |
+                                           SC8815_CTRL3_SET_LOOP_SET_MASK |
+                                           SC8815_CTRL3_SET_EOC_SET_MASK
+};
 
 static bool s_sc8815_standby = true;
 static bool s_sc8815_iic_swapped = (SC8815_PROJECT_IIC_LINE_SWAPPED != 0u);
@@ -22,33 +25,6 @@ static uint32_t Int_SC8815_EnterCritical(void)
 static void Int_SC8815_ExitCritical(uint32_t primask)
 {
     __set_PRIMASK(primask);
-}
-
-static void Int_SC8815_InitGpio(void)
-{
-    GPIO_InitTypeDef gpio = {0};
-
-    __HAL_RCC_GPIOA_CLK_ENABLE();
-    __HAL_RCC_GPIOB_CLK_ENABLE();
-
-    HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port,
-                      SC8815_SW_I2C_SDA_Pin,
-                      GPIO_PIN_SET);
-    HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port,
-                      SC8815_SW_I2C_SCL_Pin,
-                      GPIO_PIN_SET);
-
-    gpio.Pin = SC8815_SW_I2C_SDA_Pin | SC8815_SW_I2C_SCL_Pin;
-    gpio.Mode = GPIO_MODE_OUTPUT_OD;
-    gpio.Pull = GPIO_PULLUP;
-    gpio.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOA, &gpio);
-
-    gpio.Pin = SC8815_PSTOP_Pin | SC8815_CE_N_Pin;
-    gpio.Mode = GPIO_MODE_OUTPUT_PP;
-    gpio.Pull = GPIO_PULLUP;
-    gpio.Speed = GPIO_SPEED_FREQ_LOW;
-    HAL_GPIO_Init(GPIOB, &gpio);
 }
 
 static void Int_SC8815_IicDelay(void)
@@ -167,23 +143,6 @@ static uint8_t Int_SC8815_BusReadByte(bool ack)
     return data;
 }
 
-static bool Int_SC8815_IsRegAddressValid(uint8_t reg)
-{
-    return reg <= INT_SC8815_REG_MAX;
-}
-
-static bool Int_SC8815_IsReadOnlyReg(uint8_t reg)
-{
-    return (reg >= SC8815_REG_VBUS_FB_VALUE) && (reg <= SC8815_REG_STATUS);
-}
-
-static bool Int_SC8815_IsReservedReg(uint8_t reg)
-{
-    return (reg == SC8815_REG_RESERVED_18) ||
-           (reg == SC8815_REG_RESERVED_1A) ||
-           (reg == SC8815_REG_RESERVED_1B);
-}
-
 static uint32_t Int_SC8815_CurrentLimitCodeToMa(uint8_t code,
                                                 uint8_t ratio,
                                                 uint16_t rsense_mohm)
@@ -232,28 +191,19 @@ static uint8_t Int_SC8815_CurrentLimitMaToCode(uint16_t current_ma,
     return code;
 }
 
-static Int_SC8815_StatusTypeDef Int_SC8815_CheckReservedBits(uint8_t old_value,
-                                                             uint8_t new_value,
-                                                             uint8_t reserved_mask)
-{
-    if ((old_value & reserved_mask) != (new_value & reserved_mask))
-    {
-        return INT_SC8815_ERROR_GUARD;
-    }
-
-    return INT_SC8815_OK;
-}
-
 static Int_SC8815_StatusTypeDef Int_SC8815_GuardWrite(uint8_t reg,
                                                       uint8_t old_value,
                                                       uint8_t new_value)
 {
-    if (!Int_SC8815_IsRegAddressValid(reg))
+    if (reg > INT_SC8815_REG_MAX)
     {
         return INT_SC8815_ERROR_PARAM;
     }
 
-    if (Int_SC8815_IsReadOnlyReg(reg) || Int_SC8815_IsReservedReg(reg))
+    if (((reg >= SC8815_REG_VBUS_FB_VALUE) && (reg <= SC8815_REG_STATUS)) ||
+        (reg == SC8815_REG_RESERVED_18) ||
+        (reg == SC8815_REG_RESERVED_1A) ||
+        (reg == SC8815_REG_RESERVED_1B))
     {
         return INT_SC8815_ERROR_GUARD;
     }
@@ -303,9 +253,8 @@ static Int_SC8815_StatusTypeDef Int_SC8815_GuardWrite(uint8_t reg,
             return INT_SC8815_ERROR_STATE;
         }
 
-        if (Int_SC8815_CheckReservedBits(old_value,
-                                         new_value,
-                                         SC8815_RATIO_RESERVED_MASK) != INT_SC8815_OK)
+        if ((old_value & SC8815_RATIO_RESERVED_MASK) !=
+            (new_value & SC8815_RATIO_RESERVED_MASK))
         {
             return INT_SC8815_ERROR_GUARD;
         }
@@ -341,9 +290,8 @@ static Int_SC8815_StatusTypeDef Int_SC8815_GuardWrite(uint8_t reg,
             return INT_SC8815_ERROR_GUARD;
         }
 
-        if (Int_SC8815_CheckReservedBits(old_value,
-                                         new_value,
-                                         SC8815_CTRL0_SET_RESERVED_MASK) != INT_SC8815_OK)
+        if ((old_value & SC8815_CTRL0_SET_RESERVED_MASK) !=
+            (new_value & SC8815_CTRL0_SET_RESERVED_MASK))
         {
             return INT_SC8815_ERROR_GUARD;
         }
@@ -362,9 +310,8 @@ static Int_SC8815_StatusTypeDef Int_SC8815_GuardWrite(uint8_t reg,
             return INT_SC8815_ERROR_GUARD;
         }
 
-        if (Int_SC8815_CheckReservedBits(old_value,
-                                         new_value,
-                                         SC8815_CTRL1_SET_RESERVED_MASK) != INT_SC8815_OK)
+        if ((old_value & SC8815_CTRL1_SET_RESERVED_MASK) !=
+            (new_value & SC8815_CTRL1_SET_RESERVED_MASK))
         {
             return INT_SC8815_ERROR_GUARD;
         }
@@ -378,9 +325,8 @@ static Int_SC8815_StatusTypeDef Int_SC8815_GuardWrite(uint8_t reg,
         break;
 
     case SC8815_REG_CTRL2_SET:
-        if (Int_SC8815_CheckReservedBits(old_value,
-                                         new_value,
-                                         SC8815_CTRL2_SET_RESERVED_MASK) != INT_SC8815_OK)
+        if ((old_value & SC8815_CTRL2_SET_RESERVED_MASK) !=
+            (new_value & SC8815_CTRL2_SET_RESERVED_MASK))
         {
             return INT_SC8815_ERROR_GUARD;
         }
@@ -436,7 +382,7 @@ static Int_SC8815_StatusTypeDef Int_SC8815_ReadRegRawOnce(uint8_t reg, uint8_t *
     uint32_t primask;
     Int_SC8815_StatusTypeDef ret = INT_SC8815_OK;
 
-    if ((value == NULL) || !Int_SC8815_IsRegAddressValid(reg))
+    if ((value == NULL) || (reg > INT_SC8815_REG_MAX))
     {
         return INT_SC8815_ERROR_PARAM;
     }
@@ -475,7 +421,7 @@ static Int_SC8815_StatusTypeDef Int_SC8815_WriteRegRawOnce(uint8_t reg, uint8_t 
     uint32_t primask;
     Int_SC8815_StatusTypeDef ret = INT_SC8815_OK;
 
-    if (!Int_SC8815_IsRegAddressValid(reg))
+    if (reg > INT_SC8815_REG_MAX)
     {
         return INT_SC8815_ERROR_PARAM;
     }
@@ -492,28 +438,6 @@ static Int_SC8815_StatusTypeDef Int_SC8815_WriteRegRawOnce(uint8_t reg, uint8_t 
 
     Int_SC8815_BusStop();
     Int_SC8815_ExitCritical(primask);
-    return ret;
-}
-
-static Int_SC8815_StatusTypeDef Int_SC8815_ProbeAddressRawOnce(uint8_t addr_7bit)
-{
-    uint32_t primask;
-    Int_SC8815_StatusTypeDef ret = INT_SC8815_OK;
-
-    if (addr_7bit > 0x7Fu)
-    {
-        return INT_SC8815_ERROR_PARAM;
-    }
-
-    primask = Int_SC8815_EnterCritical();
-    Int_SC8815_BusStart();
-    if (!Int_SC8815_BusWriteByte((uint8_t)(addr_7bit << 1u)))
-    {
-        ret = INT_SC8815_ERROR_ACK;
-    }
-    Int_SC8815_BusStop();
-    Int_SC8815_ExitCritical(primask);
-
     return ret;
 }
 
@@ -553,18 +477,58 @@ static Int_SC8815_StatusTypeDef Int_SC8815_WriteRegRaw(uint8_t reg, uint8_t valu
     return ret;
 }
 
-static uint16_t Int_SC8815_CombineAdcRaw(uint8_t high, uint8_t low)
+static Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcPair(uint8_t high_reg, uint16_t *raw)
 {
-    return (uint16_t)(((uint16_t)high * SC8815_ADC_HIGH_MULTIPLIER) |
+    uint8_t high;
+    uint8_t low;
+    Int_SC8815_StatusTypeDef ret;
+
+    ret = Int_SC8815_ReadRegRaw(high_reg, &high);
+    if (ret != INT_SC8815_OK)
+    {
+        return ret;
+    }
+
+    /* 五组 ADC 的低 2 bit 寄存器都紧跟在高 8 bit 寄存器之后。 */
+    ret = Int_SC8815_ReadRegRaw((uint8_t)(high_reg + 1u), &low);
+    if (ret != INT_SC8815_OK)
+    {
+        return ret;
+    }
+
+    *raw = (uint16_t)(((uint16_t)high * SC8815_ADC_HIGH_MULTIPLIER) |
                       ((low & SC8815_ADC_LOW2_MASK) >> SC8815_ADC_LOW2_SHIFT));
+    return INT_SC8815_OK;
 }
 
-Int_SC8815_StatusTypeDef Int_SC8815_InitSafe(void)
+void Int_SC8815_InitSafe(void)
 {
+    GPIO_InitTypeDef gpio = {0};
     uint8_t i;
     bool default_swapped;
 
-    Int_SC8815_InitGpio();
+    __HAL_RCC_GPIOA_CLK_ENABLE();
+    __HAL_RCC_GPIOB_CLK_ENABLE();
+
+    /* 先写安全电平再切换输出模式，避免 GPIO 接管瞬间误启动功率级。 */
+    HAL_GPIO_WritePin(SC8815_SW_I2C_SDA_GPIO_Port,
+                      SC8815_SW_I2C_SDA_Pin,
+                      GPIO_PIN_SET);
+    HAL_GPIO_WritePin(SC8815_SW_I2C_SCL_GPIO_Port,
+                      SC8815_SW_I2C_SCL_Pin,
+                      GPIO_PIN_SET);
+
+    gpio.Pin = SC8815_SW_I2C_SDA_Pin | SC8815_SW_I2C_SCL_Pin;
+    gpio.Mode = GPIO_MODE_OUTPUT_OD;
+    gpio.Pull = GPIO_PULLUP;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOA, &gpio);
+
+    gpio.Pin = SC8815_PSTOP_Pin | SC8815_CE_N_Pin;
+    gpio.Mode = GPIO_MODE_OUTPUT_PP;
+    gpio.Pull = GPIO_PULLUP;
+    gpio.Speed = GPIO_SPEED_FREQ_LOW;
+    HAL_GPIO_Init(GPIOB, &gpio);
 
     HAL_GPIO_WritePin(SC8815_PSTOP_GPIO_Port, SC8815_PSTOP_Pin, GPIO_PIN_SET);
     HAL_GPIO_WritePin(SC8815_CE_N_GPIO_Port, SC8815_CE_N_Pin, GPIO_PIN_SET);
@@ -591,32 +555,22 @@ Int_SC8815_StatusTypeDef Int_SC8815_InitSafe(void)
     }
 
     s_sc8815_iic_swapped = default_swapped;
-
-    return INT_SC8815_OK;
 }
 
-Int_SC8815_StatusTypeDef Int_SC8815_SetChipEnabled(bool enabled)
+void Int_SC8815_SetChipEnabled(bool enabled)
 {
     HAL_GPIO_WritePin(SC8815_CE_N_GPIO_Port,
                       SC8815_CE_N_Pin,
                       enabled ? GPIO_PIN_RESET : GPIO_PIN_SET);
 
-    return INT_SC8815_OK;
 }
 
-Int_SC8815_StatusTypeDef Int_SC8815_SetStandby(bool standby)
+void Int_SC8815_SetStandby(bool standby)
 {
     HAL_GPIO_WritePin(SC8815_PSTOP_GPIO_Port,
                       SC8815_PSTOP_Pin,
                       standby ? GPIO_PIN_SET : GPIO_PIN_RESET);
     s_sc8815_standby = standby;
-
-    return INT_SC8815_OK;
-}
-
-Int_SC8815_StatusTypeDef Int_SC8815_ReadReg(uint8_t reg, uint8_t *value)
-{
-    return Int_SC8815_ReadRegRaw(reg, value);
 }
 
 Int_SC8815_StatusTypeDef Int_SC8815_WriteReg(uint8_t reg, uint8_t value)
@@ -698,10 +652,6 @@ Int_SC8815_StatusTypeDef Int_SC8815_SetAdcEnabled(bool enabled)
 Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcRaw(Int_SC8815_AdcChannelTypeDef channel, uint16_t *raw)
 {
     uint8_t high_reg;
-    uint8_t low_reg;
-    uint8_t high;
-    uint8_t low;
-    Int_SC8815_StatusTypeDef ret;
 
     if (raw == NULL)
     {
@@ -712,46 +662,26 @@ Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcRaw(Int_SC8815_AdcChannelTypeDef chan
     {
     case INT_SC8815_ADC_VBUS:
         high_reg = SC8815_REG_VBUS_FB_VALUE;
-        low_reg = SC8815_REG_VBUS_FB_VALUE2;
         break;
 
     case INT_SC8815_ADC_VBAT:
         high_reg = SC8815_REG_VBAT_FB_VALUE;
-        low_reg = SC8815_REG_VBAT_FB_VALUE2;
         break;
 
     case INT_SC8815_ADC_ADIN:
         high_reg = SC8815_REG_ADIN_VALUE;
-        low_reg = SC8815_REG_ADIN_VALUE2;
         break;
 
     default:
         return INT_SC8815_ERROR_PARAM;
     }
 
-    ret = Int_SC8815_ReadRegRaw(high_reg, &high);
-    if (ret != INT_SC8815_OK)
-    {
-        return ret;
-    }
-
-    ret = Int_SC8815_ReadRegRaw(low_reg, &low);
-    if (ret != INT_SC8815_OK)
-    {
-        return ret;
-    }
-
-    *raw = Int_SC8815_CombineAdcRaw(high, low);
-    return INT_SC8815_OK;
+    return Int_SC8815_ReadAdcPair(high_reg, raw);
 }
 
 Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentRaw(Int_SC8815_CurrentChannelTypeDef channel, uint16_t *raw)
 {
     uint8_t high_reg;
-    uint8_t low_reg;
-    uint8_t high;
-    uint8_t low;
-    Int_SC8815_StatusTypeDef ret;
 
     if (raw == NULL)
     {
@@ -762,32 +692,17 @@ Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentRaw(Int_SC8815_CurrentChannelT
     {
     case INT_SC8815_CURRENT_IBUS:
         high_reg = SC8815_REG_IBUS_VALUE;
-        low_reg = SC8815_REG_IBUS_VALUE2;
         break;
 
     case INT_SC8815_CURRENT_IBAT:
         high_reg = SC8815_REG_IBAT_VALUE;
-        low_reg = SC8815_REG_IBAT_VALUE2;
         break;
 
     default:
         return INT_SC8815_ERROR_PARAM;
     }
 
-    ret = Int_SC8815_ReadRegRaw(high_reg, &high);
-    if (ret != INT_SC8815_OK)
-    {
-        return ret;
-    }
-
-    ret = Int_SC8815_ReadRegRaw(low_reg, &low);
-    if (ret != INT_SC8815_OK)
-    {
-        return ret;
-    }
-
-    *raw = Int_SC8815_CombineAdcRaw(high, low);
-    return INT_SC8815_OK;
+    return Int_SC8815_ReadAdcPair(high_reg, raw);
 }
 
 Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcVoltageMv(Int_SC8815_AdcChannelTypeDef channel, uint32_t *mv)
@@ -918,10 +833,23 @@ Int_SC8815_StatusTypeDef Int_SC8815_SetCurrentLimitMa(Int_SC8815_CurrentLimitTyp
 Int_SC8815_StatusTypeDef Int_SC8815_ProbeAddress(uint8_t addr_7bit, bool swapped)
 {
     bool old_swapped = s_sc8815_iic_swapped;
-    Int_SC8815_StatusTypeDef ret;
+    uint32_t primask;
+    Int_SC8815_StatusTypeDef ret = INT_SC8815_OK;
+
+    if (addr_7bit > 0x7Fu)
+    {
+        return INT_SC8815_ERROR_PARAM;
+    }
 
     s_sc8815_iic_swapped = swapped;
-    ret = Int_SC8815_ProbeAddressRawOnce(addr_7bit);
+    primask = Int_SC8815_EnterCritical();
+    Int_SC8815_BusStart();
+    if (!Int_SC8815_BusWriteByte((uint8_t)(addr_7bit << 1u)))
+    {
+        ret = INT_SC8815_ERROR_ACK;
+    }
+    Int_SC8815_BusStop();
+    Int_SC8815_ExitCritical(primask);
     s_sc8815_iic_swapped = old_swapped;
 
     return ret;

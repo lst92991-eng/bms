@@ -1,12 +1,9 @@
-
-
 #include "App_BatMan_Internal.h"
 
 #include <stdio.h>
 
 #include "App_DebugCli.h"
 #include "App_OLED.h"
-#include "Int_BQ76952.h"
 #include "Int_BQ76952_BSP.h"
 
 static uint32_t s_debug_ms = 0u;
@@ -16,85 +13,9 @@ void App_BatMan_ResetDebugState(void)
     s_debug_ms = 0u;
 }
 
-void App_BatMan_ShowIicStatus(bool ok)
-{
-    App_OLED_ShowIicStatus(ok);
-}
-
-void App_BatMan_ShowPowerConfig(bool ok, uint16_t power_config)
-{
-    App_OLED_ShowBqIicPowerConfig(ok, power_config);
-}
-
 void App_BatMan_UpdateRuntimeOledStatus(void)
 {
     App_OLED_ShowIicStatus(!s_comm_fault);
-}
-
-void App_BatMan_PrintDmWrite8Fail(uint16_t address)
-{
-    printf("BQ配置写8位失败 地址:0x%04x\r\n", (unsigned int)address);
-}
-
-void App_BatMan_PrintDmWrite16Fail(uint16_t address)
-{
-    printf("BQ配置写16位失败 地址:0x%04x\r\n", (unsigned int)address);
-}
-
-void App_BatMan_PrintDmWrite32Fail(uint16_t address)
-{
-    printf("BQ配置写32位失败 地址:0x%04x\r\n", (unsigned int)address);
-}
-
-void App_BatMan_PrintBqResetFail(Int_BQ76952_StatusTypeDef ret)
-{
-    printf("BQ复位失败 ret:%d hal:0x%08lx\r\n",
-           (int)ret,
-           (unsigned long)Int_BQ76952_GetLastHalError());
-}
-
-void App_BatMan_PrintBqDeviceFail(Int_BQ76952_StatusTypeDef ret)
-{
-    printf("BQ设备号读取失败 ret:%d hal:0x%08lx\r\n",
-           (int)ret,
-           (unsigned long)Int_BQ76952_GetLastHalError());
-}
-
-void App_BatMan_PrintBqOkDev(uint16_t device_number)
-{
-    printf("BQ通信正常 设备号:0x%04x CRC:%u\r\n",
-           (unsigned int)device_number,
-           Int_BQ76952_IsCrcEnabled() ? 1u : 0u);
-}
-
-void App_BatMan_PrintBqCfgEnterFail(void)
-{
-    printf("BQ配置模式进入失败\r\n");
-}
-
-void App_BatMan_PrintBqCfgWriteFail(void)
-{
-    printf("BQ配置写入失败\r\n");
-}
-
-void App_BatMan_PrintBqCfgExitFail(void)
-{
-    printf("BQ配置模式退出失败\r\n");
-}
-
-void App_BatMan_PrintBqPowerConfig(uint16_t power_config)
-{
-    printf("BQ电源配置:0x%04x\r\n", (unsigned int)power_config);
-}
-
-void App_BatMan_PrintBqFetOffFail(void)
-{
-    printf("BQ主FET默认关断失败\r\n");
-}
-
-void App_BatMan_PrintInitOk(void)
-{
-    printf("电池管理初始化成功\r\n");
 }
 
 static void App_BatMan_PrintSeparator(const char *title)
@@ -368,7 +289,7 @@ void App_BatMan_PrintSnapshot(void)
 
 void App_BatMan_UpdateDebugOutput(uint32_t interval_ms)
 {
-    if (App_DebugCli_IsVofaStreaming() || App_DebugCli_IsBqMonitoring())
+    if (App_DebugCli_IsStreaming())
     {
         return;
     }

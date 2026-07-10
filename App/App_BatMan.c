@@ -5,6 +5,7 @@
 
 #include "Int_BQ76952.h"
 #include "Int_BQ76952_BSP.h"
+#include "App_OLED.h"
 #include "main.h"
 
 /**
@@ -20,8 +21,11 @@
  * 当前实板通信按 non-CRC 模式验证通过；若重新启用 CRC，需要同时确认
  * BQ 侧协议模式、读写帧格式和串口日志结果。
  */
-#define APP_BATMAN_CRC_BOOT_ENABLE              (0u)
-#define APP_BATMAN_BQ_RESET_SETTLE_MS           (200u)
+enum
+{
+    APP_BATMAN_CRC_BOOT_ENABLE = 0u,
+    APP_BATMAN_BQ_RESET_SETTLE_MS = 200u
+};
 
 /*
  * 对外遥测快照。
@@ -224,7 +228,7 @@ void App_BatMan_Init(void)
     /* OLED 先显示 FAIL，直到 Device Number 读取成功。 */
     App_BatMan_ResetState();
     App_BatMan_InitAlgorithms();
-    App_BatMan_ShowIicStatus(false);
+    App_OLED_ShowIicStatus(false);
     printf("电池管理初始化: 状态复位完成\r\n");
 
     /*
@@ -242,7 +246,9 @@ void App_BatMan_Init(void)
     ret = Int_BQ76952_Reset();
     if (ret != INT_BQ76952_OK)
     {
-        App_BatMan_PrintBqResetFail(ret);
+        printf("BQ复位失败 ret:%d hal:0x%08lx\r\n",
+               (int)ret,
+               (unsigned long)Int_BQ76952_GetLastHalError());
         return;
     }
     printf("BQ复位: 完成\r\n");
@@ -262,13 +268,17 @@ void App_BatMan_Init(void)
     ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_DEVICE_NUMBER, data, 2u);
     if (ret != INT_BQ76952_OK)
     {
-        App_BatMan_PrintBqDeviceFail(ret);
+        printf("BQ设备号读取失败 ret:%d hal:0x%08lx\r\n",
+               (int)ret,
+               (unsigned long)Int_BQ76952_GetLastHalError());
         return;
     }
 
     device_number = App_BatMan_ReadU16Le(data);
-    App_BatMan_PrintBqOkDev(device_number);
-    App_BatMan_ShowIicStatus(true);
+    printf("BQ通信正常 设备号:0x%04x CRC:%u\r\n",
+           (unsigned int)device_number,
+           Int_BQ76952_IsCrcEnabled() ? 1u : 0u);
+    App_OLED_ShowIicStatus(true);
 
     /*
      * Data Memory 写入必须包在 ConfigUpdate 内。ConfigUpdate 未退出前，
@@ -277,8 +287,8 @@ void App_BatMan_Init(void)
     printf("BQ配置模式: 进入开始\r\n");
     if (Int_BQ76952_EnterConfigUpdate() != INT_BQ76952_OK)
     {
-        App_BatMan_PrintBqCfgEnterFail();
-        App_BatMan_ShowIicStatus(false);
+        printf("BQ配置模式进入失败\r\n");
+        App_OLED_ShowIicStatus(false);
         return;
     }
     printf("BQ配置模式: 进入完成\r\n");
@@ -286,8 +296,8 @@ void App_BatMan_Init(void)
     printf("BQ配置写入: 开始\r\n");
     if (!App_BatMan_ConfigBq())
     {
-        App_BatMan_PrintBqCfgWriteFail();
-        App_BatMan_ShowIicStatus(false);
+        printf("BQ配置写入失败\r\n");
+        App_OLED_ShowIicStatus(false);
         (void)Int_BQ76952_ExitConfigUpdate();
         return;
     }
@@ -299,15 +309,15 @@ void App_BatMan_Init(void)
     if (Int_BQ76952_ReadDataMemory(BQ76952_DM_POWER_CONFIG, data, 2u) == INT_BQ76952_OK)
     {
         s_power_config = App_BatMan_ReadU16Le(data);
-        App_BatMan_ShowPowerConfig(true, s_power_config);
-        App_BatMan_PrintBqPowerConfig(s_power_config);
+        App_OLED_ShowBqIicPowerConfig(true, s_power_config);
+        printf("BQ电源配置:0x%04x\r\n", (unsigned int)s_power_config);
     }
 
     printf("BQ配置模式: 退出开始\r\n");
     if (Int_BQ76952_ExitConfigUpdate() != INT_BQ76952_OK)
     {
-        App_BatMan_PrintBqCfgExitFail();
-        App_BatMan_ShowIicStatus(false);
+        printf("BQ配置模式退出失败\r\n");
+        App_OLED_ShowIicStatus(false);
         return;
     }
     printf("BQ配置模式: 退出完成\r\n");
@@ -323,7 +333,7 @@ void App_BatMan_Init(void)
         printf("BQ Sleep禁用失败 ret:%d hal:0x%08lx\r\n",
                (int)ret,
                (unsigned long)Int_BQ76952_GetLastHalError());
-        App_BatMan_ShowIicStatus(false);
+        App_OLED_ShowIicStatus(false);
         return;
     }
     printf("BQ Sleep禁用: 完成\r\n");
@@ -337,8 +347,8 @@ void App_BatMan_Init(void)
     printf("BQ主FET默认关断: 开始\r\n");
     if (App_BatMan_KeepMainFetsOff() != INT_BQ76952_OK)
     {
-        App_BatMan_PrintBqFetOffFail();
-        App_BatMan_ShowIicStatus(false);
+        printf("BQ主FET默认关断失败\r\n");
+        App_OLED_ShowIicStatus(false);
         return;
     }
     printf("BQ主FET默认关断: 完成\r\n");
@@ -353,7 +363,7 @@ void App_BatMan_Init(void)
     App_BatMan_UpdateSoc(0u);
     App_BatMan_UpdateBalance(APP_BATMAN_BALANCE_PERIOD_MS);
     App_BatMan_UpdateRuntimeOledStatus();
-    App_BatMan_PrintInitOk();
+    printf("电池管理初始化成功\r\n");
 }
 
 /**

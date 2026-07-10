@@ -6,7 +6,8 @@
 
 void App_DebugCli_Init(void);
 void App_DebugCli_Task(uint16_t interval_ms);
-bool App_DebugCli_IsVofaStreaming(void);
-bool App_DebugCli_IsBqMonitoring(void);
+
+/* true 表示 CLI 正在连续占用串口，生产模块应暂停周期诊断打印。 */
+bool App_DebugCli_IsStreaming(void);
 
 #endif /* APP_DEBUG_CLI_H */

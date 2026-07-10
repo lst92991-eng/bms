@@ -41,12 +41,14 @@
 
 ## 当前下一步
 
-下一轮优先清洗 `Int_BQ76952` 和 `Int_SC8815` 中低风险的通信辅助代码。清洗目标是减少重复、统一错误返回和强化注释边界，不改变 BQ/SC/FET 的任何可观测行为。
+APP、COM、INT 的本轮静态清洗已完成，下一步是保留 Debug CLI 上板回归当前生产链路：冷启动、自动充电、拔充电器放电、SCD 锁存/恢复、OLED 和串口观测全部正常后，再按 `docs/rules/debug_cli_removal.md` 的阶段 A/B 退场。
+
+在上板结果闭环前不继续修改 SOC/SOH/OCV、保护阈值、BQ/SC 寄存器配置或功率状态机。尤其要先决定 `App_Power_ClearDischargeFault()` 的生产恢复入口；该入口未迁移或未明确改为重新上电恢复前，不能删除 Debug CLI。
 
 ## 证据
 
-- Debug CLI 当前由 `App_Main` 创建独立任务，说明它仍是运行期上板工具：`App/App_Main.c:57-69`、`App/App_Main.c:96-97`、`App/App_Main.c:114`。
-- Debug CLI 删除步骤已有单独规则，不能提前执行：`docs/rules/debug_cli_removal.md:15-31`。
-- BQ76952 INT 层承载 direct/subcommand/Data Memory/ConfigUpdate 通信路径：`Int/Int_BQ76952.c:288-648`。
-- SC8815 INT 层承载软 I2C、线序反接兜底、寄存器保护和功率相关引脚：`Int/Int_SC8815.c:27-168`、`Int/Int_SC8815.c:247-431`、`Int/Int_SC8815.c:434-554`。
-- EEPROM 和 OLED 共用 I2C2，清洗 EEPROM/OLED 时要注意总线阻塞：`Int/Int_EEPROM.c:5`、`Int/Int_OLED.c:30`。
+- Debug CLI 当前由 `App_Main` 创建独立任务，说明它仍是运行期上板工具：`App/App_Main.c:65`、`App/App_Main.c:100`、`App/App_Main.c:117`。
+- Debug CLI 删除门禁和两阶段步骤已有单独规则，不能提前执行：`docs/rules/debug_cli_removal.md` 第 2～5 节。
+- BQ76952 INT 层承载 direct/subcommand/Data Memory/ConfigUpdate 通信路径：`Int/Int_BQ76952.c:298`、`Int/Int_BQ76952.c:455-579`。
+- SC8815 INT 层仍保留软 I2C、临界区、线序反接兜底、寄存器写保护和功率相关引脚：`Int/Int_SC8815.c:17-488`、`Int/Int_SC8815.c:504-576`、`Int/Int_SC8815.c:833-875`。
+- EEPROM 和 OLED 共用 I2C2，清洗后两者仍分别通过 `hi2c2` 探测和发送：`Int/Int_EEPROM.c:18`、`Int/Int_OLED.c:30`。

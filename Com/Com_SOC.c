@@ -4,8 +4,12 @@
 
 #include <limits.h>
 
-#define COM_SOC_CELL_MIN_VALID_MV        (2500u)
-#define COM_SOC_CELL_MAX_VALID_MV        (4350u)
+enum
+{
+    COM_SOC_CELL_MIN_VALID_MV = 2500u,
+    COM_SOC_CELL_MAX_VALID_MV = 4350u
+};
+
 #define COM_SOC_P_MIN                    (0.0001f)
 #define COM_SOC_P_MAX                    (400.0f)
 

@@ -8,20 +8,21 @@
  * BQ APP 对外常量。
  * 只保留显示、CAN 或主机日志需要的值；内部调参项留在 App_BatMan.c。
  */
-#define APP_BATMAN_CELL_COUNT                    (6u)
-#define APP_BATMAN_CELL_CAP_TYP_MAH              (5000u)
-#define APP_BATMAN_CELL_FULL_MV                  (4200u)
-#define APP_BATMAN_PACK_FULL_MV                  (25200u)
-#define APP_BATMAN_CELL_VALID_MIN_MV             (2500u)
-#define APP_BATMAN_CELL_VALID_MAX_MV             (4300u)
-#define APP_BATMAN_CURRENT_LOW_CURRENT_A         (0.10f)
-#define APP_BATMAN_DEBUG_PERIOD_MS               (5000u)
+enum
+{
+    APP_BATMAN_CELL_COUNT = 6u,
+    APP_BATMAN_CELL_FULL_MV = 4200u,
+    APP_BATMAN_CELL_VALID_MIN_MV = 2500u,
+    APP_BATMAN_CELL_VALID_MAX_MV = 4300u,
+    APP_BATMAN_DEBUG_PERIOD_MS = 5000u,
+    APP_BATMAN_CAPACITY_MAH = 5000u,
+    APP_BATMAN_CC2_RAW_POLARITY = 1,
+    APP_BATMAN_CC2_RAW_NUMERATOR = 1,
+    APP_BATMAN_CC2_RAW_DENOMINATOR = 1,
+    APP_BATMAN_STACK_RAW_TO_MV = 10u
+};
+
 #define APP_BATMAN_DEFAULT_SOC_PERCENT           (50.0f)
-#define APP_BATMAN_CAPACITY_MAH                  (5000u)
-#define APP_BATMAN_CC2_RAW_POLARITY              (1)
-#define APP_BATMAN_CC2_RAW_NUMERATOR             (1)
-#define APP_BATMAN_CC2_RAW_DENOMINATOR           (1)
-#define APP_BATMAN_STACK_RAW_TO_MV               (10u)
 
 /**
  * @brief 初始化 BQ76952，写入基线 Data Memory，并让主 FET 进入受控默认关断态。

@@ -20,14 +20,17 @@
 #include "main.h"
 #include "usart.h"
 
-#define APP_DEBUG_CLI_LINE_SIZE 80u
-#define APP_DEBUG_CLI_RX_SIZE   128u
-#define APP_DEBUG_CLI_RX_MASK   (APP_DEBUG_CLI_RX_SIZE - 1u)
-#define APP_DEBUG_CLI_VOFA_PERIOD_MS 100u
-#define APP_DEBUG_CLI_BQ_PERIOD_MS 1000u
-#define APP_DEBUG_CLI_BQ_FAST_PERIOD_MS 200u
-#define APP_DEBUG_CLI_PACK_RAW_MAX_MV 5000u
-#define APP_DEBUG_CLI_PDSG_PROBE_COUNT 20u
+enum
+{
+    APP_DEBUG_CLI_LINE_SIZE = 80u,
+    APP_DEBUG_CLI_RX_SIZE = 128u,
+    APP_DEBUG_CLI_RX_MASK = APP_DEBUG_CLI_RX_SIZE - 1u,
+    APP_DEBUG_CLI_VOFA_PERIOD_MS = 100u,
+    APP_DEBUG_CLI_BQ_PERIOD_MS = 1000u,
+    APP_DEBUG_CLI_BQ_FAST_PERIOD_MS = 200u,
+    APP_DEBUG_CLI_PACK_RAW_MAX_MV = 5000u,
+    APP_DEBUG_CLI_PDSG_PROBE_COUNT = 20u
+};
 
 static char s_cli_line[APP_DEBUG_CLI_LINE_SIZE];
 static uint8_t s_cli_pos;
@@ -167,18 +170,6 @@ static void App_DebugCli_PrintSc(void)
            (unsigned long)App_SC8815_GetInputLimitMa(),
            (unsigned int)Int_SC8815_GetBusLevels(),
            Int_SC8815_IsIicLineSwapped() ? 1u : 0u);
-}
-
-static void App_DebugCli_PrintPower(void)
-{
-    App_Power_PrintSnapshot();
-}
-
-static void App_DebugCli_PrintDiag(void)
-{
-    App_DebugCli_PrintPower();
-    App_DebugCli_PrintSc();
-    App_BatMan_PrintSnapshot();
 }
 
 static bool App_DebugCli_ShouldStopBqFast(void)
@@ -328,7 +319,9 @@ static void App_DebugCli_ProcessLine(char *line)
     }
     else if (strcmp(line, "diag") == 0)
     {
-        App_DebugCli_PrintDiag();
+        App_Power_PrintSnapshot();
+        App_DebugCli_PrintSc();
+        App_BatMan_PrintSnapshot();
     }
     else if (strcmp(line, "bq") == 0)
     {
@@ -377,7 +370,7 @@ static void App_DebugCli_ProcessLine(char *line)
     }
     else if (strcmp(line, "power") == 0)
     {
-        App_DebugCli_PrintPower();
+        App_Power_PrintSnapshot();
     }
     else if ((strcmp(line, "fault clear") == 0) ||
              (strcmp(line, "scd clear") == 0) ||
@@ -551,14 +544,9 @@ void App_DebugCli_Task(uint16_t interval_ms)
     }
 }
 
-bool App_DebugCli_IsVofaStreaming(void)
+bool App_DebugCli_IsStreaming(void)
 {
-    return s_vofa_enabled;
-}
-
-bool App_DebugCli_IsBqMonitoring(void)
-{
-    return s_bq_monitor_enabled;
+    return s_vofa_enabled || s_bq_monitor_enabled;
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)

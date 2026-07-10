@@ -20,16 +20,10 @@ typedef enum
  * @brief BQ76952 板级/通信初始化。
  *
  * 只做本项目默认的硬件假设初始化：
- * - 打开 BQ I2C 的 CRC 模式；
+ * - 同步当前实板已验证的 non-CRC I2C 模式；
  * - 不写任何业务寄存器。
  */
 void Int_BQ76952_InitBoard(void);
-
-/**
- * @brief 读取 BMS_INT / ALERT 现状。
- * @return true 表示告警脚被拉低，也就是中断/告警处于有效态。
- */
-bool Int_BQ76952_IsAlertAsserted(void);
 
 /**
  * @brief 复位 BQ76952。
@@ -56,7 +50,6 @@ void Int_BQ76952_SetCrcEnabled(bool enabled);
  * @brief 读取当前驱动是否按 I2C CRC 模式收发。
  */
 bool Int_BQ76952_IsCrcEnabled(void);
-Int_BQ76952_StatusTypeDef Int_BQ76952_ProbeDevice(uint32_t *hal_error);
 uint32_t Int_BQ76952_GetLastHalError(void);
 
 /**

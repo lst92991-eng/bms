@@ -58,18 +58,18 @@ static void App_OLED_Render(bool ok, bool power_valid, uint16_t power_config)
     char power_line[9];
 
     Inf_OLED_Clear();
-    Inf_OLED_ShowString(0u, 0u, (uint8_t *)"BMS24V", 16u, 1u);
-    Inf_OLED_ShowString(0u, 16u, (uint8_t *)"BQ IIC", 16u, 1u);
-    Inf_OLED_ShowString(0u, 32u, ok ? (uint8_t *)"OK" : (uint8_t *)"FAIL", 16u, 1u);
+    Inf_OLED_ShowText16(0u, 0u, "BMS24V");
+    Inf_OLED_ShowText16(0u, 16u, "BQ IIC");
+    Inf_OLED_ShowText16(0u, 32u, ok ? "OK" : "FAIL");
 
     if (ok && power_valid)
     {
         App_OLED_MakePowerConfigLine(power_config, power_line);
-        Inf_OLED_ShowString(0u, 48u, (uint8_t *)power_line, 16u, 1u);
+        Inf_OLED_ShowText16(0u, 48u, power_line);
     }
     else
     {
-        Inf_OLED_ShowString(0u, 48u, (uint8_t *)"PWR:----", 16u, 1u);
+        Inf_OLED_ShowText16(0u, 48u, "PWR:----");
     }
 
     Inf_OLED_Refresh();

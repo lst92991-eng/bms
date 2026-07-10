@@ -49,22 +49,17 @@ typedef struct
  * @brief 进入 SC8815 安全态。
  * @note 只配置 MCU 控制脚到安全电平：PSTOP=standby，#CE=disable；不启动充电。
  */
-Int_SC8815_StatusTypeDef Int_SC8815_InitSafe(void);
+void Int_SC8815_InitSafe(void);
 
 /**
  * @brief 控制 #CE，低有效。
  */
-Int_SC8815_StatusTypeDef Int_SC8815_SetChipEnabled(bool enabled);
+void Int_SC8815_SetChipEnabled(bool enabled);
 
 /**
  * @brief 控制 PSTOP，高电平 standby。
  */
-Int_SC8815_StatusTypeDef Int_SC8815_SetStandby(bool standby);
-
-/**
- * @brief 读取 SC8815 单字节寄存器。
- */
-Int_SC8815_StatusTypeDef Int_SC8815_ReadReg(uint8_t reg, uint8_t *value);
+void Int_SC8815_SetStandby(bool standby);
 
 /**
  * @brief 写 SC8815 单字节寄存器。

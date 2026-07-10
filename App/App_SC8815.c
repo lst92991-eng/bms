@@ -23,8 +23,11 @@
  * - `charge_requested = false`：默认不会自动启动充电。
  */
 
-#define APP_SC8815_DEBUG_PERIOD_MS              (5000u)
-#define APP_SC8815_CHARGE_QUEUE_LEN             (1u)
+enum
+{
+    APP_SC8815_DEBUG_PERIOD_MS = 5000u,
+    APP_SC8815_CHARGE_QUEUE_LEN = 1u
+};
 
 /*
  * SC8815 状态快照。
@@ -65,8 +68,8 @@ static uint16_t s_debug_ms = 0u;
  */
 static void App_SC8815_SetStandbyMonitor(void)
 {
-    (void)Int_SC8815_SetStandby(true);
-    (void)Int_SC8815_SetChipEnabled(true);
+    Int_SC8815_SetStandby(true);
+    Int_SC8815_SetChipEnabled(true);
     /*
      * 本板 24V 输入 PMOS 不是接 PGATE，而是由 GPO->R1->Q4 gate 控制。
      * 回到待机时释放 GPO，避免 SC 停止后输入开关仍被拉低导通。
@@ -94,29 +97,6 @@ static bool App_SC8815_Check(Int_SC8815_StatusTypeDef ret)
     s_sc.comm_ok = false;
     s_sc.last_error = (uint8_t)ret;
     return false;
-}
-
-static void App_SC8815_TaskInitQueue(void)
-{
-    if (s_charge_queue == NULL)
-    {
-        s_charge_queue = xQueueCreate(APP_SC8815_CHARGE_QUEUE_LEN, sizeof(uint8_t));
-    }
-}
-
-static void App_SC8815_LoadChargeRequest(void)
-{
-    uint8_t request;
-
-    if (s_charge_queue == NULL)
-    {
-        return;
-    }
-
-    if (xQueueReceive(s_charge_queue, &request, 0u) == pdPASS)
-    {
-        s_sc.charge_requested = (request != 0u);
-    }
 }
 
 /**
@@ -162,8 +142,8 @@ static void App_SC8815_ApplyChargeRequest(void)
      * 关键寄存器必须在 PSTOP 高电平下配置。INT 层 guard 会拒绝项目禁止位，
      * 例如 OTG/反向输出、关闭关键保护等危险配置。
      */
-    if (!App_SC8815_Check(Int_SC8815_SetStandby(true)) ||
-        !App_SC8815_Check(Int_SC8815_WriteReg(SC8815_REG_VBAT_SET,
+    Int_SC8815_SetStandby(true);
+    if (!App_SC8815_Check(Int_SC8815_WriteReg(SC8815_REG_VBAT_SET,
                                               SC8815_PROJECT_VBAT_SET_VALUE)) ||
         !App_SC8815_Check(Int_SC8815_WriteReg(SC8815_REG_RATIO,
                                               SC8815_PROJECT_RATIO_VALUE)) ||
@@ -200,8 +180,8 @@ static void App_SC8815_ApplyChargeRequest(void)
      * 这是唯一释放充电环路的动作。只有配置写入和项目限流全部成功后，
      * 才允许 PSTOP 拉低。
      */
-    (void)Int_SC8815_SetChipEnabled(true);
-    (void)Int_SC8815_SetStandby(false);
+    Int_SC8815_SetChipEnabled(true);
+    Int_SC8815_SetStandby(false);
     s_sc.chip_enabled = true;
     s_sc.standby = false;
 }
@@ -310,7 +290,7 @@ void App_SC8815_Init(void)
      * InitSafe 先输出 PSTOP=1、CE_N=1，随后只使能芯片并保持 PSTOP=1，
      * 形成“可通信但不充电”的监控态。
      */
-    (void)Int_SC8815_InitSafe();
+    Int_SC8815_InitSafe();
     App_SC8815_SetStandbyMonitor();
 
     /*
@@ -329,12 +309,22 @@ void App_SC8815_Init(void)
  */
 void App_SC8815_Task(uint16_t interval_ms)
 {
-    App_SC8815_TaskInitQueue();
+    uint8_t request;
+
+    if (s_charge_queue == NULL)
+    {
+        s_charge_queue = xQueueCreate(APP_SC8815_CHARGE_QUEUE_LEN, sizeof(request));
+    }
+
     App_SC8815_Sample();
-    App_SC8815_LoadChargeRequest();
+    if ((s_charge_queue != NULL) &&
+        (xQueueReceive(s_charge_queue, &request, 0u) == pdPASS))
+    {
+        s_sc.charge_requested = (request != 0u);
+    }
     App_SC8815_ApplyChargeRequest();
 
-    if (!App_DebugCli_IsVofaStreaming() && !App_DebugCli_IsBqMonitoring())
+    if (!App_DebugCli_IsStreaming())
     {
         s_debug_ms = (uint16_t)(s_debug_ms + interval_ms);
         if (s_debug_ms >= APP_SC8815_DEBUG_PERIOD_MS)
