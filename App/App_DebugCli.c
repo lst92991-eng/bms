@@ -4,10 +4,13 @@
 #include <stdio.h>
 #include <string.h>
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 /*
  * AI bring-up/debug 专用串口入口。
  *
- * 本模块允许临时读取 BQ/SC/Power 状态、输出 VOFA 数据、触发少量手动探测命令。
+ * 本模块允许临时读取 BQ/SC/Power 状态、输出 CSV 数据、触发少量手动探测命令。
  * 生产业务不能依赖这里的命令才能运行；删除步骤见 docs/rules/debug_cli_removal.md。
  */
 #include "App_BatMan.h"
@@ -25,7 +28,7 @@ enum
     APP_DEBUG_CLI_LINE_SIZE = 80u,
     APP_DEBUG_CLI_RX_SIZE = 128u,
     APP_DEBUG_CLI_RX_MASK = APP_DEBUG_CLI_RX_SIZE - 1u,
-    APP_DEBUG_CLI_VOFA_PERIOD_MS = 100u,
+    APP_DEBUG_CLI_CSV_PERIOD_MS = 1000u,
     APP_DEBUG_CLI_BQ_PERIOD_MS = 1000u,
     APP_DEBUG_CLI_BQ_FAST_PERIOD_MS = 200u,
     APP_DEBUG_CLI_PACK_RAW_MAX_MV = 5000u,
@@ -38,8 +41,9 @@ static uint8_t s_rx_byte;
 static uint8_t s_rx_buf[APP_DEBUG_CLI_RX_SIZE];
 static volatile uint8_t s_rx_head;
 static volatile uint8_t s_rx_tail;
-static bool s_vofa_enabled;
-static uint16_t s_vofa_ms;
+static bool s_csv_enabled;
+static bool s_csv_header_pending;
+static uint16_t s_csv_ms;
 static bool s_bq_monitor_enabled;
 static bool s_bq_monitor_stop_on_fault;
 static uint16_t s_bq_monitor_period_ms;
@@ -113,7 +117,7 @@ static void App_DebugCli_Normalize(char *line)
 
 static void App_DebugCli_PrintHelp(void)
 {
-    printf("CLI help: help ping diag bq bq on bqfast on bq off bq shutdown power fault clear scd clear dsg clear pdsg test pdsg probe pdsg off sc scprobe charge on charge off vofa vofa on vofa off\r\n");
+    printf("CLI help: help ping diag bq bq on bqfast on bq off bq shutdown power fault clear scd clear dsg clear pdsg test pdsg probe pdsg off sc scprobe charge on charge off csv csv on csv off\r\n");
 }
 
 static void App_DebugCli_PrintSignedMilli(int32_t milli_value)
@@ -142,18 +146,43 @@ static void App_DebugCli_PrintUnsignedMilli(uint32_t milli_value)
            (unsigned long)(milli_value % 1000u));
 }
 
-static void App_DebugCli_PrintVofaFrame(void)
+static void App_DebugCli_PrintCsvFrame(void)
 {
-    uint32_t vofa_pack_mv = pack_mv;
+    uint16_t csv_cell_mv[APP_BATMAN_CELL_COUNT];
+    uint32_t csv_pack_mv;
+    int32_t csv_current_ma;
+    uint32_t frame_time_ms;
 
-    if ((vofa_pack_mv > 0u) && (vofa_pack_mv < APP_DEBUG_CLI_PACK_RAW_MAX_MV))
+    /*
+     * BatMan 任务会成组更新 PACK、电流和 6 节电压。先复制完整快照，
+     * 避免任务切换发生在多次 printf 之间时，同一 CSV 行混入前后两帧。
+     */
+    taskENTER_CRITICAL();
+    csv_current_ma = current_ma;
+    csv_pack_mv = pack_mv;
+    for (uint8_t i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
     {
-        vofa_pack_mv *= APP_BATMAN_STACK_RAW_TO_MV;
+        csv_cell_mv[i] = cell_mv[i];
+    }
+    taskEXIT_CRITICAL();
+    frame_time_ms = HAL_GetTick();
+
+    if ((csv_pack_mv > 0u) && (csv_pack_mv < APP_DEBUG_CLI_PACK_RAW_MAX_MV))
+    {
+        csv_pack_mv *= APP_BATMAN_STACK_RAW_TO_MV;
     }
 
-    App_DebugCli_PrintSignedMilli(current_ma);
+    /* current/voltage/time 分别按 A/V/s 输出，均保留 3 位小数。 */
+    App_DebugCli_PrintSignedMilli(csv_current_ma);
     printf(",");
-    App_DebugCli_PrintUnsignedMilli(vofa_pack_mv);
+    App_DebugCli_PrintUnsignedMilli(csv_pack_mv);
+    for (uint8_t i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
+    {
+        printf(",");
+        App_DebugCli_PrintUnsignedMilli(csv_cell_mv[i]);
+    }
+    printf(",");
+    App_DebugCli_PrintUnsignedMilli(frame_time_ms);
     printf("\r\n");
 }
 
@@ -329,6 +358,9 @@ static void App_DebugCli_ProcessLine(char *line)
     }
     else if (strcmp(line, "bq on") == 0)
     {
+        s_csv_enabled = false;
+        s_csv_header_pending = false;
+        s_csv_ms = 0u;
         s_bq_monitor_enabled = true;
         s_bq_monitor_stop_on_fault = false;
         s_bq_monitor_period_ms = APP_DEBUG_CLI_BQ_PERIOD_MS;
@@ -338,6 +370,9 @@ static void App_DebugCli_ProcessLine(char *line)
     }
     else if ((strcmp(line, "bqfast on") == 0) || (strcmp(line, "bq fast") == 0))
     {
+        s_csv_enabled = false;
+        s_csv_header_pending = false;
+        s_csv_ms = 0u;
         s_bq_monitor_enabled = true;
         s_bq_monitor_stop_on_fault = true;
         s_bq_monitor_period_ms = APP_DEBUG_CLI_BQ_FAST_PERIOD_MS;
@@ -357,8 +392,9 @@ static void App_DebugCli_ProcessLine(char *line)
         s_bq_monitor_enabled = false;
         s_bq_monitor_stop_on_fault = false;
         s_bq_monitor_ms = 0u;
-        s_vofa_enabled = false;
-        s_vofa_ms = 0u;
+        s_csv_enabled = false;
+        s_csv_header_pending = false;
+        s_csv_ms = 0u;
         if (App_Power_RequestBqShutdown())
         {
             printf("CLI BQ shutdown: 已发送，等待芯片掉电；插入充电器后由BQ_WAKE逻辑尝试唤醒\r\n");
@@ -415,21 +451,25 @@ static void App_DebugCli_ProcessLine(char *line)
     {
         App_DebugCli_PrintScProbe();
     }
-    else if (strcmp(line, "vofa") == 0)
+    else if (strcmp(line, "csv") == 0)
     {
-        App_DebugCli_PrintVofaFrame();
+        App_DebugCli_PrintCsvFrame();
     }
-    else if (strcmp(line, "vofa on") == 0)
+    else if (strcmp(line, "csv on") == 0)
     {
-        s_vofa_enabled = true;
-        s_vofa_ms = APP_DEBUG_CLI_VOFA_PERIOD_MS;
-        printf("CLI vofa:1\r\n");
+        s_bq_monitor_enabled = false;
+        s_bq_monitor_stop_on_fault = false;
+        s_bq_monitor_ms = 0u;
+        s_csv_enabled = true;
+        s_csv_header_pending = true;
+        s_csv_ms = APP_DEBUG_CLI_CSV_PERIOD_MS;
     }
-    else if (strcmp(line, "vofa off") == 0)
+    else if (strcmp(line, "csv off") == 0)
     {
-        s_vofa_enabled = false;
-        s_vofa_ms = 0u;
-        printf("CLI vofa:0\r\n");
+        s_csv_enabled = false;
+        s_csv_header_pending = false;
+        s_csv_ms = 0u;
+        printf("CLI csv:0\r\n");
     }
     else if ((strcmp(line, "charge on") == 0) || (strcmp(line, "sc on") == 0))
     {
@@ -491,8 +531,9 @@ void App_DebugCli_Init(void)
     s_cli_pos = 0u;
     s_rx_head = 0u;
     s_rx_tail = 0u;
-    s_vofa_enabled = false;
-    s_vofa_ms = 0u;
+    s_csv_enabled = true;
+    s_csv_header_pending = true;
+    s_csv_ms = APP_DEBUG_CLI_CSV_PERIOD_MS;
     s_bq_monitor_enabled = false;
     s_bq_monitor_stop_on_fault = false;
     s_bq_monitor_period_ms = APP_DEBUG_CLI_BQ_PERIOD_MS;
@@ -512,17 +553,23 @@ void App_DebugCli_Task(uint16_t interval_ms)
         App_DebugCli_PushByte(byte);
     }
 
-    if (s_vofa_enabled)
+    if (s_csv_enabled && s_csv_header_pending)
     {
-        s_vofa_ms = (uint16_t)(s_vofa_ms + interval_ms);
-        if (s_vofa_ms >= APP_DEBUG_CLI_VOFA_PERIOD_MS)
+        s_csv_header_pending = false;
+        printf("current_a,pack_v,cell1_v,cell2_v,cell3_v,cell4_v,cell5_v,cell6_v,frame_time_s\r\n");
+    }
+
+    if (s_csv_enabled)
+    {
+        s_csv_ms = (uint16_t)(s_csv_ms + interval_ms);
+        if (s_csv_ms >= APP_DEBUG_CLI_CSV_PERIOD_MS)
         {
-            s_vofa_ms = 0u;
-            App_DebugCli_PrintVofaFrame();
+            s_csv_ms = 0u;
+            App_DebugCli_PrintCsvFrame();
         }
     }
 
-    if (s_bq_monitor_enabled && !s_vofa_enabled)
+    if (s_bq_monitor_enabled && !s_csv_enabled)
     {
         s_bq_monitor_ms = (uint16_t)(s_bq_monitor_ms + interval_ms);
         if (s_bq_monitor_ms >= s_bq_monitor_period_ms)
@@ -546,7 +593,7 @@ void App_DebugCli_Task(uint16_t interval_ms)
 
 bool App_DebugCli_IsStreaming(void)
 {
-    return s_vofa_enabled || s_bq_monitor_enabled;
+    return s_csv_enabled || s_bq_monitor_enabled;
 }
 
 void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)

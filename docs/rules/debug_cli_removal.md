@@ -9,7 +9,7 @@
 - 构建入口：`CMakeLists.txt` 和 `bms24v_platform/MDK-ARM/bms24v_platform.uvprojx`。
 - 串口所有权：DebugCLI 实现了 USART1 的 `HAL_UART_RxCpltCallback()`、`HAL_UART_ErrorCallback()`，并维护中断接收环形缓冲区。
 - 周期日志抑制：`App_BatMan_Debug.c`、`App_Power.c`、`App_SC8815.c` 只通过 `App_DebugCli_IsStreaming()` 判断 CLI 是否正在连续占用串口。它只影响日志，不参与充放电判断。
-- AI 命令：`diag`、`bq`、`bq on/off`、`bqfast on`、`power`、`sc`、`scprobe`、`vofa on/off`、`charge on/off`、`fault/scd/dsg clear`、`pdsg test/probe/off`、`bq shutdown`。
+- AI 命令：`diag`、`bq`、`bq on/off`、`bqfast on`、`power`、`sc`、`scprobe`、`csv on/off`、`charge on/off`、`fault/scd/dsg clear`、`pdsg test/probe/off`、`bq shutdown`。CSV 遥测在调度器启动后默认开启。
 
 正常业务路径不应依赖这些命令：BQ 初始化/采样由 `App_BatMan` 运行，SC8815 充电请求由 `App_Power -> App_SC8815_RequestCharge()` 运行，主 FET 由 `App_Power -> App_BatMan_SetMainFets()` 运行。
 
@@ -54,7 +54,7 @@
 删除后执行：
 
 ```powershell
-rg -n "App_DebugCli|debug_cli_task|bqfast|scprobe|pdsg probe|vofa" App Com Int CMakeLists.txt bms24v_platform/MDK-ARM/bms24v_platform.uvprojx
+rg -n "App_DebugCli|debug_cli_task|bqfast|scprobe|pdsg probe|csv on" App Com Int CMakeLists.txt bms24v_platform/MDK-ARM/bms24v_platform.uvprojx
 cmake --build --preset gcc-debug --clean-first
 cmake --build --preset gcc-release --clean-first
 arm-none-eabi-nm build/gcc-release/bms24v_platform.elf | rg "App_DebugCli|debug_cli_task"

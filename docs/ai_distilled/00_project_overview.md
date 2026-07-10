@@ -46,8 +46,8 @@ Confidence: High. Human confirmation: Not needed.
 3. SC8815 INT is documented as EXTI-style but configured as input-only in current code.
    Evidence: `docs/logic/hardware_interface_reservation.md:92,133`, `bms24v_platform/Core/Src/gpio.c:64-68`.
 
-4. SC8815 R17/R18 actual solder state is not confirmed.
-   Evidence: `official_chip_docs_files/README.md:1`, `official_chip_docs_files/full_netlist (4).csv:166-169`.
+4. SC8815 R17/R18 are confirmed as `200kΩ/10kΩ`; resistor tolerance and actual charge cutoff are not yet measured.
+   Evidence: `docs/wordflow/manual_confirmations.md`, `docs/rules/hardware_rules.md:48-49`.
 
 See `08_conflicts_and_unknowns.md` for the auditable list.
 

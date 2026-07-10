@@ -6,7 +6,7 @@
 
 ## 当前约束
 
-- Debug CLI 仍用于 `bqfast on/off`、`vofa on/off`、`fault clear`、`sc`、`bq`、`power` 等上板验证命令。
+- Debug CLI 仍用于默认 CSV 遥测、`csv on/off`、`bqfast on/off`、`fault clear`、`sc`、`bq`、`power` 等上板验证命令。
 - 生产业务不能依赖 Debug CLI 命令才能完成充电、放电、保护恢复或均衡。
 - 清洗过程中不改变充放电、保护、采样、SC8815 请求、BQ FET 控制的可观测行为。
 - 每轮清洗后至少执行 `cmake --build --preset gcc-debug`；触碰功率链路时必须上板复测。

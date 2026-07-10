@@ -51,6 +51,7 @@ This index records the main evidence used by the distilled project rules. Paths 
 | `official_chip_docs_files/README.md:1-4` | Hardware notes: R17/R18 planned values, SC8815 software IIC, old project style reference, 6S 21700 target. |
 | `official_chip_docs_files/full_netlist (4).csv:166-169` | Netlist evidence for R17/R18 current listed values and shunt position. |
 | `official_chip_docs_files/full_netlist (5).csv:7-12` | SC8815 net names for CE_N, PSTOP, PA7 SCL, PA6 SDA, PA5 INT. |
+| `docs/wordflow/manual_confirmations.md` | Current manual hardware facts: BQ shunt R18 and SC8815 control-board VBATS divider R17/R18 are separate designators; SC divider is confirmed as 200kΩ/10kΩ. |
 
 ## BQ76952
 

@@ -144,7 +144,7 @@ App_DebugCli_Init();
 
 1. `batman_task`：1s 周期，先执行 `App_BatMan_Task()` 采样和估算，再执行 `App_Power_Task()` 推进功率策略。这样功率策略读到的是同一周期更新后的 BQ 快照。
 2. `sc8815_task`：1s 周期，读取 SC8815 STATUS/ADC，并处理充电请求状态机。
-3. `debug_cli_task`：20ms 周期，处理 USART1 调试命令和 VOFA/BQ 监控输出。
+3. `debug_cli_task`：20ms 周期，处理 USART1 调试命令和默认 CSV/BQ 监控输出。
 
 ```c
 xTaskCreate(batman_task, "batman_task", 768, NULL, 3, NULL);
@@ -406,11 +406,11 @@ SC8815 是本项目和旧 UPS 文档差别很大的地方。旧文档核心是 U
 
 SC8815 在本项目中只允许做 6S 三元锂充电方向。禁止 OTG、反向输出、反向供电。`#CE` 低有效，高电平 disable；`PSTOP` 高电平 standby，低电平才允许功率级工作。软件初始化必须先建立安全态：`PSTOP=high`、`#CE=high`，不能在 Init 中启动充电。
 
-当前硬件规则还明确指出一个必须上板前确认的风险：SC8815 VBATS 外部分压目标是 R17=100kΩ、R18=5.1kΩ，但当前网表中 R17/R18 仍显示 0Ω；如果两颗 0Ω 同贴，会通过 VBATS 把 BMS+ 短到 GND。
+用户已于 2026-07-10 确认 SC8815 控制板 VBATS 外部分压改为 R17=200kΩ、R18=10kΩ；按 `1.2V × (1 + 200k/10k)` 计算，名义目标为 25.2V。当前网表中的 R17/R18=0Ω 是改板前历史值，不再代表实物。
 
-本节出处：`docs/rules/hardware_rules.md:31-57`、`official_chip_docs_files/full_netlist (5).csv:188-191`、`Int/Int_SC8815_BSP.h:26-82`。
+本节出处：`docs/rules/hardware_rules.md:31-57`、`official_chip_docs_files/full_netlist (5).csv:188-191`、`Int/Int_SC8815_BSP.h:130-140`。
 
-//TODO 此处应该放 SC8815 VBATS 分压实物照片或改焊确认图，用于证明 R17/R18 不会把 BMS+ 短到 GND。当前可引用的文字证据是 `docs/rules/hardware_rules.md:48-49` 和 `official_chip_docs_files/full_netlist (5).csv:188-191`。
+//TODO 此处补充 SC8815 VBATS 分压实物照片，并记录 R17/R18 精度、满充附近 VBATS 电压和实际截止电压。当前文字证据见 `docs/wordflow/manual_confirmations.md` 和 `docs/rules/hardware_rules.md:48-49`。
 
 ## 9. SC8815 接口层与充电请求状态机
 
@@ -581,7 +581,9 @@ EEPROM 按 M24C64 8KB、32B/page、A0/A1/A2 接 GND、7-bit 地址 0x50 实现�
 
 ### 11.4 USART1 Debug CLI
 
-Debug CLI 是当前 bring-up 的主要人工验证入口。已有 help 文本和命令包括 `diag`、`bq`、`bqfast`、`sc`、`scprobe`、`charge on/off`、`vofa`、`pdsg probe` 等。初版上板时，不要先追求 CAN 协议闭环，先用 CLI 把 BQ Device Number、SC STATUS/ADC、电流方向和 FET 状态确认下来。
+Debug CLI 是当前 bring-up 的主要人工验证入口。已有 help 文本和命令包括 `diag`、`bq`、`bqfast`、`sc`、`scprobe`、`charge on/off`、`csv on/off`、`pdsg probe` 等。初版上板时，不要先追求 CAN 协议闭环，先用 CLI 把 BQ Device Number、SC STATUS/ADC、电流方向和 FET 状态确认下来。
+
+CSV 遥测默认开启：调度器启动后先输出表头，随后每 1s 输出 `current_a,pack_v,cell1_v...cell6_v,frame_time_s`，与 BQ 快照更新周期一致。单体电压按物理 Cell1～Cell6 输出；发送 `csv off` 可暂停并恢复普通诊断打印，发送 `csv on` 会重新输出表头并继续遥测。`bq on`/`bqfast on` 会自动暂停 CSV，避免两种连续输出交叉。
 
 出处：`App/App_DebugCli.c:111-181`、`App/App_DebugCli.c:184-216`、`App/App_DebugCli.c:253-330`、`App/App_DebugCli.c:500-587`。
 
@@ -599,7 +601,7 @@ Debug CLI 是当前 bring-up 的主要人工验证入口。已有 help 文本和
 
 初版 bring-up 建议按下面顺序做：
 
-1. 上电前确认 SC8815 VBATS 分压实物状态，R17/R18 不能形成 BMS+ 到 GND 的短路。
+1. 上电前复核 SC8815 VBATS 分压为 R17=200kΩ、R18=10kΩ，并确认焊接无短路。
 2. 使用限流电源给控制板 24V_IN 供电，先确认 5V、3V3 和 MCU 启动打印。
 3. 打开串口，确认出现平台启动打印和 `App_Main` 初始化日志。
 4. 用 `sc`/`scprobe` 看 SC8815 通信、AC、fault、VBUS/VBAT/IBUS/IBAT。
@@ -613,7 +615,7 @@ Debug CLI 是当前 bring-up 的主要人工验证入口。已有 help 文本和
 | ID | Unknown | 当前证据缺口 | 为什么重要 | 下一步 |
 | --- | --- | --- | --- | --- |
 | U-001 | BQ CC2 电流符号、零点、实测增益 | 阻值已按用户确认的 5mΩ 处理，但没有小电流充/放电实测记录 | SOC、电源状态机和限流方向仍可能受极性/零点影响 | 限流电源 + 电子负载做小电流充/放电，记录 raw/current_ma |
-| U-002 | SC8815 VBATS 分压实物状态 | 规则要求 100k/5.1k，但当前网表仍显示 R17/R18=0Ω | 双 0Ω 同贴会造成 BMS+ 到 GND 风险 | 上电前拍照/万用表确认改焊或 DNP |
+| U-002 | SC8815 VBATS 实际截止电压 | 用户已确认 R17/R18=200kΩ/10kΩ，但电阻精度与截止实测未记录 | 名义 25.2V 可能受基准和分压误差影响 | 限流上电，测量 VBATS、PACK 总压及最高单体电压 |
 | U-003 | BQ TS1/TS3 NTC 型号、阻值、B 值、分压参数 | 硬件规则只说明 TS1/TS3 靠近低边采样电阻，参数未闭环 | 温度阈值、SOH、热保护和日志可信度依赖它 | 查 BOM/实物/模块资料并更新规则 |
 | U-004 | OLED I2C 地址 | 代码有地址实现，但网表不能证明模块实际地址 | OLED 可能不显示或与 EEPROM 地址/总线冲突 | 上板 I2C 扫描 |
 | U-005 | CAN 应用协议 | 只有 FDCAN transport，缺 ID、字节序、缩放和控制命令 ICD | 无法写上位机/整车通信文档 | 在 `docs/logic` 建 CAN ICD |
@@ -625,7 +627,7 @@ Debug CLI 是当前 bring-up 的主要人工验证入口。已有 help 文本和
 | --- | --- | --- | --- | --- |
 | C-001 | 早期蒸馏文档把当前固件描述为 bare-metal，但当前源码已创建 FreeRTOS 任务 | `docs/ai_distilled/00_project_overview.md:22` | `App/App_Main.c:112-117`、`bms24v_platform/MDK-ARM/FreeRTOS/include/FreeRTOSConfig.h:19` | 本文以当前源码为准 |
 | C-002 | SC8815 网络名像 I2C3，但项目规则和代码要求 PA6/PA7 软件 IIC并处理线序问题 | `official_chip_docs_files/full_netlist (5).csv:10-11` | `docs/rules/hardware_rules.md:35-36`、`Int/Int_SC8815_BSP.h:31-41`、`Int/Int_SC8815.c:11-12` | 本文按软件 IIC 写 |
-| C-003 | SC8815 VBATS 分压目标与当前网表值冲突 | 目标：`docs/rules/hardware_rules.md:48` | 网表：`official_chip_docs_files/full_netlist (5).csv:188-191` | 上电前必须人工确认实物 |
+| C-003 | SC8815 VBATS 分压实物与历史网表冲突 | 当前确认：`docs/wordflow/manual_confirmations.md`、`docs/rules/hardware_rules.md:48` | 改板前网表：`official_chip_docs_files/full_netlist (5).csv:188-191` | 按 200kΩ/10kΩ 执行，网表仅保留为历史证据；上板测量实际截止电压 |
 | C-004 | BQ CRC 默认状态需要与实物确认 | 规则：`docs/rules/hardware_rules.md:72` | 代码保留可切换策略：`App/App_BatMan.c:230-236`、`Int/Int_BQ76952.c:267-292` | bring-up 时用 Device Number/CRC 错误日志确认 |
 | C-005 | 旧 BQ76930 寄存器讲法不能迁移到 BQ76952 | 旧 Word 段落 454-918 讲 BQ76930 单字节寄存器 | 当前接口：`Int/Int_BQ76952.h:63-121`、迁移说明 `official_chip_docs_files/BQ76930_to_BQ76952_逻辑替换设计说明.md:58-77` | 本文按 BQ76952 direct/subcommand/Data Memory 写 |
 | C-006 | 旧网表/迁移说明写 R18=0.5mΩ，但用户已确认按 5mΩ，且当前代码也按 5mΩ 配置 | 旧资料：`official_chip_docs_files/full_netlist (4).csv:168-169`、`official_chip_docs_files/BQ76930_to_BQ76952_逻辑替换设计说明.md:48` | 当前确认/代码：`docs/wordflow/manual_confirmations.md:7`、`docs/rules/hardware_rules.md:81`、`Int/Int_BQ76952_BSP.h:17`、`App/App_BatMan_Config.c:30-41` | 阻值按 5mΩ 执行；旧资料后续同步 |
