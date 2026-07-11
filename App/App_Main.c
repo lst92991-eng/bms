@@ -3,6 +3,7 @@
 #include "FreeRTOS.h"
 #include "task.h"
 
+#include <stdbool.h>
 #include <stdio.h>
 
 #include "App_BatMan.h"
@@ -30,13 +31,16 @@ enum
  */
 static void batman_task(void *arg)
 {
+    const TickType_t period_ticks = pdMS_TO_TICKS(APP_MAIN_BATMAN_TASK_PERIOD_MS);
+    TickType_t last_wake_time = xTaskGetTickCount();
+
     (void)arg;
 
     while (1)
     {
         App_BatMan_Task(APP_MAIN_BATMAN_TASK_PERIOD_MS);
         App_Power_Task(APP_MAIN_BATMAN_TASK_PERIOD_MS);
-        vTaskDelay(APP_MAIN_BATMAN_TASK_PERIOD_MS);
+        vTaskDelayUntil(&last_wake_time, period_ticks);
     }
 }
 
@@ -48,12 +52,15 @@ static void batman_task(void *arg)
  */
 static void sc8815_task(void *arg)
 {
+    const TickType_t period_ticks = pdMS_TO_TICKS(APP_MAIN_SC8815_TASK_PERIOD_MS);
+    TickType_t last_wake_time = xTaskGetTickCount();
+
     (void)arg;
 
     while (1)
     {
         App_SC8815_Task(APP_MAIN_SC8815_TASK_PERIOD_MS);
-        vTaskDelay(APP_MAIN_SC8815_TASK_PERIOD_MS);
+        vTaskDelayUntil(&last_wake_time, period_ticks);
     }
 }
 
@@ -64,12 +71,15 @@ static void sc8815_task(void *arg)
  */
 static void debug_cli_task(void *arg)
 {
+    const TickType_t period_ticks = pdMS_TO_TICKS(APP_MAIN_DEBUG_CLI_TASK_PERIOD_MS);
+    TickType_t last_wake_time = xTaskGetTickCount();
+
     (void)arg;
 
     while (1)
     {
         App_DebugCli_Task(APP_MAIN_DEBUG_CLI_TASK_PERIOD_MS);
-        vTaskDelay(APP_MAIN_DEBUG_CLI_TASK_PERIOD_MS);
+        vTaskDelayUntil(&last_wake_time, period_ticks);
     }
 }
 
@@ -77,16 +87,31 @@ static void debug_cli_task(void *arg)
  * @brief 启动前的 APP/INT 层初始化。
  *
  * 统一在调度器启动前完成硬件接口初始化，可以避免多个任务同时抢 I2C/SPI/CAN
- * bring-up。功率相关模块只在 BQ/APP 无故障时释放主 FET，SC8815 默认不请求充电。
+ * bring-up。功率相关模块始终先进入安全态；CAN 或 EEPROM 任一必需外设初始化
+ * 失败时，不创建业务任务、不进入正常 RUN。
+ *
+ * @return true 表示所有必需外设初始化成功，可以启动业务任务。
  */
-static void App_Main_Init(void)
+static bool App_Main_Init(void)
 {
+    bool required_peripherals_ok = true;
+
     printf("APP初始化: LED\r\n");
     Int_Led_Init();
+
     printf("APP初始化: CANFD\r\n");
-    (void)Int_CanFd_Init();
+    if (Int_CanFd_Init() != INT_CANFD_OK)
+    {
+        required_peripherals_ok = false;
+        printf("APP初始化失败: CANFD\r\n");
+    }
+
     printf("APP初始化: EEPROM\r\n");
-    (void)Int_EEPROM_Init();
+    if (Int_EEPROM_Init() != INT_EEPROM_OK)
+    {
+        required_peripherals_ok = false;
+        printf("APP初始化失败: EEPROM\r\n");
+    }
 
     printf("APP初始化: OLED\r\n");
     App_OLED_Init();
@@ -94,11 +119,28 @@ static void App_Main_Init(void)
     App_SC8815_Init();
     printf("APP初始化: 电池管理\r\n");
     App_BatMan_Init();
+
+    if (!required_peripherals_ok)
+    {
+        /*
+         * 即使非功率外设失败，也必须先把两条功率链路收回安全态，再停在
+         * 调度器启动之前。这样不会出现“部分初始化后仍然进入 RUN”的状态。
+         */
+        App_SC8815_RequestCharge(false);
+        if (!App_BatMan_AllMainFetsOff())
+        {
+            printf("APP安全停机: BQ主FET关断命令失败\r\n");
+        }
+        printf("APP初始化终止: 必需外设失败，禁止进入RUN\r\n");
+        return false;
+    }
+
     printf("APP初始化: 电源管理\r\n");
     App_Power_Init();
     printf("APP init CLI\r\n");
     App_DebugCli_Init();
     printf("APP初始化: 完成\r\n");
+    return true;
 }
 
 /**
@@ -109,7 +151,13 @@ static void App_Main_Init(void)
  */
 void App_Main(void)
 {
-    App_Main_Init();
+    if (!App_Main_Init())
+    {
+        printf("RTOS: 未启动，系统保持安全停机\r\n");
+        while (1)
+        {
+        }
+    }
 
     printf("RTOS: 创建任务\r\n");
     xTaskCreate(batman_task, "batman_task", 768, NULL, 3, NULL);
