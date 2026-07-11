@@ -12,7 +12,9 @@ typedef enum
     APP_POWER_STATE_LOW,
     APP_POWER_STATE_BQ_WAKE,
     APP_POWER_STATE_BQ_SHUTDOWN,
-    APP_POWER_STATE_FAULT
+    APP_POWER_STATE_FAULT,
+    /* 追加在末尾以保持既有状态数值不变。 */
+    APP_POWER_STATE_PREDISCHARGE
 } App_Power_StateTypeDef;
 
 void App_Power_Init(void);
