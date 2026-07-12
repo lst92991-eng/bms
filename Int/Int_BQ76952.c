@@ -455,11 +455,19 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDirect(uint8_t command, const uint8_t
 Int_BQ76952_StatusTypeDef Int_BQ76952_SendSubcommand(uint16_t subcommand)
 {
     uint8_t data[2];
+    Int_BQ76952_StatusTypeDef ret;
 
     data[0] = (uint8_t)(subcommand & 0xFFu);
     data[1] = (uint8_t)(subcommand >> 8u);
 
-    return Int_BQ76952_WriteDirect(BQ76952_SUBCMD_ADDR_LSB, data, 2u);
+    ret = Int_BQ76952_WriteDirect(BQ76952_SUBCMD_ADDR_LSB, data, 2u);
+    if (ret == INT_BQ76952_OK)
+    {
+        /* TRM 命令执行时间约 0.5 ms；完成前不能紧接下一条 0x3E/0x3F 命令。 */
+        HAL_Delay(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS);
+    }
+
+    return ret;
 }
 
 Int_BQ76952_StatusTypeDef Int_BQ76952_ReadSubcommand(uint16_t subcommand, uint8_t *data, uint8_t len)
@@ -489,7 +497,15 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteSubcommandData(uint16_t subcommand,
                                                           const uint8_t *data,
                                                           uint8_t len)
 {
-    return Int_BQ76952_WriteTransfer(subcommand, data, len);
+    Int_BQ76952_StatusTypeDef ret = Int_BQ76952_WriteTransfer(subcommand, data, len);
+
+    if (ret == INT_BQ76952_OK)
+    {
+        /* 等待 BQ 提交带数据子命令，保证调用者返回后可安全发下一条命令。 */
+        HAL_Delay(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS);
+    }
+
+    return ret;
 }
 
 Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDataMemory(uint16_t address, uint8_t *data, uint8_t len)

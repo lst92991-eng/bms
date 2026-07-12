@@ -26,7 +26,9 @@ enum
     APP_POWER_SC_INPUT_VALID_MV = 12000u,
     APP_POWER_BQ_WAKE_TIMEOUT_MS = 60000u,
     APP_POWER_BQ_SHUTDOWN_ONLINE_RECOVER_MS = 3000u,
-    APP_POWER_PREDISCHARGE_TIME_MS = 5000u,
+    APP_POWER_PREDISCHARGE_OBSERVE_MIN_MS = 1000u,
+    APP_POWER_PREDISCHARGE_START_TIMEOUT_MS = 2000u,
+    APP_POWER_PREDISCHARGE_SEQUENCE_TIMEOUT_MS = 5000u,
     APP_POWER_BQ_SAFETY_A_SCD_MASK = 0x80u,
     APP_POWER_DEBUG_PERIOD_MS = 5000u
 };
@@ -48,11 +50,20 @@ static bool s_output_synced;
 static bool s_charge_full_latched;
 static App_Power_ChargeStopReasonTypeDef s_charge_stop_reason;
 static bool s_discharge_scd_latched;
+static bool s_discharge_path_fault_latched;
+static bool s_discharge_rearm_required;
 static bool s_low_power_sound_played;
 static bool s_bq_shutdown_seen_offline;
 static uint32_t s_bq_wake_ms;
 static uint16_t s_predischarge_ms;
+static uint16_t s_predischarge_wait_ms;
 static uint16_t s_debug_ms;
+
+static void App_Power_ResetDischargeSequence(void)
+{
+    s_predischarge_ms = 0u;
+    s_predischarge_wait_ms = 0u;
+}
 
 static void App_Power_SetOutput(bool charge_fet_enable,
                                 bool discharge_enable,
@@ -92,6 +103,43 @@ static void App_Power_SetOutput(bool charge_fet_enable,
     s_output_charge = charge_fet_enable;
     s_output_discharge = discharge_enable;
     s_output_predischarge = false;
+    s_output_sc_charge = sc_charge_enable;
+    s_output_synced = true;
+}
+
+static void App_Power_SetPreDischarge(bool charge_fet_enable,
+                                      bool sc_charge_enable)
+{
+    sc_charge_enable = charge_fet_enable && sc_charge_enable;
+
+    if (s_output_synced &&
+        (s_output_charge == charge_fet_enable) &&
+        !s_output_discharge &&
+        (s_output_sc_charge == sc_charge_enable) &&
+        s_output_predischarge)
+    {
+        return;
+    }
+
+    if (!sc_charge_enable)
+    {
+        App_SC8815_RequestCharge(false);
+    }
+
+    if (!App_BatMan_SetPreDischargeFet(charge_fet_enable))
+    {
+        App_SC8815_RequestCharge(false);
+        s_charge_allowed = false;
+        s_discharge_allowed = false;
+        s_output_synced = false;
+        s_power_state = APP_POWER_STATE_FAULT;
+        return;
+    }
+
+    App_SC8815_RequestCharge(sc_charge_enable);
+    s_output_charge = charge_fet_enable;
+    s_output_discharge = false;
+    s_output_predischarge = true;
     s_output_sc_charge = sc_charge_enable;
     s_output_synced = true;
 }
@@ -136,6 +184,8 @@ bool App_Power_RequestBqShutdown(void)
     s_output_synced = false;
     s_bq_shutdown_seen_offline = false;
     s_bq_wake_ms = 0u;
+    s_discharge_rearm_required = false;
+    App_Power_ResetDischargeSequence();
 
     if (!App_BatMan_RequestShutdown())
     {
@@ -152,7 +202,8 @@ static void App_Power_UpdateWakeState(uint32_t interval_ms,
                                       bool sc_charge_ok)
 {
     s_discharge_allowed = false;
-    s_predischarge_ms = 0u;
+    s_discharge_rearm_required = false;
+    App_Power_ResetDischargeSequence();
     s_charge_allowed = input_ok && sc_charge_ok;
 
     if (s_charge_allowed)
@@ -192,12 +243,13 @@ static void App_Power_PrintSeparator(const char *title)
 
 static void App_Power_PrintSummary(void)
 {
-    printf("电源 摘要 状态:%u 充:%u 放:%u 预:%u SCD锁存:%u 电芯:%u/%u 压差:%u 电流:%ldmA VBUS:%lu\r\n",
+    printf("电源 摘要 状态:%u 充:%u 放:%u 预:%u SCD锁存:%u 路径故障:%u 电芯:%u/%u 压差:%u 电流:%ldmA VBUS:%lu\r\n",
            (unsigned int)s_power_state,
            s_charge_allowed ? 1u : 0u,
            s_discharge_allowed ? 1u : 0u,
            s_output_predischarge ? 1u : 0u,
            s_discharge_scd_latched ? 1u : 0u,
+           s_discharge_path_fault_latched ? 1u : 0u,
            (unsigned int)cell_min_mv,
            (unsigned int)cell_max_mv,
            (unsigned int)cell_delta_mv,
@@ -209,17 +261,20 @@ void App_Power_PrintSnapshot(void)
 {
     App_Power_PrintSeparator("电源详细");
     App_Power_PrintSummary();
-    printf("电源细节 输出同步:%u 输出充:%u 输出放:%u 预放输出:%u 预放计时:%u/%u ms BQ唤醒:%lu/%lu ms 充电停因:%u SCD锁存:%u 软件放电限流:%u mA\r\n",
+    printf("电源细节 输出同步:%u 输出充:%u 输出放:%u 预放输出:%u 预放观测:%u/%u ms 预放等待:%u/%u ms BQ唤醒:%lu/%lu ms 充电停因:%u SCD锁存:%u 路径故障:%u 软件放电限流:%u mA\r\n",
            s_output_synced ? 1u : 0u,
            s_output_charge ? 1u : 0u,
            s_output_discharge ? 1u : 0u,
            s_output_predischarge ? 1u : 0u,
            (unsigned int)s_predischarge_ms,
-           (unsigned int)APP_POWER_PREDISCHARGE_TIME_MS,
+           (unsigned int)APP_POWER_PREDISCHARGE_OBSERVE_MIN_MS,
+           (unsigned int)s_predischarge_wait_ms,
+           (unsigned int)APP_POWER_PREDISCHARGE_SEQUENCE_TIMEOUT_MS,
            (unsigned long)s_bq_wake_ms,
            (unsigned long)APP_POWER_BQ_WAKE_TIMEOUT_MS,
            (unsigned int)s_charge_stop_reason,
            s_discharge_scd_latched ? 1u : 0u,
+           s_discharge_path_fault_latched ? 1u : 0u,
            (unsigned int)APP_POWER_DISCHARGE_CURRENT_MA);
 }
 
@@ -259,6 +314,8 @@ void App_Power_PrintStopReason(void)
     App_Power_PrintReasonFlag(!cell_ok, "电芯采样不在有效范围，电源状态机不允许继续放电");
     App_Power_PrintReasonFlag(fault_active, "BQ/APP总故障置位，电源状态机进入FAULT");
     App_Power_PrintReasonFlag(s_discharge_scd_latched, "APP已经锁存SCD，需排查后发送 fault clear");
+    App_Power_PrintReasonFlag(s_discharge_path_fault_latched,
+                              "预放电路径未在超时内读回CHG/PDSG导通，主DSG保持关闭");
     App_Power_PrintReasonFlag(cell_min_mv <= APP_POWER_CELL_LOW_MV, "最低单体达到低电压阈值，APP关闭放电");
     App_Power_PrintReasonFlag((s_power_state == APP_POWER_STATE_MONITOR) &&
                               (cell_min_rc_mv < APP_POWER_CELL_RECOVER_MV),
@@ -276,7 +333,9 @@ bool App_Power_ClearDischargeFault(void)
     }
 
     s_discharge_scd_latched = false;
-    s_predischarge_ms = 0u;
+    s_discharge_path_fault_latched = false;
+    s_discharge_rearm_required = false;
+    App_Power_ResetDischargeSequence();
     return true;
 }
 
@@ -293,31 +352,22 @@ void App_Power_Init(void)
     s_charge_full_latched = false;
     s_charge_stop_reason = APP_POWER_CHARGE_STOP_NONE;
     s_discharge_scd_latched = false;
+    s_discharge_path_fault_latched = false;
+    s_discharge_rearm_required = false;
     s_low_power_sound_played = false;
     s_bq_shutdown_seen_offline = false;
     s_bq_wake_ms = 0u;
-    s_predischarge_ms = 0u;
+    App_Power_ResetDischargeSequence();
     s_debug_ms = 0u;
 
+    /* App_BatMan 初始化已建立全 FET 关断态，首帧有效采样后再进入预放电。 */
     App_SC8815_RequestCharge(false);
-    if ((cell_min_mv >= APP_BATMAN_CELL_VALID_MIN_MV) &&
-        (cell_max_mv <= APP_BATMAN_CELL_VALID_MAX_MV) &&
-        !fault_active)
-    {
-        if (App_BatMan_SetMainFets(true, true))
-        {
-            s_output_charge = true;
-            s_output_discharge = true;
-            s_output_predischarge = false;
-            s_output_sc_charge = false;
-            s_output_synced = true;
-        }
-    }
 }
 
 void App_Power_Task(uint32_t interval_ms)
 {
     bool cell_ok;
+    bool charger_present;
     bool input_ok;
     bool sc_charge_ok;
     bool charge_temp_ok;
@@ -330,8 +380,9 @@ void App_Power_Task(uint32_t interval_ms)
     cell_ok = bq_online &&
               ((cell_min_mv >= APP_BATMAN_CELL_VALID_MIN_MV) &&
                (cell_max_mv <= APP_BATMAN_CELL_VALID_MAX_MV));
-    input_ok = (App_SC8815_IsAcOk() ||
-                (App_SC8815_GetVbusMv() >= APP_POWER_SC_INPUT_VALID_MV));
+    charger_present = App_SC8815_IsAcOk();
+    input_ok = (charger_present ||
+                 (App_SC8815_GetVbusMv() >= APP_POWER_SC_INPUT_VALID_MV));
     sc_charge_ok = !App_SC8815_HasFault();
     charge_temp_ok = ((temp_cell_c >= APP_POWER_CHARGE_TEMP_MIN_C) &&
                       (temp_cell_c <= APP_POWER_CHARGE_TEMP_MAX_C));
@@ -398,14 +449,16 @@ void App_Power_Task(uint32_t interval_ms)
         s_power_state = APP_POWER_STATE_BQ_SHUTDOWN;
         s_charge_allowed = false;
         s_discharge_allowed = false;
-        s_predischarge_ms = 0u;
+        s_discharge_rearm_required = false;
+        App_Power_ResetDischargeSequence();
         App_Power_SetScWakeCharge(false);
     }
     else if (s_power_state == APP_POWER_STATE_BQ_SHUTDOWN)
     {
-        s_predischarge_ms = 0u;
+        App_Power_ResetDischargeSequence();
         s_charge_allowed = false;
         s_discharge_allowed = false;
+        s_discharge_rearm_required = false;
 
         if (!cell_ok)
         {
@@ -467,56 +520,179 @@ void App_Power_Task(uint32_t interval_ms)
     else if (fault_active)
     {
         s_bq_wake_ms = 0u;
-        s_predischarge_ms = 0u;
+        App_Power_ResetDischargeSequence();
         s_power_state = APP_POWER_STATE_FAULT;
         s_charge_allowed = false;
         s_discharge_allowed = false;
         s_low_power_sound_played = false;
+        s_discharge_rearm_required = false;
         App_Power_SetOutput(false, false, false);
     }
     else if (s_discharge_scd_latched)
     {
         s_bq_wake_ms = 0u;
-        s_predischarge_ms = 0u;
+        App_Power_ResetDischargeSequence();
         s_power_state = APP_POWER_STATE_FAULT;
         s_charge_allowed = false;
         s_discharge_allowed = false;
+        s_discharge_rearm_required = false;
         App_Power_SetOutput(false, false, false);
+    }
+    else if (s_discharge_path_fault_latched)
+    {
+        s_bq_wake_ms = 0u;
+        App_Power_ResetDischargeSequence();
+        s_power_state = APP_POWER_STATE_FAULT;
+        s_charge_allowed = charger_present && sc_charge_ok && charge_temp_ok && charge_voltage_ok;
+        s_discharge_allowed = false;
+        s_discharge_rearm_required = false;
+        /* 预放电故障只隔离放电路径，满足充电门禁时仍允许安全充电。 */
+        App_Power_SetOutput(true, false, s_charge_allowed);
     }
     else if ((cell_min_mv <= APP_POWER_CELL_LOW_MV) || discharge_over_current)
     {
         s_bq_wake_ms = 0u;
-        s_predischarge_ms = 0u;
+        App_Power_ResetDischargeSequence();
         s_power_state = APP_POWER_STATE_LOW;
         if (!s_low_power_sound_played)
         {
             s_low_power_sound_played = true;
         }
-        s_charge_allowed = input_ok && sc_charge_ok && charge_temp_ok && charge_voltage_ok;
+        s_charge_allowed = charger_present && sc_charge_ok && charge_temp_ok && charge_voltage_ok;
         s_discharge_allowed = false;
+        s_discharge_rearm_required = charger_present;
         App_Power_SetOutput(true, s_discharge_allowed, s_charge_allowed);
     }
     else if (cell_min_rc_mv < APP_POWER_CELL_RECOVER_MV)
     {
         s_bq_wake_ms = 0u;
-        s_predischarge_ms = 0u;
+        App_Power_ResetDischargeSequence();
         s_power_state = APP_POWER_STATE_MONITOR;
-        s_charge_allowed = input_ok && sc_charge_ok && charge_temp_ok && charge_voltage_ok;
+        s_charge_allowed = charger_present && sc_charge_ok && charge_temp_ok && charge_voltage_ok;
         s_discharge_allowed = false;
+        s_discharge_rearm_required = charger_present;
         App_Power_SetOutput(true, s_discharge_allowed, s_charge_allowed);
     }
     else
     {
+        const uint8_t predischarge_fet_mask =
+            BQ76952_FET_STATUS_CHG_FET_MASK | BQ76952_FET_STATUS_PDSG_FET_MASK;
+        const uint8_t discharge_fet_mask =
+            BQ76952_FET_STATUS_CHG_FET_MASK | BQ76952_FET_STATUS_DSG_FET_MASK;
+
         s_bq_wake_ms = 0u;
-        s_predischarge_ms = APP_POWER_PREDISCHARGE_TIME_MS;
         s_power_state = APP_POWER_STATE_RUN;
         s_low_power_sound_played = false;
-        s_charge_allowed = input_ok &&
+        s_charge_allowed = charger_present &&
                            sc_charge_ok &&
                            charge_temp_ok &&
                            charge_voltage_ok;
         s_discharge_allowed = discharge_temp_ok;
-        App_Power_SetOutput(true, s_discharge_allowed, s_charge_allowed);
+
+        if (!s_discharge_allowed)
+        {
+            App_Power_ResetDischargeSequence();
+            s_discharge_rearm_required = charger_present;
+            App_Power_SetOutput(true, false, s_charge_allowed);
+        }
+        else if (charger_present)
+        {
+            /*
+             * 串联 FET 在充电电流下会由 BQ 体二极管保护强制打开 DSG、关闭 PDSG。
+             * 充电器在线时保持正常充电路径，待输入移除后再重新执行预放电。
+             */
+            App_Power_ResetDischargeSequence();
+            s_discharge_rearm_required = true;
+            App_Power_SetOutput(true, true, s_charge_allowed);
+        }
+        else if (s_discharge_rearm_required)
+        {
+            /* 输入刚移除，先明确关断 DSG；下一周期再只释放 PDSG。 */
+            App_Power_ResetDischargeSequence();
+            s_discharge_rearm_required = false;
+            App_Power_SetOutput(true, false, false);
+        }
+        else if (!s_output_discharge)
+        {
+            /*
+             * host 同时允许 PDSG/DSG，由 BQ 原生 PREDISCHARGE 先开 PDSG。
+             * APP 必须先观测到 CHG+PDSG，再接受 CHG+DSG 的完成状态。
+             */
+            App_Power_SetPreDischarge(true, s_charge_allowed);
+
+            if (s_power_state != APP_POWER_STATE_FAULT)
+            {
+                if (s_predischarge_wait_ms < APP_POWER_PREDISCHARGE_SEQUENCE_TIMEOUT_MS)
+                {
+                    if (interval_ms >=
+                        ((uint32_t)APP_POWER_PREDISCHARGE_SEQUENCE_TIMEOUT_MS -
+                         (uint32_t)s_predischarge_wait_ms))
+                    {
+                        s_predischarge_wait_ms = APP_POWER_PREDISCHARGE_SEQUENCE_TIMEOUT_MS;
+                    }
+                    else
+                    {
+                        s_predischarge_wait_ms =
+                            (uint16_t)(s_predischarge_wait_ms + interval_ms);
+                    }
+                }
+
+                if ((fet_status & predischarge_fet_mask) == predischarge_fet_mask)
+                {
+                    if (s_predischarge_ms < APP_POWER_PREDISCHARGE_SEQUENCE_TIMEOUT_MS)
+                    {
+                        if (interval_ms >=
+                            ((uint32_t)APP_POWER_PREDISCHARGE_SEQUENCE_TIMEOUT_MS -
+                             (uint32_t)s_predischarge_ms))
+                        {
+                            s_predischarge_ms = APP_POWER_PREDISCHARGE_SEQUENCE_TIMEOUT_MS;
+                        }
+                        else
+                        {
+                            s_predischarge_ms = (uint16_t)(s_predischarge_ms + interval_ms);
+                        }
+                    }
+                }
+                else if ((fet_status & discharge_fet_mask) == discharge_fet_mask)
+                {
+                    if (s_predischarge_ms >= APP_POWER_PREDISCHARGE_OBSERVE_MIN_MS)
+                    {
+                        printf("电源 预放电路径确认完成:%u ms，主DSG已导通\r\n",
+                               (unsigned int)s_predischarge_ms);
+                        s_output_discharge = true;
+                        s_output_predischarge = false;
+                        s_output_synced = true;
+                    }
+                    else
+                    {
+                        printf("电源 放电顺序错误: 未观测到PDSG即读回DSG，FET:%02x\r\n",
+                               (unsigned int)fet_status);
+                        s_discharge_path_fault_latched = true;
+                    }
+                }
+
+                if (!s_output_discharge &&
+                    (((s_predischarge_ms == 0u) &&
+                      (s_predischarge_wait_ms >= APP_POWER_PREDISCHARGE_START_TIMEOUT_MS)) ||
+                     (s_predischarge_wait_ms >= APP_POWER_PREDISCHARGE_SEQUENCE_TIMEOUT_MS)))
+                {
+                    printf("电源 预放电路径超时: FET:%02x，保持主DSG关闭\r\n",
+                           (unsigned int)fet_status);
+                    s_discharge_path_fault_latched = true;
+                }
+
+                if (s_discharge_path_fault_latched)
+                {
+                    s_discharge_allowed = false;
+                    s_power_state = APP_POWER_STATE_FAULT;
+                    App_Power_SetOutput(true, false, s_charge_allowed);
+                }
+            }
+        }
+        else
+        {
+            App_Power_SetOutput(true, true, s_charge_allowed);
+        }
     }
 
     if (!App_DebugCli_IsStreaming())

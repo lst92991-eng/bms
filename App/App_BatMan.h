@@ -73,6 +73,13 @@ void App_BatMan_PrintMonitorStopReason(void);
  * @return true 写入成功。
  */
 bool App_BatMan_SetMainFets(bool charge_enable, bool discharge_enable);
+
+/**
+ * @brief 请求 BQ 原生预放电：按需允许 CHG，并允许 BQ 自动执行 PDSG→DSG。
+ * @param charge_enable true 允许 CHG/PCHG，false 强制关断充电路径。
+ * @return true 写入成功。
+ */
+bool App_BatMan_SetPreDischargeFet(bool charge_enable);
 bool App_BatMan_RecoverAfterWake(void);
 
 /**

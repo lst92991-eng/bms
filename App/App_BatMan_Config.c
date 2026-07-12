@@ -62,6 +62,8 @@ enum
                                          BQ76952_FET_OPTIONS_HOST_FET_EN_MASK |
                                          BQ76952_FET_OPTIONS_SFET_MASK,
     APP_BATMAN_DM_CHG_PUMP_CONTROL_DEFAULT = 0x01u,
+    APP_BATMAN_DM_PREDISCHARGE_TIMEOUT_2500MS = 250u,
+    APP_BATMAN_DM_PREDISCHARGE_STOP_DELTA_DISABLED = 0u,
     APP_BATMAN_DM_BALANCING_CONFIGURATION_DEFAULT = 0x00u,
     APP_BATMAN_MAIN_FET_OFF_MASK = BQ76952_FET_CONTROL_PCHG_OFF_MASK |
                                     BQ76952_FET_CONTROL_CHG_OFF_MASK |
@@ -91,19 +93,25 @@ static Int_BQ76952_StatusTypeDef App_BatMan_WriteMainFetControl(uint8_t off_mask
         }
     }
 
+    if (off_mask != (uint8_t)APP_BATMAN_MAIN_FET_OFF_MASK)
+    {
+        /*
+         * ALL_FETS_ON 会解除 FET_INIT_OFF，同时也会清除之前写入的单路
+         * FET_CONTROL 关断状态。必须先解除启动锁存，再把目标 off-mask
+         * 作为最后一次命令写入，否则预放电请求会被变成 CHG+DSG 全开。
+         */
+        ret = Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_ALL_FETS_ON);
+        if (ret != INT_BQ76952_OK)
+        {
+            return ret;
+        }
+    }
+
     data[0] = off_mask;
     ret = Int_BQ76952_WriteSubcommandData(BQ76952_SUBCMD_FET_CONTROL, data, 1u);
     if (ret == INT_BQ76952_OK)
     {
         fet_control_request = off_mask;
-        if (off_mask != (uint8_t)APP_BATMAN_MAIN_FET_OFF_MASK)
-        {
-            /*
-             * FET_CONTROL 只清 host off bit；FET_INIT_OFF/host latch 仍可能压住输出。
-             * 释放任一主功率 MOS 时补发 ALL_FETS_ON，让 BQ 在无保护条件下真正打开通道。
-             */
-            ret = Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_ALL_FETS_ON);
-        }
     }
     return ret;
 }
@@ -250,9 +258,13 @@ bool App_BatMan_ConfigBq(void)
      * 不自动释放 CHG/DSG。
      */
     if (!App_BatMan_WriteConfigU8(BQ76952_DM_FET_OPTIONS,
-                                  APP_BATMAN_DM_FET_OPTIONS_DEFAULT) ||
+                                   APP_BATMAN_DM_FET_OPTIONS_DEFAULT) ||
         !App_BatMan_WriteConfigU8(BQ76952_DM_CHG_PUMP_CONTROL,
-                                  APP_BATMAN_DM_CHG_PUMP_CONTROL_DEFAULT))
+                                   APP_BATMAN_DM_CHG_PUMP_CONTROL_DEFAULT) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_PREDISCHARGE_TIMEOUT,
+                                  APP_BATMAN_DM_PREDISCHARGE_TIMEOUT_2500MS) ||
+        !App_BatMan_WriteConfigU8(BQ76952_DM_PREDISCHARGE_STOP_DELTA,
+                                  APP_BATMAN_DM_PREDISCHARGE_STOP_DELTA_DISABLED))
     {
         return false;
     }
@@ -331,6 +343,29 @@ bool App_BatMan_SetMainFets(bool charge_enable, bool discharge_enable)
     return false;
 }
 
+bool App_BatMan_SetPreDischargeFet(bool charge_enable)
+{
+    uint8_t off_mask = 0u;
+
+    if (!charge_enable)
+    {
+        off_mask |= BQ76952_FET_CONTROL_PCHG_OFF_MASK;
+        off_mask |= BQ76952_FET_CONTROL_CHG_OFF_MASK;
+    }
+
+    /*
+     * 正常模式不能由 host 单独强开 PDSG。允许 DSG 后，BQ 才会根据
+     * PDSG_EN、Predischarge Timeout 自动执行 PDSG -> DSG 硬件序列。
+     */
+    if (App_BatMan_WriteMainFetControl(off_mask) == INT_BQ76952_OK)
+    {
+        return true;
+    }
+
+    s_comm_fault = true;
+    return false;
+}
+
 bool App_BatMan_RecoverAfterWake(void)
 {
     uint8_t data[2];
@@ -341,7 +376,8 @@ bool App_BatMan_RecoverAfterWake(void)
 
     /*
      * BQ shutdown 唤醒后可能带 POR/SLEEP_EN/FET_INIT_OFF 等上电残留。
-     * 先恢复项目 Data Memory 基线，再释放主 FET，避免 XCHG 在无保护异常时一直压住 CHG。
+     * 先恢复项目 Data Memory 基线并保持主 FET 关闭，后续由 App_Power
+     * 重新执行 PDSG -> DSG 顺序，禁止从唤醒路径绕过预放电。
      */
     if (Int_BQ76952_EnterConfigUpdate() != INT_BQ76952_OK)
     {
@@ -370,8 +406,9 @@ bool App_BatMan_RecoverAfterWake(void)
     }
 
     App_BatMan_ClearStartupAlarms();
-    if (!App_BatMan_SetMainFets(true, true))
+    if (App_BatMan_KeepMainFetsOff() != INT_BQ76952_OK)
     {
+        s_comm_fault = true;
         return false;
     }
 
@@ -396,8 +433,10 @@ bool App_BatMan_RecoverAfterWake(void)
 
     if (((status & BQ76952_BATTERY_STATUS_SDM_MASK) != 0u) ||
         ((raw_alarm & (BQ76952_ALARM_XCHG_MASK | BQ76952_ALARM_XDSG_MASK)) != 0u) ||
-        ((fet & (BQ76952_FET_STATUS_CHG_FET_MASK | BQ76952_FET_STATUS_DSG_FET_MASK)) !=
-         (BQ76952_FET_STATUS_CHG_FET_MASK | BQ76952_FET_STATUS_DSG_FET_MASK)))
+        ((fet & (BQ76952_FET_STATUS_CHG_FET_MASK |
+                 BQ76952_FET_STATUS_DSG_FET_MASK |
+                 BQ76952_FET_STATUS_PCHG_FET_MASK |
+                 BQ76952_FET_STATUS_PDSG_FET_MASK)) != 0u))
     {
         return false;
     }
@@ -434,11 +473,10 @@ bool App_BatMan_TestPreDischargeOnly(void)
 
     /*
      * 串口定位专用：只清 PDSG_OFF，保持 DSG_OFF，确认 BQ 和硬件是否
-     * 真的能单独拉起预放电通道。FET_CONTROL 只表达关断掩码，随后还需
-     * ALL_FETS_ON 释放 FET_INIT_OFF/host off latch，否则 PDSG 可能保持关闭。
+     * 真的能单独拉起预放电通道。启动锁存及最终 off-mask 的正确顺序由
+     * App_BatMan_WriteMainFetControl() 统一保证。
      */
-    if ((App_BatMan_WriteMainFetControl(off_mask) == INT_BQ76952_OK) &&
-        (Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_ALL_FETS_ON) == INT_BQ76952_OK))
+    if (App_BatMan_WriteMainFetControl(off_mask) == INT_BQ76952_OK)
     {
         return true;
     }
