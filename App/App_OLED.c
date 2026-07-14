@@ -6,46 +6,51 @@
  * @file App_OLED.c
  * @brief APP 层 OLED 简单状态页。
  *
- * 当前 OLED 只承载 bring-up 必需信息：BQ I2C 是否正常，以及成功读到的
- * BQ Power Config。显示布局集中在本文件，避免把 UI 细节混进 BatMan。
+ * 当前 OLED 显示 BQ I2C 状态、实时 SOC 和 SOH。显示布局和数值格式集中
+ * 在本文件，避免把 UI 细节混进 BatMan。
  */
 
 static bool s_oled_ready = false;
 static bool s_iic_status_valid = false;
 static bool s_last_iic_ok = false;
-static bool s_power_config_valid = false;
-static uint16_t s_last_power_config = 0u;
+static bool s_battery_status_valid = false;
+static uint8_t s_last_soc_percent = 0u;
+static uint8_t s_last_soh_percent = 0u;
 
 /**
- * @brief 将 4-bit 值转换为十六进制字符。
- *
- * 避免为了显示 4 位十六进制值引入 sprintf。
+ * @brief 将浮点百分比限制并四舍五入到 0~100。
  */
-static char App_OLED_HexNibble(uint8_t value)
+static uint8_t App_OLED_RoundPercent(float value)
 {
-    value &= 0x0Fu;
-    if (value < 10u)
+    if (value <= 0.0f)
     {
-        return (char)('0' + value);
+        return 0u;
     }
-
-    return (char)('A' + (value - 10u));
+    if (value >= 100.0f)
+    {
+        return 100u;
+    }
+    return (uint8_t)(value + 0.5f);
 }
 
 /**
- * @brief 生成 OLED 上的 Power Config 显示行。
+ * @brief 生成三位百分比显示行，例如 SOC:045。
  */
-static void App_OLED_MakePowerConfigLine(uint16_t power_config, char *line)
+static void App_OLED_MakePercentLine(const char *name, uint8_t percent, char *line)
 {
-    line[0] = 'P';
-    line[1] = 'W';
-    line[2] = 'R';
+    if (percent > 100u)
+    {
+        percent = 100u;
+    }
+
+    line[0] = name[0];
+    line[1] = name[1];
+    line[2] = name[2];
     line[3] = ':';
-    line[4] = App_OLED_HexNibble((uint8_t)(power_config >> 12u));
-    line[5] = App_OLED_HexNibble((uint8_t)(power_config >> 8u));
-    line[6] = App_OLED_HexNibble((uint8_t)(power_config >> 4u));
-    line[7] = App_OLED_HexNibble((uint8_t)power_config);
-    line[8] = '\0';
+    line[4] = (char)('0' + (percent / 100u));
+    line[5] = (char)('0' + ((percent / 10u) % 10u));
+    line[6] = (char)('0' + (percent % 10u));
+    line[7] = '\0';
 }
 
 /**
@@ -53,23 +58,29 @@ static void App_OLED_MakePowerConfigLine(uint16_t power_config, char *line)
  *
  * 页面很小，整屏刷新更容易保证错误、复位和状态变化后的显示一致性。
  */
-static void App_OLED_Render(bool ok, bool power_valid, uint16_t power_config)
+static void App_OLED_Render(bool ok,
+                            bool battery_valid,
+                            uint8_t soc_percent,
+                            uint8_t soh_percent)
 {
-    char power_line[9];
+    char soc_line[8];
+    char soh_line[8];
 
     Inf_OLED_Clear();
     Inf_OLED_ShowText16(0u, 0u, "BMS24V");
-    Inf_OLED_ShowText16(0u, 16u, "BQ IIC");
-    Inf_OLED_ShowText16(0u, 32u, ok ? "OK" : "FAIL");
+    Inf_OLED_ShowText16(0u, 16u, ok ? "BQ IIC OK" : "BQ IIC FAIL");
 
-    if (ok && power_valid)
+    if (ok && battery_valid)
     {
-        App_OLED_MakePowerConfigLine(power_config, power_line);
-        Inf_OLED_ShowText16(0u, 48u, power_line);
+        App_OLED_MakePercentLine("SOC", soc_percent, soc_line);
+        App_OLED_MakePercentLine("SOH", soh_percent, soh_line);
+        Inf_OLED_ShowText16(0u, 32u, soc_line);
+        Inf_OLED_ShowText16(0u, 48u, soh_line);
     }
     else
     {
-        Inf_OLED_ShowText16(0u, 48u, "PWR:----");
+        Inf_OLED_ShowText16(0u, 32u, "SOC:---");
+        Inf_OLED_ShowText16(0u, 48u, "SOH:---");
     }
 
     Inf_OLED_Refresh();
@@ -108,37 +119,56 @@ void App_OLED_ShowIicStatus(bool ok)
     s_iic_status_valid = true;
     s_last_iic_ok = ok;
 
-    App_OLED_Render(ok, ok && s_power_config_valid, s_last_power_config);
+    App_OLED_Render(ok,
+                    ok && s_battery_status_valid,
+                    s_last_soc_percent,
+                    s_last_soh_percent);
 }
 
 /**
- * @brief 显示 BQ I2C 状态和 Power Config。
- *
- * Power Config 只有在 `ok=true` 时才有意义；失败时屏幕显示占位符，
- * 内部保留上一次成功值以便后续恢复显示。
+ * @brief 保留旧初始化接口；Power Config 不再占用运行状态页。
  */
 void App_OLED_ShowBqIicPowerConfig(bool ok, uint16_t power_config)
 {
+    (void)power_config;
+    App_OLED_ShowIicStatus(ok);
+}
+
+/**
+ * @brief 刷新运行态 SOC/SOH；数值不变时不重复访问 OLED。
+ */
+void App_OLED_ShowBatteryStatus(bool ok, float soc_percent, uint8_t soh_percent)
+{
+    uint8_t soc_value;
+
     if (!s_oled_ready)
     {
         return;
     }
 
+    soc_value = App_OLED_RoundPercent(soc_percent);
+    if (soh_percent > 100u)
+    {
+        soh_percent = 100u;
+    }
+
     if (s_iic_status_valid &&
         (s_last_iic_ok == ok) &&
-        (s_power_config_valid == ok) &&
-        (!ok || (s_last_power_config == power_config)))
+        (s_battery_status_valid == ok) &&
+        (!ok || ((s_last_soc_percent == soc_value) &&
+                 (s_last_soh_percent == soh_percent))))
     {
         return;
     }
 
     s_iic_status_valid = true;
     s_last_iic_ok = ok;
-    s_power_config_valid = ok;
+    s_battery_status_valid = ok;
     if (ok)
     {
-        s_last_power_config = power_config;
+        s_last_soc_percent = soc_value;
+        s_last_soh_percent = soh_percent;
     }
 
-    App_OLED_Render(ok, ok, power_config);
+    App_OLED_Render(ok, ok, s_last_soc_percent, s_last_soh_percent);
 }

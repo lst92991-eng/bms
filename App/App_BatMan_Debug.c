@@ -15,7 +15,7 @@ void App_BatMan_ResetDebugState(void)
 
 void App_BatMan_UpdateRuntimeOledStatus(void)
 {
-    App_OLED_ShowIicStatus(!s_comm_fault);
+    App_OLED_ShowBatteryStatus(!s_comm_fault, display_soc_percent, soh_percent);
 }
 
 static void App_BatMan_PrintSeparator(const char *title)
