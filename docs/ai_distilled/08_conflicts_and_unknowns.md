@@ -1,52 +1,59 @@
 # Conflicts And Unknowns
 
-This file separates confirmed conflicts from missing evidence. Do not silently merge these items during code generation.
+更新日期：2026-07-12
 
-## Conflicts
+本文只保留当前仍有执行价值的冲突、未知项和明确延期项。已由源码、实板或用户确认闭环的旧结论不再继续作为开放问题。
 
-| ID | Type | Source A | Source B | Impact | Risk | Manual confirmation |
-| --- | --- | --- | --- | --- | --- | --- |
-| C-001 | SC8815 bus naming vs implementation | Netlist names SC8815 lines as `MCU_I2C3_SCL_PA7_SC8815` and `MCU_I2C3_SDA_PA6_SC8815` (`official_chip_docs_files/full_netlist (5).csv:10-11`) | Project notes require GPIO software IIC because hardware IIC is reversed/unusable (`official_chip_docs_files/README.md:1`; `docs/rules/hardware_rules.md:35-37`); code uses bit-bang GPIO (`Int/Int_SC8815.c:49-153`) | Any generated SC8815 code must not use hardware I2C3 | High | Scope PA6/PA7 waveform and keep `Int_SC8815` software IIC as authoritative unless hardware revision changes |
-| C-002 | BQ76952 CRC default | Hardware rule says BQ76952 default I2C CRC is enabled (`docs/rules/hardware_rules.md:72-73`) | Current app and driver default CRC disabled: `APP_BATMAN_CRC_BOOT_ENABLE (0u)` and `s_bq76952_crc_enabled=false` (`App/App_BatMan.c:28-31`; `Int/Int_BQ76952.c:49`) | Wrong CRC assumption can make BQ communication fail or silently parse wrong frames | High | On board, read/write with both modes and record final default; then update hardware rule or app constant |
-| C-003 | BQ WAKE pin direction | Hardware docs describe PB3/BMS_WAKE as BQ wake/TS2 path (`docs/rules/hardware_rules.md:75-76`; `docs/logic/hardware_interface_reservation.md:41`) | CubeMX config makes PB3 `GPIO_Input` (`bms24v_platform/bms24v_platform.ioc:146-150`; `bms24v_platform/Core/Src/gpio.c:98-102`), while `Int_BQ76952_WakeUp()` writes the fallback wake GPIO (`Int/Int_BQ76952.c:14-19,261-267`) | Wake/reset behavior may not work as intended | High | Confirm circuit direction and whether MCU should drive PB3 or only sample it; align GPIO config and BSP |
-| C-004 | SC8815 INT expected EXTI vs current input-only | Interface doc says SC8815 INT should be EXTI and ISR only sets flag (`docs/logic/hardware_interface_reservation.md:92,133`) | Current `.ioc`/GPIO configure PA5 as input only (`bms24v_platform/bms24v_platform.ioc:101-104`; `bms24v_platform/Core/Src/gpio.c:64-68`) | SC8815 fault/status events will not wake a handler; task can only poll status if implemented | Medium | Decide whether Phase 1 uses polling only or add EXTI flag path |
-| C-005 | Buzzer hardware timer note vs GPIO implementation | Hardware rules note `PB5 / TIM3_CH2` (`docs/rules/hardware_rules.md:108`) | Current code uses GPIO toggling and approximate delay/task timing (`Int/Int_Buzzer.c:5-18,101-169`) | Tone frequency accuracy and CPU load differ from timer PWM assumption | Medium | Confirm if PB5 is available as TIM3_CH2 in current pinmux and whether PWM is required |
-| C-006 | Historical control-board netlist vs actual SC8815 divider | Control-board netlist records `R17/R18=0Ω` (`official_chip_docs_files/full_netlist (5).csv:188-191`) | User confirmed actual rework is `R17=200kΩ`, `R18=10kΩ` on 2026-07-10 (`docs/wordflow/manual_confirmations.md`) | Historical netlist must not be used to generate the current VBATS configuration | Low (resolved) | Use `200kΩ/10kΩ` as the current hardware fact; retain the netlist only as pre-rework evidence |
-| C-007 | CAN init return ignored | `Int_CanFd_Init()` returns detailed status (`Int/Int_CanFd.h:39-43`; `Int/Int_CanFd.c:153-199`) | `main.c` discards return with `(void)Int_CanFd_Init()` (`bms24v_platform/Core/Src/main.c:135`) | CAN startup failure is invisible except later behavior | Medium | Decide bring-up policy: print error, show OLED/LED fault, or keep best-effort |
-| C-008 | EEPROM init return ignored | `Int_EEPROM_Init()` reports online/offline (`Int/Int_EEPROM.c:48-51`) | `main.c` discards return with `(void)Int_EEPROM_Init()` (`bms24v_platform/Core/Src/main.c:136`) | EEPROM absence/failure is not surfaced | Low | Decide whether EEPROM is optional in Phase 1 |
+## 1. 当前开放问题
 
-## Unknowns
+| ID | 类型 | 当前事实 | 影响 | 状态 | 下一步 |
+| --- | --- | --- | --- | --- | --- |
+| O-001 | 生产故障恢复入口 | `App_Power_ClearDischargeFault()` 当前主要由 Debug CLI 调用 | Debug CLI 后期删除前，必须把安全清故障能力迁移到生产入口 | Planned | 迁移到 CAN、受控维护命令或明确的重新上电恢复策略；不得无条件清除 SCD |
+| O-002 | 预放电生产闭环 | PDSG 单独控制目前主要用于 CLI 探测，正常状态机尚未形成 `PDSG -> DSG` 可验证流程 | 接大电容负载时可能直接打开 DSG，缺少受控预充 | **Must fix** | 清洗阶段实现预放电状态、超时、压差判定、失败关断和回归测试 |
+| O-003 | SC8815 INT 配置 | 文档要求 `PA5` 为 EXTI，当前 CubeMX/生成 GPIO 仍为普通输入 | SC 故障只能等待任务轮询，响应延迟可达任务周期 | **Must fix** | 修改 `.ioc` 为 EXTI；ISR 只置 pending flag，任务读取 STATUS/ADC |
+| O-004 | RTOS 周期写法 | 当前任务直接把毫秒数传给 `vTaskDelay()`，并使用相对延时 | 配置 tick rate 改动后单位失效；任务执行时间会叠加到周期中 | **Must fix** | 使用 `pdMS_TO_TICKS()`；周期任务改为 `vTaskDelayUntil()` |
+| O-005 | 外设初始化失败策略 | CANFD、EEPROM 初始化返回值当前被忽略 | 项目要求的外设失败时仍可能继续进入 RUN | **Must fix** | 检查返回值；失败进入安全故障态并禁止正常 RUN |
+| O-006 | 充电曲线与阈值标定 | 完整放电测试已通过；充电曲线、实际截止电压、充电温升及部分保护阈值尚未形成实测记录 | 无法完成最终充电闭环和正式开发文档 | Test pending | 按 `docs/test/ai_charge_curve_test_task.md` 执行并归档证据 |
+| O-007 | BQ 事务阻塞时间 | BQ echo/config 轮询包含 `HAL_Delay()`，I2C timeout 较长 | 异常通信时高优先级任务可能阻塞较久，影响调度响应 | Review pending | 先完成技术说明和最坏耗时测算；本轮不直接改代码 |
+| O-008 | 测试数据归档 | 实测 CSV 当前直接放在通用 `csv_data` 目录 | 测试条件、板号、固件 SHA 和结果难以追溯 | Planned | 迁移到 `test/evidence/<date>/<board-id>/`，大文件后续评估 Git LFS 或 Release artifact |
+| O-009 | 项目总文档 | 当前正式项目文档仍处于初版草稿，最终充电结果和清洗结果尚未写入 | 现在定稿会把未验证事项写成事实 | Blocked | 清洗完成、充电测试通过后冻结 commit，再生成最终开发文档 |
 
-| ID | Unknown | Evidence gap | Why it matters | Suggested confirmation |
-| --- | --- | --- | --- | --- |
-| U-001 | RTOS presence | No task creation, scheduler start, queue/mutex, or FreeRTOS project group evidence in active code; main loop is bare-metal (`bms24v_platform/Core/Src/main.c:148-169`) | Concurrency rules differ greatly between bare-metal and RTOS | Treat current project as bare-metal until FreeRTOS files and init path appear |
-| U-002 | Watchdog policy | No IWDG/WWDG initialization found in scanned sources; startup only exports weak `WWDG_IRQHandler` (`bms24v_platform/MDK-ARM/startup_stm32g0b1xx.s:152`) | BMS safety and fault recovery should define watchdog feeding | Decide watchdog requirement and add evidence before generating watchdog code |
-| U-003 | DMA ownership | `.ioc` has `NVIC.ForceEnableDMAVector=true` (`bms24v_platform/bms24v_platform.ioc:79`), but no active DMA init/use was identified | DMA affects buffers, ISR, memory, and cache assumptions | Search/review CubeMX if DMA later enabled; document channel ownership |
-| U-004 | OLED hardware address | Code uses `OLED_I2C_ADDRESS 0x78` (`Int/Int_OLED.h:8-9`); hardware rule identifies SSD1315 but does not independently confirm address (`docs/rules/hardware_rules.md:27`) | Wrong address blocks bring-up display | Scan I2C2 bus or verify SSD1315 module address strap |
-| U-005 | SC8815 `FB/ADIN` external connection | Hardware rules list it as open item (`docs/rules/hardware_rules.md:122`) | Charging voltage/current interpretation depends on feedback path | Confirm schematic/PDF and actual resistor network before enabling charge loop |
-| U-006 | SC8815 VBATS divider tolerance and actual cutoff | Values are confirmed as `200kΩ/10kΩ`, but resistor tolerance and board cutoff measurement are not recorded (`docs/wordflow/manual_confirmations.md`) | SC8815 reference and divider tolerance can move the actual cutoff away from the nominal `25.2V` | Measure R17/R18 tolerance, VBATS near full charge, pack cutoff and per-cell maximum with a current-limited supply |
-| U-007 | BQ CC2 current sign, zero, gain | Migration doc explicitly marks CC2 current sign/gain unknown (`official_chip_docs_files/BQ76930_to_BQ76952_逻辑替换设计说明.md:539,691,1150`) | SOC integration and charge/discharge decisions can invert | Apply known small charge/discharge current and log raw/direct values |
-| U-008 | BQ TS1/TS3 NTC model and placement | Hardware docs list TS1/TS3 resources but parameter/placement unknown (`official_chip_docs_files/BQ76930_to_BQ76952_逻辑替换设计说明.md:190-193,1152`) | Temperature protection cannot be safely encoded | Confirm BOM, placement, and readback against thermometer |
-| U-009 | BQ DCHG/DFETOFF pin configuration | Hardware NTC resources exist but Data Memory config is not final (`official_chip_docs_files/BQ76930_to_BQ76952_逻辑替换设计说明.md:193-194,1153`) | Board/FET/shunt thermal monitoring may be unused | Confirm TRM pin config and direct command units |
-| U-010 | BQ RST_SHUT timing | Migration doc marks `BMS_CHIP_SHUT` short/long timing unknown (`official_chip_docs_files/BQ76930_to_BQ76952_逻辑替换设计说明.md:198,1155`) | Wrong timing may reset or ship-mode the pack unexpectedly | Scope `RST_SHUT` and verify TI timing |
-| U-011 | BQ FET status bit mapping | Migration doc marks FET status bit parse unknown (`official_chip_docs_files/BQ76930_to_BQ76952_逻辑替换设计说明.md:543-544,1156`) | APP must distinguish request from actual FET state | Toggle safe FET requests and record `FET Status(0x7F)` |
-| U-012 | Protection thresholds and delays | Current APP writes a minimal baseline but final protection encoding is not proven (`App/App_BatMan.c:243-317`; migration doc `official_chip_docs_files/BQ76930_to_BQ76952_逻辑替换设计说明.md:536`) | BMS safety behavior depends on exact thresholds | Derive from cell spec, shunt calibration, TRM units, and bench tests |
-| U-013 | Cell balancing thermal result | Mapping is defined, but actual heat channel verification is required (`official_chip_docs_files/BQ76930_to_BQ76952_逻辑替换设计说明.md:1106-1109`) | Wrong mask could heat wrong resistor/cell path | Enable one channel at a time with thermal camera or temperature probe |
-| U-014 | CI/build command availability | Keil project exists, but no command-line build script evidence was found | Codex verification may be manual only | Add documented build command or MDK batch instructions |
-| U-015 | PDF schematic page-level evidence | Current distillation used Markdown/CSV/docs; PDF schematics were not rendered/page-parsed here | Some hardware facts may be second-hand from extracted docs | Render and page-index PDFs for final production audit |
-| U-016 | Error reporting policy | `Error_Handler()` loops forever (`bms24v_platform/Core/Src/main.c:254-259`), while many init returns are ignored or printed | Fault visibility is inconsistent | Define Phase 1 policy for OLED/LED/USART fault reporting |
-| U-017 | Build artifact hygiene | Keil output folders and generated artifacts are present in workspace state per prior scan, but no `.gitignore` evidence was available | Training/source corpus should not ingest `.obj/.axf/.map` outputs | Add `.gitignore` or clean exported training corpus |
-| U-018 | EEPROM data layout | INT layer provides raw bytes/pages only (`Int/Int_EEPROM.h:22-65`) | No parameter schema, CRC, version migration | Define application-level storage schema before use |
-| U-019 | CAN protocol | CAN FD transport exists, but no message database/protocol ownership was found (`Int/Int_CanFd.h:39-75`) | IDs, endian, and scaling are unspecified | Add CAN ICD or `Com_*` protocol module before app messages |
-| U-020 | Power-path measurable states | Hardware rules list power nets but no ADC/control implementation evidence (`docs/rules/hardware_rules.md:114`) | Software may not know input/output power validity | Add measured signals or explicitly mark power path as hardware-only |
+## 2. 已解决或已确认事项
 
-## Working Rule
+| ID | 事项 | 结论 | 证据/处理 |
+| --- | --- | --- | --- |
+| R-001 | RTOS 是否存在 | 已解决：当前工程为 FreeRTOS 三任务模型 | `App/App_Main.c`、`FreeRTOSConfig.h`、`CMakeLists.txt` |
+| R-002 | BQ 默认 CRC | 已解决：项目与实板默认 `CRC disabled`；驱动保留 CRC 开关 | `docs/wordflow/manual_confirmations.md`、`docs/rules/hardware_rules.md` |
+| R-003 | BQ WAKE/PB3 方向冲突 | 已解决：新版硬件已删除原 BQ WAKE/TS2 通道，软件不得依赖或驱动 PB3 | `docs/wordflow/manual_confirmations.md`、`docs/rules/hardware_rules.md` |
+| R-004 | SC8815 VBATS 分压 | 已解决硬件值：`R17=200kΩ`、`R18=10kΩ`；实测截止仍属于测试项 | `docs/wordflow/manual_confirmations.md` |
+| R-005 | BQ 低边采样电阻 | 已解决：按 `5mΩ` 作为当前硬件基线 | `docs/wordflow/manual_confirmations.md` |
+| R-006 | 命令行构建入口 | 已解决：存在 GCC Debug/Release CMake Presets | `CMakePresets.json`、`CMakeLists.txt` |
+| R-007 | 构建产物忽略规则 | 已解决：仓库已有 `.gitignore` 覆盖常见 GCC/Keil 产物 | `.gitignore` |
+| R-008 | 完整放电测试 | 当前阶段合格，后续只保留必要回归 | 用户 2026-07-12 确认 |
 
-When generating code, use the following precedence:
+## 3. 明确不处理或延期
 
-1. Current source code and `.ioc` for what is implemented now.
-2. `docs/rules/hardware_rules.md` and `docs/logic/hardware_interface_reservation.md` for intended hardware constraints.
-3. Official chip docs and migration notes for BQ/SC behavior.
-4. Old project/corpus style for naming, layout, and teaching shape only.
+| ID | 事项 | 决策 | 说明 |
+| --- | --- | --- | --- |
+| D-001 | AI Debug CLI 的 BQ 并发访问接口 | No action | 该接口仅供 AI bring-up，后期整体删除；不为它引入长期生产架构 |
+| D-002 | RTOS 任务创建返回值检查 | No action | 保留当前教学展开习惯，本轮不处理 |
+| D-003 | 看门狗 | Deferred | 当前阶段不加入 IWDG/WWDG，不作为本轮闭环阻塞项 |
+| D-004 | Debug CLI 默认 CSV | No action | 继续作为 AI 调试和充电曲线采集入口 |
+| D-005 | CI/静态分析门禁 | No action | 当前阶段不建设自动化门禁 |
 
-If a source conflicts, keep the conflict visible and implement the smallest reversible change.
+## 4. 仍需实测确认
+
+- SC8815 VBATS、PACK 总压、最高单体和实际充电截止电压。
+- 充电电流曲线、恒流/恒压阶段表现、温升、EOC 和异常停止原因。
+- OCC/OCD/SCD/CUV/OTC/OTD 配置值与实测值的对应关系；完整放电已通过，不要求无意义重复测试。
+- TS1/TS3 NTC 型号、读数与实测温度对应关系。
+- 单路均衡物理通道与温升。
+- SC8815 `FB/ADIN` 外部连接和 ADC 含义。
+
+## 5. 工作规则
+
+1. 当前源码和 `.ioc` 描述“现在实现了什么”。
+2. `docs/rules/hardware_rules.md` 与人工确认记录描述“当前硬件事实”。
+3. `docs/state/project_closeout_plan.md` 描述“下一步执行什么”。
+4. `docs/test/ai_charge_curve_test_task.md` 描述“充电测试如何执行和交付”。
+5. 未完成测试的项目不得在最终开发文档中写成已验证。
