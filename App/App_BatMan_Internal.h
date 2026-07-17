@@ -20,6 +20,9 @@ extern bool s_comm_fault;
 extern bool s_cells_sample_valid;
 extern bool s_current_sample_valid;
 extern bool s_temp_cell_sample_valid;
+extern bool s_soc_full_anchor_used;
+extern bool s_soc_empty_anchor_used;
+extern bool s_soh_capacity_updated;
 
 uint16_t App_BatMan_ReadU16Le(const uint8_t data[2]);
 void App_BatMan_WriteU16Le(uint16_t value, uint8_t data[2]);
@@ -40,6 +43,10 @@ void App_BatMan_UpdateRcModel(uint32_t interval_ms);
 void App_BatMan_UpdateSoc(uint32_t interval_ms);
 void App_BatMan_UpdateHealth(uint32_t interval_ms);
 void App_BatMan_UpdateBalance(uint32_t interval_ms);
+
+bool App_BatMan_NvmInit(void);
+void App_BatMan_NvmTask(uint32_t interval_ms);
+bool App_BatMan_NvmFlush(void);
 
 void App_BatMan_UpdateRuntimeOledStatus(void);
 void App_BatMan_UpdateDebugOutput(uint32_t interval_ms);

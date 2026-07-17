@@ -147,8 +147,14 @@ extern float soc_active_capacity_mah;
 extern uint32_t charge_throughput_mah;
 extern uint32_t discharge_throughput_mah;
 extern uint32_t cycle_count;
+extern uint32_t soh_learned_capacity_mah;
+extern uint32_t soh_learning_discharge_mah;
+extern uint16_t soh_capacity_learning_count;
 extern uint8_t soh_percent;
+extern uint8_t health_score_percent;
 extern uint8_t soh_confidence_percent;
+extern bool soh_capacity_valid;
+extern bool soh_learning_active;
 extern uint16_t balance_mask;
 
 #endif /* APP_BATMAN_H */

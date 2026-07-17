@@ -101,6 +101,8 @@ void App_BatMan_InitAlgorithms(void)
     soh_config.delta_warn_mv = APP_BATMAN_HEALTH_DELTA_WARN_MV;
     soh_config.temp_warn_c = APP_BATMAN_HEALTH_TEMP_WARN_C;
     soh_config.cycle_warn_count = 300u;
+    soh_config.learn_min_percent = 50u;
+    soh_config.learn_max_percent = 110u;
     Com_SOH_Init(&soh_config);
 }
 
@@ -205,7 +207,7 @@ void App_BatMan_UpdateSoc(uint32_t interval_ms)
     sample.cell_avg_mv = cell_avg_mv;
     sample.temp_valid = s_temp_cell_sample_valid;
     sample.temp_c = temp_cell_c;
-    sample.soh_valid = (soh_confidence_percent >= 50u);
+    sample.soh_valid = soh_capacity_valid;
     sample.soh_percent = soh_percent;
     Com_SOC_Update(&sample);
 
@@ -217,6 +219,8 @@ void App_BatMan_UpdateSoc(uint32_t interval_ms)
     soc_kalman_gain = result.kalman_gain_soc;
     soc_p = result.p_soc;
     soc_active_capacity_mah = result.active_capacity_mah;
+    s_soc_full_anchor_used = result.full_anchor_used;
+    s_soc_empty_anchor_used = result.empty_anchor_used;
 }
 
 static uint16_t App_BatMan_MakeBalanceMask(void)
@@ -306,10 +310,10 @@ void App_BatMan_UpdateBalance(uint32_t interval_ms)
 }
 
 /**
- * @brief 更新健康趋势计数。
+ * @brief 更新容量 SOH 学习和健康趋势统计。
  *
- * 这不是标定过的 SOH 算法，只记录可长期观察的压力指标：吞吐量、
- * 等效循环、最大压差、最高温度和 safety fault 次数。
+ * 容量 SOH 由一次连续的满电到空电净放电量学习；健康趋势分数单独记录等效循环、
+ * 最大压差、最高温度和 safety fault，不能与容量 SOH 混为同一指标。
  */
 void App_BatMan_UpdateHealth(uint32_t interval_ms)
 {
@@ -326,12 +330,21 @@ void App_BatMan_UpdateHealth(uint32_t interval_ms)
     sample.safety_status_a = safety_status_a;
     sample.safety_status_b = safety_status_b;
     sample.safety_status_c = safety_status_c;
+    sample.full_anchor_used = s_soc_full_anchor_used;
+    sample.empty_anchor_used = s_soc_empty_anchor_used;
     Com_SOH_Update(&sample);
 
     Com_SOH_GetResult(&result);
     charge_throughput_mah = result.charge_throughput_mah;
     discharge_throughput_mah = result.discharge_throughput_mah;
     cycle_count = result.cycle_count;
+    soh_learned_capacity_mah = result.learned_capacity_mah;
+    soh_learning_discharge_mah = result.learning_net_discharge_mah;
+    soh_capacity_learning_count = result.capacity_learning_count;
     soh_percent = result.soh_percent;
+    health_score_percent = result.health_score_percent;
     soh_confidence_percent = result.confidence_percent;
+    soh_capacity_valid = result.capacity_valid;
+    soh_learning_active = result.learning_active;
+    s_soh_capacity_updated = result.capacity_updated;
 }

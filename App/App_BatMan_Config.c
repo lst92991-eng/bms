@@ -456,6 +456,15 @@ bool App_BatMan_RequestShutdown(void)
         return false;
     }
 
+    /*
+     * 主功率通路确认关闭后尽力保存已完成 SOH 和累计统计。EEPROM 失败不能
+     * 阻断安全关机，否则异常存储器可能让电池包无法进入 SHUTDOWN。
+     */
+    if (!App_BatMan_NvmFlush())
+    {
+        printf("SOH持久化关机保存失败，继续安全关机\r\n");
+    }
+
     if (Int_BQ76952_Shutdown() != INT_BQ76952_OK)
     {
         s_comm_fault = true;

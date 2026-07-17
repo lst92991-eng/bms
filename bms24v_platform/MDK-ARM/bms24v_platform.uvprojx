@@ -337,7 +337,7 @@
             <v6WtE>0</v6WtE>
             <v6Rtti>0</v6Rtti>
             <VariousControls>
-              <MiscControls></MiscControls>
+              <MiscControls>--no_multibyte_chars</MiscControls>
               <Define>USE_HAL_DRIVER,STM32G0B1xx</Define>
               <Undefine></Undefine>
               <IncludePath>../Core/Inc;../Drivers/STM32G0xx_HAL_Driver/Inc;../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32G0xx/Include;../Drivers/CMSIS/Include;FreeRTOS/include;FreeRTOS/portable/RVDS/ARM_CM0;Int;../../App;../../Com;../../Int</IncludePath>
@@ -551,6 +551,11 @@
               <FilePath>../../App/App_BatMan_Debug.c</FilePath>
             </File>
             <File>
+              <FileName>App_BatMan_Nvm.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../App/App_BatMan_Nvm.c</FilePath>
+            </File>
+            <File>
               <FileName>App_BatMan.h</FileName>
               <FileType>5</FileType>
               <FilePath>../../App/App_BatMan.h</FilePath>
@@ -589,6 +594,16 @@
               <FileName>App_SC8815.h</FileName>
               <FileType>5</FileType>
               <FilePath>../../App/App_SC8815.h</FilePath>
+            </File>
+            <File>
+              <FileName>App_CanBms.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../App/App_CanBms.c</FilePath>
+            </File>
+            <File>
+              <FileName>App_CanBms.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../App/App_CanBms.h</FilePath>
             </File>
           </Files>
         </Group>
