@@ -27,7 +27,7 @@
 | --- | --- | --- | --- | --- |
 | `Int_BQ76952` | status enum + board, CRC, direct, subcommand, Data Memory, ConfigUpdate functions | Low-level BQ76952 transport/protocol primitives | `Int/Int_BQ76952.h:7-122`; `Int/Int_BQ76952.c:328-614` | CRC default conflict; WAKE direction conflict |
 | `Int_BQ76952_BSP` | BQ commands, Data Memory, bit masks, 6S mapping | Detailed BQ76952 register/BSP macro reference | `Int/Int_BQ76952_BSP.h:210-237,297-311` | Must stay aligned with TRM and hardware mapping |
-| `Int_SC8815` | status enum + safe state, CE/PSTOP, reg, status, ADC, current limits | Software IIC and guarded SC8815 register access | `Int/Int_SC8815.h:7-109`; `Int/Int_SC8815.c:49-153,235-509` | Software IIC timing and SC8815 INT path need hardware verification |
+| `Int_SC8815` | status enum + safe state, CE/PSTOP, IRQ pending, reg, status, ADC, current limits | Software IIC, guarded register access, and ISR-to-task event latch | `Int/Int_SC8815.h:7-120`; `Int/Int_SC8815.c:14-29,577-594,636-660` | Software IIC timing and physical SC8815 INT pulse need hardware verification |
 | `Int_SC8815_BSP` | SC8815 register masks, ratios, project safe/forbidden masks | Detailed SC8815 register/BSP macro reference | `Int/Int_SC8815_BSP.h:497-566` | R17/R18 and divider assumptions need actual-board confirmation |
 | `Int_CanFd` | init/send/receive/status with frame struct | FDCAN1 transport wrapper | `Int/Int_CanFd.h:39-75`; `Int/Int_CanFd.c:153-320` | Protocol ownership and init error handling missing |
 | `Int_EEPROM` | init/ready/read/write/write-readback | Raw M24C64 page-safe storage access | `Int/Int_EEPROM.h:7-65`; `Int/Int_EEPROM.c:117-207` | No application data schema yet |

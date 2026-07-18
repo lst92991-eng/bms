@@ -22,6 +22,7 @@
 #include "stm32g0xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "Int_SC8815.h"
 #include "usart.h"
 /* USER CODE END Includes */
 
@@ -110,6 +111,7 @@ void EXTI4_15_IRQHandler(void)
   /* USER CODE BEGIN EXTI4_15_IRQn 0 */
 
   /* USER CODE END EXTI4_15_IRQn 0 */
+  HAL_GPIO_EXTI_IRQHandler(SC8815_INT_Pin);
   HAL_GPIO_EXTI_IRQHandler(BQ_INT_Pin);
   /* USER CODE BEGIN EXTI4_15_IRQn 1 */
 
@@ -145,5 +147,14 @@ void USART1_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+
+void HAL_GPIO_EXTI_Falling_Callback(uint16_t GPIO_Pin)
+{
+  if (GPIO_Pin == SC8815_INT_Pin)
+  {
+    /* SC8815 INT 为低脉冲；ISR 只锁存事件，软件 I2C 留给任务处理。 */
+    Int_SC8815_NotifyInterruptFromISR();
+  }
+}
 
 /* USER CODE END 1 */

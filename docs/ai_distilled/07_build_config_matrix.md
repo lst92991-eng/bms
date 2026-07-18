@@ -15,7 +15,7 @@
 
 | Peripheral | Config | Evidence | Notes |
 | --- | --- | --- | --- |
-| GPIO | SC8815 PA5/PA6/PA7/PB0/PB1, BQ PB3/PB4, LEDs, button | `bms24v_platform/bms24v_platform.ioc:101-174` | SC8815 INT input-only conflict |
+| GPIO | SC8815 PA5 EXTI/PA6/PA7/PB0/PB1, BQ PB3/PB4, LEDs, button | `bms24v_platform/bms24v_platform.ioc:103-176,260-262` | PA5 falling-edge EXTI shares `EXTI4_15_IRQn` with PB4 |
 | FDCAN1 | Normal mode, FD no BRS, nominal 500 kbit/s calculated, std filters 1 | `bms24v_platform/bms24v_platform.ioc:5-23`; `bms24v_platform/Core/Src/fdcan.c:40-58` | No IRQ path evidence |
 | I2C1 | Standard mode, timing `0x10B17DB5`, PB6/PB7 | `bms24v_platform/bms24v_platform.ioc:26-28,157-160`; `bms24v_platform/Core/Src/i2c.c:31-64,139-146` | BQ bus |
 | I2C2 | Timing `0x10B17DB5`, PA11/PA12 | `bms24v_platform/bms24v_platform.ioc:29-30`; `bms24v_platform/Core/Src/i2c.c:74-107,172-179` | OLED/EEPROM bus |

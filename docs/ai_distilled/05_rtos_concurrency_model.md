@@ -20,9 +20,9 @@ Confidence: High for active code scanned. Human confirmation: Not needed unless 
 
 | Interrupt | Current handler | Evidence | Ownership |
 | --- | --- | --- | --- |
-| EXTI4_15 | Calls `HAL_GPIO_EXTI_IRQHandler(BQ_INT_Pin)` | `bms24v_platform/Core/Src/stm32g0xx_it.c:107-112` | BQ ALERT line is configured, but no app callback/flag evidence was found |
+| EXTI4_15 | Dispatches `SC8815_INT_Pin` and `BQ_INT_Pin` | `bms24v_platform/Core/Src/stm32g0xx_it.c:108-116` | Shared PA5/PB4 vector; SC callback only latches a flag, BQ callback remains unimplemented |
 | TIM14 | Calls `HAL_TIM_IRQHandler(&htim14)` | `bms24v_platform/Core/Src/stm32g0xx_it.c:121-126` | HAL timebase |
-| SC8815 INT PA5 | Input-only GPIO | `bms24v_platform/Core/Src/gpio.c:64-68` | Conflict with docs expecting EXTI flag handoff |
+| SC8815 INT PA5 | Falling-edge EXTI -> volatile pending flag -> SC task STATUS/ADC read | `bms24v_platform/Core/Src/gpio.c:63-67`; `Int/Int_SC8815.c:577-594`; `App/App_SC8815.c:314-344` | No software IIC access occurs in ISR context |
 | FDCAN/I2C/USART | No active IRQ use found | `Int/Int_CanFd.c:232-320`; `Int/Int_BQ76952.c:328-485`; `bms24v_platform/Core/Src/usart.c:41-52` | Current usage appears polling/blocking |
 
 ## Shared State
@@ -54,7 +54,6 @@ Confidence: High for active code scanned. Human confirmation: Not needed unless 
 
 - No mutex/critical-section design for shared I2C2 if RTOS is added.
 - No ISR callback body for BQ ALERT was found.
-- No SC8815 INT flag path exists yet.
 - No watchdog feed path exists.
 
 See `08_conflicts_and_unknowns.md`.

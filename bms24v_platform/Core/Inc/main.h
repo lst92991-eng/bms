@@ -59,6 +59,7 @@ void Error_Handler(void);
 /* Private defines -----------------------------------------------------------*/
 #define SC8815_INT_Pin GPIO_PIN_5
 #define SC8815_INT_GPIO_Port GPIOA
+#define SC8815_INT_EXTI_IRQn EXTI4_15_IRQn
 #define SC8815_SW_I2C_SDA_Pin GPIO_PIN_6
 #define SC8815_SW_I2C_SDA_GPIO_Port GPIOA
 #define SC8815_SW_I2C_SCL_Pin GPIO_PIN_7

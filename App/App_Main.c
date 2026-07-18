@@ -18,7 +18,7 @@
 enum
 {
     APP_MAIN_BATMAN_TASK_PERIOD_MS = 1000u,
-    APP_MAIN_SC8815_TASK_PERIOD_MS = 1000u,
+    APP_MAIN_SC8815_TASK_PERIOD_MS = 20u,
     APP_MAIN_CAN_BMS_TASK_PERIOD_MS = 20u,
     APP_MAIN_DEBUG_CLI_TASK_PERIOD_MS = 20u
 };
@@ -63,17 +63,20 @@ static void batman_task(void *arg)
 /**
  * @brief SC8815 充电芯片监控任务。
  *
- * 只做状态读取和 charge_request 状态机推进；默认不主动请求充电，功率释放由
- * BatMan 任务中的 App_Power 策略显式决定。
+ * 20ms 调度用于及时消费 PA5 INT pending；常规 STATUS/ADC 仍由 APP 层按 1s 周期采样。
+ * 默认不主动请求充电，功率释放由 BatMan 任务中的 App_Power 策略显式决定。
  */
 static void sc8815_task(void *arg)
 {
+    TickType_t last_wake;
+
     (void)arg;
+    last_wake = xTaskGetTickCount();
 
     while (1)
     {
         App_SC8815_Task(APP_MAIN_SC8815_TASK_PERIOD_MS);
-        vTaskDelay(APP_MAIN_SC8815_TASK_PERIOD_MS);
+        vTaskDelayUntil(&last_wake, pdMS_TO_TICKS(APP_MAIN_SC8815_TASK_PERIOD_MS));
     }
 }
 

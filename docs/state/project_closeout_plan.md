@@ -33,7 +33,7 @@
 | 005 | 新硬件删除 | Resolved | BQ WAKE/TS2 不是普通按键；新版硬件已删除该通道，软件不得依赖或驱动 PB3 |
 | 006 | 不处理 | Closed / No action | 保留当前教学式任务创建写法，不增加本轮处理项 |
 | 007 | 暂不加入 | Deferred | 不加入看门狗，不作为本轮项目闭环阻塞项 |
-| 008 | 需要修复 | **Must fix** | 修改 CubeMX：PA5 SC8815_INT 配置为 EXTI；ISR 置 flag，任务读取状态 |
+| 008 | 需要修复 | Resolved / board test pending | PA5 已改为下降沿 EXTI；ISR 只置 flag，20ms SC 任务消费后读取 STATUS/ADC；仍需示波器/实板验证 |
 | 009 | 不处理 | Closed / No action | Debug CLI 默认 CSV 保留，用于 AI 调试和充电曲线采集 |
 | 010 | 按建议修改 | **Must fix** | 使用 `pdMS_TO_TICKS()`；固定周期任务使用 `vTaskDelayUntil()` |
 | 011 | 先详细分析 | Review pending | 说明 BQ 轮询/timeout 对高优先级任务的阻塞风险，先测最坏耗时，本轮不直接改代码 |

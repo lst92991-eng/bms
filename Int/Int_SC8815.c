@@ -13,6 +13,7 @@ enum
 
 static bool s_sc8815_standby = true;
 static bool s_sc8815_iic_swapped = (SC8815_PROJECT_IIC_LINE_SWAPPED != 0u);
+static volatile bool s_sc8815_interrupt_pending = false;
 
 static uint32_t Int_SC8815_EnterCritical(void)
 {
@@ -571,6 +572,23 @@ void Int_SC8815_SetStandby(bool standby)
                       SC8815_PSTOP_Pin,
                       standby ? GPIO_PIN_SET : GPIO_PIN_RESET);
     s_sc8815_standby = standby;
+}
+
+void Int_SC8815_NotifyInterruptFromISR(void)
+{
+    s_sc8815_interrupt_pending = true;
+}
+
+bool Int_SC8815_TakeInterruptPending(void)
+{
+    bool pending;
+    uint32_t primask = Int_SC8815_EnterCritical();
+
+    pending = s_sc8815_interrupt_pending;
+    s_sc8815_interrupt_pending = false;
+    Int_SC8815_ExitCritical(primask);
+
+    return pending;
 }
 
 Int_SC8815_StatusTypeDef Int_SC8815_WriteReg(uint8_t reg, uint8_t value)

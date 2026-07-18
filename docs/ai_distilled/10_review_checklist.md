@@ -75,9 +75,9 @@ Evidence: `Int/Int_BQ76952.h:20-122`; `App/App_BatMan.c:807-928`; `official_chip
 - Do not release PSTOP except through the APP charge request flow.
 - Do not enable reverse/OTG behavior unless explicitly reviewed.
 - Confirm R17/R18/FB/ADIN actual hardware before enabling charge.
-- Confirm SC8815 INT strategy: polling-only or EXTI flag.
+- Confirm PA5 falling-edge EXTI reaches the pending flag and the SC task reads STATUS/ADC outside ISR context.
 
-Evidence: `App/App_SC8815.c:72-144,266-274`; `Int/Int_SC8815.c:49-153,235-402`; `docs/rules/hardware_rules.md:31-59`; `08_conflicts_and_unknowns.md`.
+Evidence: `App/App_SC8815.c:314-344`; `Int/Int_SC8815.c:577-594`; `bms24v_platform/Core/Src/stm32g0xx_it.c:108-116,151-157`; `docs/rules/hardware_rules.md:31-59`; `08_conflicts_and_unknowns.md`.
 
 ## Error Handling
 

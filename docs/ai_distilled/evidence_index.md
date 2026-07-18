@@ -26,7 +26,7 @@ This index records the main evidence used by the distilled project rules. Paths 
 | `bms24v_platform/Core/Src/main.c:132-139` | Local module initialization order: LED, buzzer, button, CAN FD, EEPROM, OLED, SC8815, BQ app. |
 | `bms24v_platform/Core/Src/main.c:148-169` | Bare-metal loop scheduler with `HAL_GetTick()` deltas and `HAL_Delay(10u)`. |
 | `bms24v_platform/Core/Src/main.c:254-259` | `Error_Handler()` disables IRQ and loops forever. |
-| `bms24v_platform/Core/Src/stm32g0xx_it.c:107-112` | `EXTI4_15_IRQHandler()` handles `BQ_INT_Pin`. |
+| `bms24v_platform/Core/Src/stm32g0xx_it.c:108-116,151-157` | Shared EXTI handler dispatches PA5/PB4; SC8815 callback only latches the pending flag. |
 | `bms24v_platform/Core/Src/stm32g0xx_it.c:121-126` | `TIM14_IRQHandler()` handles HAL timebase timer. |
 
 ## Hardware Configuration
@@ -41,7 +41,7 @@ This index records the main evidence used by the distilled project rules. Paths 
 | `bms24v_platform/Core/Src/i2c.c:139-146` | I2C1 pins PB6/PB7. |
 | `bms24v_platform/Core/Src/i2c.c:172-179` | I2C2 pins PA11/PA12. |
 | `bms24v_platform/Core/Src/usart.c:41-52,99-106` | USART1 115200 8N1 on PA9/PA10. |
-| `bms24v_platform/Core/Src/gpio.c:55-61,70-89` | SC8815 software I2C pins, PSTOP, CE_N initial levels and GPIO modes. |
+| `bms24v_platform/Core/Src/gpio.c:55-89` | SC8815 PA5 falling-edge EXTI, software I2C pins, PSTOP and CE_N GPIO modes. |
 | `bms24v_platform/Core/Src/gpio.c:98-114` | BMS WAKE input and BQ INT falling-edge EXTI with pull-up. |
 | `bms24v_platform/Core/Src/gpio.c:117-118` | EXTI4_15 priority and enable. |
 | `docs/rules/hardware_rules.md:23-29` | Board-level hardware summary: MCU, SC8815, BQ76952, OLED, EEPROM, CAN-FD transceiver. |
@@ -85,15 +85,15 @@ This index records the main evidence used by the distilled project rules. Paths 
 | `App/App_SC8815.h:31-51` | Public API: init, task, request charge, get state. |
 | `App/App_SC8815.c:13-19` | SC8815 app boundary: MCU controls CE_N/PSTOP, writes guarded registers, reads status/ADC. |
 | `App/App_SC8815.c:72-144` | Charge request state machine and safety checks. |
-| `App/App_SC8815.c:153-175` | STATUS/ADC sampling. |
+| `App/App_SC8815.c:195-228,314-344` | STATUS/ADC sampling and pending-flag/periodic sampling schedule. |
 | `App/App_SC8815.c:209-244` | Safe init enters standby monitor, enables ADC for observation. |
 | `App/App_SC8815.c:266-274` | `App_SC8815_RequestCharge()` is the only public path to leave standby. |
 | `Int/Int_SC8815.h:7-17` | Status enum and guard/state/range errors. |
-| `Int/Int_SC8815.h:49-109` | Public INT API for safe state, CE/PSTOP, register access, status, ADC, current limits. |
+| `Int/Int_SC8815.h:48-120` | Public INT API for safe state, CE/PSTOP, IRQ pending latch, register access, status, ADC and current limits. |
 | `Int/Int_SC8815.c:6-39` | GPIO defaults for software IIC, CE_N, PSTOP, delay cycles. |
 | `Int/Int_SC8815.c:49-153` | Bit-banged IIC primitive functions. |
 | `Int/Int_SC8815.c:235-402` | Guarded register write policy. |
-| `Int/Int_SC8815.c:480-509` | PSTOP/CE_N writes. |
+| `Int/Int_SC8815.c:504-594` | Safe GPIO init, PSTOP/CE_N writes and atomic interrupt pending latch/consume path. |
 | `Int/Int_SC8815_BSP.h:497-566` | Project ratios, external divider values, safe/forbidden register masks. |
 | `docs/logic/hardware_interface_reservation.md:90-113` | SC8815 interface and boundary: software IIC, INT, CE, PSTOP, hardware-managed charging. |
 

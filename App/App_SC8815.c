@@ -26,6 +26,7 @@
 enum
 {
     APP_SC8815_DEBUG_PERIOD_MS = 5000u,
+    APP_SC8815_SAMPLE_PERIOD_MS = 1000u,
     APP_SC8815_CHARGE_QUEUE_LEN = 1u
 };
 
@@ -59,6 +60,7 @@ typedef struct
 static App_SC8815_StateTypeDef s_sc;
 static QueueHandle_t s_charge_queue = NULL;
 static uint16_t s_debug_ms = 0u;
+static uint16_t s_sample_ms = 0u;
 
 /**
  * @brief 进入 standby monitor 安全态。
@@ -285,6 +287,7 @@ void App_SC8815_Init(void)
     s_sc.last_error = INT_SC8815_OK;
     s_charge_queue = NULL;
     s_debug_ms = 0u;
+    s_sample_ms = 0u;
 
     /*
      * InitSafe 先输出 PSTOP=1、CE_N=1，随后只使能芯片并保持 PSTOP=1，
@@ -305,18 +308,34 @@ void App_SC8815_Init(void)
 /**
  * @brief SC8815 周期任务。
  *
- * 先采样再应用状态机，保证最新 short/OTP/通信故障能阻止充电请求。
+ * 20ms 调度只检查队列和 INT pending；STATUS/ADC 保持 1s 周期采样，
+ * 中断到来时提前采样，保证最新 short/OTP/通信故障能阻止充电请求。
  */
 void App_SC8815_Task(uint16_t interval_ms)
 {
     uint8_t request;
+    bool interrupt_pending;
 
     if (s_charge_queue == NULL)
     {
         s_charge_queue = xQueueCreate(APP_SC8815_CHARGE_QUEUE_LEN, sizeof(request));
     }
 
-    App_SC8815_Sample();
+    if (s_sample_ms < APP_SC8815_SAMPLE_PERIOD_MS)
+    {
+        uint32_t elapsed_ms = (uint32_t)s_sample_ms + interval_ms;
+
+        s_sample_ms = (elapsed_ms >= APP_SC8815_SAMPLE_PERIOD_MS) ?
+                      APP_SC8815_SAMPLE_PERIOD_MS : (uint16_t)elapsed_ms;
+    }
+
+    interrupt_pending = Int_SC8815_TakeInterruptPending();
+    if (interrupt_pending || (s_sample_ms >= APP_SC8815_SAMPLE_PERIOD_MS))
+    {
+        s_sample_ms = 0u;
+        App_SC8815_Sample();
+    }
+
     if ((s_charge_queue != NULL) &&
         (xQueueReceive(s_charge_queue, &request, 0u) == pdPASS))
     {

@@ -70,13 +70,13 @@ Confidence: High. Human confirmation: Not needed.
 
 Current active IRQ evidence is minimal:
 
-- BQ INT is configured on PB4 falling edge and routed to `EXTI4_15_IRQHandler()`.
+- BQ INT PB4 and SC8815 INT PA5 share `EXTI4_15_IRQHandler()`.
 - TIM14 is HAL timebase.
-- SC8815 INT is configured as input-only, not EXTI.
+- SC8815 INT is configured as falling-edge EXTI; the ISR only latches a pending flag, and the SC task reads STATUS/ADC outside ISR context.
 - FDCAN, I2C, USART appear polling/blocking from current code evidence.
 
-Evidence: `bms24v_platform/Core/Src/gpio.c:110-118`, `bms24v_platform/Core/Src/stm32g0xx_it.c:107-126`, `bms24v_platform/Core/Src/gpio.c:64-68`, `Int/Int_CanFd.c:232-320`, `Int/Int_BQ76952.c:328-485`.  
-Confidence: High. Human confirmation: Needed for intended SC8815 INT and BQ callback design.
+Evidence: `bms24v_platform/Core/Src/gpio.c:63-67,103-111`, `bms24v_platform/Core/Src/stm32g0xx_it.c:108-116,151-157`, `Int/Int_SC8815.c:577-594`, `App/App_SC8815.c:314-344`.
+Confidence: High. Human confirmation: Needed only for physical SC8815 INT pulse verification.
 
 ## Architecture Rules For Future Code
 

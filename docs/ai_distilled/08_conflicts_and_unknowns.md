@@ -1,6 +1,6 @@
 # Conflicts And Unknowns
 
-更新日期：2026-07-12
+更新日期：2026-07-18
 
 本文只保留当前仍有执行价值的冲突、未知项和明确延期项。已由源码、实板或用户确认闭环的旧结论不再继续作为开放问题。
 
@@ -10,7 +10,6 @@
 | --- | --- | --- | --- | --- | --- |
 | O-001 | 生产故障恢复入口 | `App_Power_ClearDischargeFault()` 当前主要由 Debug CLI 调用 | Debug CLI 后期删除前，必须把安全清故障能力迁移到生产入口 | Planned | 迁移到 CAN、受控维护命令或明确的重新上电恢复策略；不得无条件清除 SCD |
 | O-002 | 预放电生产闭环 | PDSG 单独控制目前主要用于 CLI 探测，正常状态机尚未形成 `PDSG -> DSG` 可验证流程 | 接大电容负载时可能直接打开 DSG，缺少受控预充 | **Must fix** | 清洗阶段实现预放电状态、超时、压差判定、失败关断和回归测试 |
-| O-003 | SC8815 INT 配置 | 文档要求 `PA5` 为 EXTI，当前 CubeMX/生成 GPIO 仍为普通输入 | SC 故障只能等待任务轮询，响应延迟可达任务周期 | **Must fix** | 修改 `.ioc` 为 EXTI；ISR 只置 pending flag，任务读取 STATUS/ADC |
 | O-004 | RTOS 周期写法 | 当前任务直接把毫秒数传给 `vTaskDelay()`，并使用相对延时 | 配置 tick rate 改动后单位失效；任务执行时间会叠加到周期中 | **Must fix** | 使用 `pdMS_TO_TICKS()`；周期任务改为 `vTaskDelayUntil()` |
 | O-005 | 外设初始化失败策略 | CANFD、EEPROM 初始化返回值当前被忽略 | 项目要求的外设失败时仍可能继续进入 RUN | **Must fix** | 检查返回值；失败进入安全故障态并禁止正常 RUN |
 | O-006 | 充电曲线与阈值标定 | 完整放电测试已通过；充电曲线、实际截止电压、充电温升及部分保护阈值尚未形成实测记录 | 无法完成最终充电闭环和正式开发文档 | Test pending | 按 `docs/test/ai_charge_curve_test_task.md` 执行并归档证据 |
@@ -30,6 +29,7 @@
 | R-006 | 命令行构建入口 | 已解决：存在 GCC Debug/Release CMake Presets | `CMakePresets.json`、`CMakeLists.txt` |
 | R-007 | 构建产物忽略规则 | 已解决：仓库已有 `.gitignore` 覆盖常见 GCC/Keil 产物 | `.gitignore` |
 | R-008 | 完整放电测试 | 当前阶段合格，后续只保留必要回归 | 用户 2026-07-12 确认 |
+| R-009 | SC8815 INT 配置 | 已解决：PA5 为下降沿 EXTI；ISR 只置 pending flag，20ms SC 任务检查 flag 后读取 STATUS/ADC | `bms24v_platform/bms24v_platform.ioc:103-107,260-262`、`bms24v_platform/Core/Src/stm32g0xx_it.c:108-116,151-157`、`Int/Int_SC8815.c:577-594`、`App/App_SC8815.c:314-344` |
 
 ## 3. 明确不处理或延期
 
