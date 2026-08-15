@@ -16,7 +16,7 @@ V1.1 不定义充放电 MOS、预放电、故障清除或参数写入命令。CA
 | --- | --- |
 | CAN 标识符 | 11 位标准帧 |
 | 帧格式 | ISO CAN FD，BRS 开启 |
-| 仲裁段/数据段速率 | 500 kbit/s / 1 Mbit/s |
+| 仲裁段/数据段速率 | 500 kbit/s / 4 Mbit/s（整车静态通信已验证） |
 | 仲裁段/数据段采样点 | 75% / 75% |
 | 仲裁段/数据段 SJW | 250 ns / 250 ns；各控制器按自身 CAN 时钟换算 TQ |
 | 字节序 | 多字节字段均为 little-endian |
@@ -212,7 +212,7 @@ TPDO1 长度固定为 32 字节，与整车协议对象 `0x2400` 一致。
 
 ## 8. 实现依据与待验证项
 
-- FDCAN1 为标准 CAN FD、BRS，仲裁段 500 kbit/s、数据段 1 Mbit/s，位时序来自 `bms24v_platform/Core/Src/fdcan.c`。
+- FDCAN1 为标准 CAN FD、BRS，仲裁段 500 kbit/s、数据段 4 Mbit/s，位时序来自 `bms24v_platform/Core/Src/fdcan.c`；500 kbit/s / 1 Mbit/s 仍是已验证回退基线。
 - 底层标准帧收发和合法 DLC 映射位于 `Int/Int_CanFd.c`。
 - 查询、周期上报、事件队列和阈值状态机位于 `App/App_CanBms.c`。
 - 电芯顺序、电流方向和采样有效性来自 `App/App_BatMan_Sample.c`。

@@ -142,6 +142,14 @@ Int_CanFd_StatusTypeDef Int_CanFd_Init(uint16_t rx_std_id)
         return INT_CANFD_HAL;
     }
 
+    /* 4 Mbit/s BRS 补偿收发器环回延迟；ST 推荐偏移为
+     * DataTimeSeg1 * DataPrescaler，本时序对应 11 个 64 MHz TQ。 */
+    if ((HAL_FDCAN_ConfigTxDelayCompensation(&hfdcan1, 11u, 0u) != HAL_OK) ||
+        (HAL_FDCAN_EnableTxDelayCompensation(&hfdcan1) != HAL_OK))
+    {
+        return INT_CANFD_HAL;
+    }
+
     return (HAL_FDCAN_Start(&hfdcan1) == HAL_OK) ? INT_CANFD_OK : INT_CANFD_HAL;
 }
 
