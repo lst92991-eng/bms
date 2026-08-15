@@ -581,9 +581,9 @@ U15 TJA1051T/3 的VCC接5V、VIO接3.3V，S脚接GND，TXD/RXD接MCU PB9/PB8；V
 
 硬件层支持高速CAN/CAN FD物理接口，但总线只有两个物理端点时才应在两端各启用一个120Ω；中间节点必须断开H1。线束阻抗、支线长度、共模接地、屏蔽和浪涌等级未提供。
 
-固件把FDCAN1配置为Normal、FD无BRS、仲裁和数据段均约500kbit/s：`64MHz/8/(1+13+2)=500kbit/s`，采样点87.5%，SJW=2TQ。只接收全部标准ID到FIFO0并拒绝扩展/远程帧；未使能接收通知，也没有发送、协议ID、字节序或错误恢复业务。证据：`bms24v_platform/bms24v_platform.ioc:5-23,220`；`bms24v_platform/Core/Src/fdcan.c:40-58`；`Int/Int_CanFd.c:24-46`。
+固件把FDCAN1配置为Normal、FD无BRS、仲裁和数据段均约500kbit/s：`64MHz/8/(1+13+2)=500kbit/s`，采样点87.5%，SJW=2TQ。当前硬件过滤器只接收上位机查询ID `0x600`，并严格拒绝扩展帧、远程帧、经典CAN和BRS帧；`Int_CanFd` 提供轮询收发及控制器重启，`App_CanBms` 实现查询应答、每秒状态和低电/故障事件。证据：`bms24v_platform/Core/Src/fdcan.c:40-58`；`Int/Int_CanFd.c:83-227`；`App/App_CanBms.c:546-799`；`docs/protocol/bms_canfd_protocol.md`。
 
-> [UNKNOWN] CAN接口“电气可用”不等于“系统协议可用”。当前缺 DBC/ICD、报文周期、节点ID、总线off恢复、超时降级和故障注入策略。
+> [UNKNOWN] 软件协议和恢复策略已经定义，但 CAN FD 分析仪互通、无ACK、bus-off、掉线恢复、总线负载及故障注入仍未完成实板验证。
 
 ## 12. OLED、蜂鸣器与人机接口
 

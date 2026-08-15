@@ -62,6 +62,17 @@ void Int_SC8815_SetChipEnabled(bool enabled);
 void Int_SC8815_SetStandby(bool standby);
 
 /**
+ * @brief 在 SC8815 INT 下降沿 ISR 中锁存待处理事件。
+ * @note 该函数不访问软件 I2C，不调用阻塞接口。
+ */
+void Int_SC8815_NotifyInterruptFromISR(void);
+
+/**
+ * @brief 原子读取并清除 SC8815 中断待处理标志。
+ */
+bool Int_SC8815_TakeInterruptPending(void);
+
+/**
  * @brief 写 SC8815 单字节寄存器。
  * @note 所有写入都会经过项目 guard，禁止 OTG、反向输出、关闭关键保护和非法限流。
  */

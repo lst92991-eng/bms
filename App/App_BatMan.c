@@ -79,8 +79,14 @@ float soc_active_capacity_mah;
 uint32_t charge_throughput_mah;
 uint32_t discharge_throughput_mah;
 uint32_t cycle_count;
+uint32_t soh_learned_capacity_mah;
+uint32_t soh_learning_discharge_mah;
+uint16_t soh_capacity_learning_count;
 uint8_t soh_percent;
+uint8_t health_score_percent;
 uint8_t soh_confidence_percent;
+bool soh_capacity_valid;
+bool soh_learning_active;
 uint16_t balance_mask;
 
 /*
@@ -91,6 +97,9 @@ bool s_comm_fault = false;
 bool s_cells_sample_valid = false;
 bool s_current_sample_valid = false;
 bool s_temp_cell_sample_valid = false;
+bool s_soc_full_anchor_used = false;
+bool s_soc_empty_anchor_used = false;
+bool s_soh_capacity_updated = false;
 
 static uint16_t s_power_config = 0u;
 
@@ -195,8 +204,17 @@ static void App_BatMan_ResetState(void)
     charge_throughput_mah = 0u;
     discharge_throughput_mah = 0u;
     cycle_count = 0u;
-    soh_percent = 100u;
+    soh_learned_capacity_mah = 0u;
+    soh_learning_discharge_mah = 0u;
+    soh_capacity_learning_count = 0u;
+    soh_percent = 0u;
+    health_score_percent = 100u;
     soh_confidence_percent = 0u;
+    soh_capacity_valid = false;
+    soh_learning_active = false;
+    s_soc_full_anchor_used = false;
+    s_soc_empty_anchor_used = false;
+    s_soh_capacity_updated = false;
     balance_mask = BQ76952_CELL_MASK_NONE;
 
     s_comm_fault = false;
@@ -211,11 +229,12 @@ static void App_BatMan_ResetState(void)
  *
  * 流程顺序不能随意调整：
  * 1. 先复位 APP 快照和 OLED 状态；
- * 2. 初始化板级 BQ 通信并设置 CRC 模式；
- * 3. reset BQ 并读取 Device Number 验证 I2C/协议；
- * 4. 进入 ConfigUpdate 写 Data Memory；
- * 5. 退出 ConfigUpdate 后清启动告警，并明确保持主充放电 MOS 关断；
- * 6. 采样一次，给上层提供首帧有效快照。
+ * 2. 从 EEPROM 恢复累计吞吐量和已完成的容量 SOH 结果；
+ * 3. 初始化板级 BQ 通信并设置 CRC 模式；
+ * 4. reset BQ 并读取 Device Number 验证 I2C/协议；
+ * 5. 进入 ConfigUpdate 写 Data Memory；
+ * 6. 退出 ConfigUpdate 后清启动告警，并明确保持主充放电 MOS 关断；
+ * 7. 采样一次，给上层提供首帧有效快照。
  */
 void App_BatMan_Init(void)
 {
@@ -228,6 +247,14 @@ void App_BatMan_Init(void)
     /* OLED 先显示 FAIL，直到 Device Number 读取成功。 */
     App_BatMan_ResetState();
     App_BatMan_InitAlgorithms();
+    if (App_BatMan_NvmInit())
+    {
+        printf("SOH持久化: EEPROM在线\r\n");
+    }
+    else
+    {
+        printf("SOH持久化: EEPROM暂不可用，将周期重试\r\n");
+    }
     App_OLED_ShowIicStatus(false);
     printf("电池管理初始化: 状态复位完成\r\n");
 
@@ -359,8 +386,9 @@ void App_BatMan_Init(void)
     printf("电池管理首帧采样: 开始\r\n");
     App_BatMan_Sample();
     App_BatMan_UpdateRcModel(0u);
-    App_BatMan_UpdateHealth(0u);
     App_BatMan_UpdateSoc(0u);
+    App_BatMan_UpdateHealth(0u);
+    App_BatMan_NvmTask(0u);
     App_BatMan_UpdateBalance(APP_BATMAN_BALANCE_PERIOD_MS);
     App_BatMan_UpdateRuntimeOledStatus();
     printf("电池管理初始化成功\r\n");
@@ -382,8 +410,9 @@ void App_BatMan_Task(uint32_t interval_ms)
 
     App_BatMan_Sample();
     App_BatMan_UpdateRcModel(interval_ms);
-    App_BatMan_UpdateHealth(interval_ms);
     App_BatMan_UpdateSoc(interval_ms);
+    App_BatMan_UpdateHealth(interval_ms);
+    App_BatMan_NvmTask(interval_ms);
     App_BatMan_UpdateBalance(interval_ms);
     App_BatMan_UpdateRuntimeOledStatus();
     App_BatMan_UpdateDebugOutput(interval_ms);

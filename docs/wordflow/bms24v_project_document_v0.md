@@ -123,20 +123,19 @@ App_Main();
 
 ### 4.3 APP 层初始化顺序
 
-`App_Main_Init()` 先初始化 LED、CANFD、EEPROM、OLED，再初始化 SC8815、BQ76952、电源策略和 CLI。这个顺序有实际意义：SC8815 初始化后只进入“可通信但不充电”的 standby monitor；BQ 初始化后默认保持主 FET 关断；最后由 `App_Power` 统一决定什么时候允许充电、放电或唤醒。
+`App_Main_Init()` 依次初始化 LED、OLED、SC8815、BQ76952/SOH、电源策略、CAN FD 遥测协议和 CLI。EEPROM 探测与 SOH 双槽恢复由 `App_BatMan_Init()` 内部完成；失败时后台周期重连。这个顺序有实际意义：SC8815 初始化后只进入“可通信但不充电”的 standby monitor；BQ 初始化后默认保持主 FET 关断；最后由 `App_Power` 统一决定什么时候允许充电、放电或唤醒。
 
 ```c
 Int_Led_Init();
-(void)Int_CanFd_Init();
-(void)Int_EEPROM_Init();
 App_OLED_Init();
 App_SC8815_Init();
 App_BatMan_Init();
 App_Power_Init();
+(void)App_CanBms_Init();
 App_DebugCli_Init();
 ```
 
-代码出处：`App/App_Main.c:79-98`。
+代码出处：`App/App_Main.c:128-148`。
 
 ### 4.4 FreeRTOS 三个任务
 

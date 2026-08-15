@@ -1,5 +1,8 @@
 #include "App_Power.h"
 
+#include "FreeRTOS.h"
+#include "task.h"
+
 #include <stdio.h>
 
 #include "App_BatMan.h"
@@ -50,6 +53,7 @@ static bool s_low_power_sound_played;
 static bool s_bq_shutdown_seen_offline;
 static uint32_t s_bq_wake_ms;
 static uint16_t s_debug_ms;
+static bool s_bq_shutdown_requested;
 
 static void App_Power_SetOutput(bool charge_fet_enable,
                                 bool discharge_enable,
@@ -126,7 +130,7 @@ static bool App_Power_RecoverBqAfterShutdown(void)
     return false;
 }
 
-bool App_Power_RequestBqShutdown(void)
+static bool App_Power_ExecuteBqShutdown(void)
 {
     App_SC8815_RequestCharge(false);
     s_charge_allowed = false;
@@ -145,6 +149,18 @@ bool App_Power_RequestBqShutdown(void)
     }
 
     s_power_state = APP_POWER_STATE_BQ_SHUTDOWN;
+    return true;
+}
+
+bool App_Power_RequestBqShutdown(void)
+{
+    /*
+     * CLI 只提交单比特请求；真正的 FET、EEPROM 和 BQ 操作统一由高优先级
+     * BatMan/Power 任务执行，避免跨任务抢占 I2C 和 NVM 静态状态。
+     */
+    taskENTER_CRITICAL();
+    s_bq_shutdown_requested = true;
+    taskEXIT_CRITICAL();
     return true;
 }
 
@@ -290,6 +306,7 @@ void App_Power_Init(void)
     s_bq_shutdown_seen_offline = false;
     s_bq_wake_ms = 0u;
     s_debug_ms = 0u;
+    s_bq_shutdown_requested = false;
 
     /* App_BatMan 初始化已建立全 FET 关断态，首帧有效采样后再进入预放电。 */
     App_SC8815_RequestCharge(false);
@@ -306,6 +323,25 @@ void App_Power_Task(uint32_t interval_ms)
     bool discharge_temp_ok;
     bool discharge_over_current;
     bool bq_online;
+    bool shutdown_requested;
+
+    taskENTER_CRITICAL();
+    shutdown_requested = s_bq_shutdown_requested;
+    s_bq_shutdown_requested = false;
+    taskEXIT_CRITICAL();
+
+    if (shutdown_requested)
+    {
+        if (App_Power_ExecuteBqShutdown())
+        {
+            printf("电源关机请求: 已执行，等待 BQ 掉电\r\n");
+        }
+        else
+        {
+            printf("电源关机请求: 执行失败，进入故障态\r\n");
+        }
+        return;
+    }
 
     bq_online = App_BatMan_IsOnline();
     cell_ok = bq_online &&

@@ -16,6 +16,7 @@ static bool s_last_iic_ok = false;
 static bool s_battery_status_valid = false;
 static uint8_t s_last_soc_percent = 0u;
 static uint8_t s_last_soh_percent = 0u;
+static bool s_last_soh_valid = false;
 
 /**
  * @brief 将浮点百分比限制并四舍五入到 0~100。
@@ -59,9 +60,10 @@ static void App_OLED_MakePercentLine(const char *name, uint8_t percent, char *li
  * 页面很小，整屏刷新更容易保证错误、复位和状态变化后的显示一致性。
  */
 static void App_OLED_Render(bool ok,
-                            bool battery_valid,
-                            uint8_t soc_percent,
-                            uint8_t soh_percent)
+                             bool battery_valid,
+                             uint8_t soc_percent,
+                             bool soh_valid,
+                             uint8_t soh_percent)
 {
     char soc_line[8];
     char soh_line[8];
@@ -73,9 +75,16 @@ static void App_OLED_Render(bool ok,
     if (ok && battery_valid)
     {
         App_OLED_MakePercentLine("SOC", soc_percent, soc_line);
-        App_OLED_MakePercentLine("SOH", soh_percent, soh_line);
         Inf_OLED_ShowText16(0u, 32u, soc_line);
-        Inf_OLED_ShowText16(0u, 48u, soh_line);
+        if (soh_valid)
+        {
+            App_OLED_MakePercentLine("SOH", soh_percent, soh_line);
+            Inf_OLED_ShowText16(0u, 48u, soh_line);
+        }
+        else
+        {
+            Inf_OLED_ShowText16(0u, 48u, "SOH:---");
+        }
     }
     else
     {
@@ -120,9 +129,10 @@ void App_OLED_ShowIicStatus(bool ok)
     s_last_iic_ok = ok;
 
     App_OLED_Render(ok,
-                    ok && s_battery_status_valid,
-                    s_last_soc_percent,
-                    s_last_soh_percent);
+                     ok && s_battery_status_valid,
+                     s_last_soc_percent,
+                     s_last_soh_valid,
+                     s_last_soh_percent);
 }
 
 /**
@@ -137,7 +147,10 @@ void App_OLED_ShowBqIicPowerConfig(bool ok, uint16_t power_config)
 /**
  * @brief 刷新运行态 SOC/SOH；数值不变时不重复访问 OLED。
  */
-void App_OLED_ShowBatteryStatus(bool ok, float soc_percent, uint8_t soh_percent)
+void App_OLED_ShowBatteryStatus(bool ok,
+                                float soc_percent,
+                                bool soh_valid,
+                                uint8_t soh_percent)
 {
     uint8_t soc_value;
 
@@ -156,6 +169,7 @@ void App_OLED_ShowBatteryStatus(bool ok, float soc_percent, uint8_t soh_percent)
         (s_last_iic_ok == ok) &&
         (s_battery_status_valid == ok) &&
         (!ok || ((s_last_soc_percent == soc_value) &&
+                 (s_last_soh_valid == soh_valid) &&
                  (s_last_soh_percent == soh_percent))))
     {
         return;
@@ -167,8 +181,13 @@ void App_OLED_ShowBatteryStatus(bool ok, float soc_percent, uint8_t soh_percent)
     if (ok)
     {
         s_last_soc_percent = soc_value;
+        s_last_soh_valid = soh_valid;
         s_last_soh_percent = soh_percent;
     }
 
-    App_OLED_Render(ok, ok, s_last_soc_percent, s_last_soh_percent);
+    App_OLED_Render(ok,
+                    ok,
+                    s_last_soc_percent,
+                    s_last_soh_valid,
+                    s_last_soh_percent);
 }

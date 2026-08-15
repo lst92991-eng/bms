@@ -35,6 +35,8 @@ target_sources(${TARGET_NAME}
         ${CMAKE_CURRENT_SOURCE_DIR}/App/App_BatMan_Sample.c
         ${CMAKE_CURRENT_SOURCE_DIR}/App/App_BatMan_Estimator.c
         ${CMAKE_CURRENT_SOURCE_DIR}/App/App_BatMan_Debug.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/App/App_BatMan_Nvm.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/App/App_CanBms.c
         ${CMAKE_CURRENT_SOURCE_DIR}/App/App_DebugCli.c
         ${CMAKE_CURRENT_SOURCE_DIR}/App/App_OLED.c
         ${CMAKE_CURRENT_SOURCE_DIR}/App/App_Power.c

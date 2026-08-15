@@ -23,6 +23,7 @@ bool App_Power_IsDischargeAllowed(void);
 void App_Power_PrintSnapshot(void);
 void App_Power_PrintStopReason(void);
 bool App_Power_ClearDischargeFault(void);
+/* 跨任务调用只提交请求；FET、EEPROM 和 BQ 操作由 Power 任务串行执行。 */
 bool App_Power_RequestBqShutdown(void);
 
 #endif /* APP_POWER_H */

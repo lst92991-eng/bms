@@ -397,7 +397,7 @@ static void App_DebugCli_ProcessLine(char *line)
         s_csv_ms = 0u;
         if (App_Power_RequestBqShutdown())
         {
-            printf("CLI BQ shutdown: 已发送，等待芯片掉电；插入充电器后由BQ_WAKE逻辑尝试唤醒\r\n");
+            printf("CLI BQ shutdown: 请求已提交，将由电源任务安全执行\r\n");
         }
         else
         {
