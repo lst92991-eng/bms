@@ -176,7 +176,7 @@ Int_CanFd_StatusTypeDef Int_CanFd_Send(uint16_t std_id, const uint8_t *data, uin
     header.TxFrameType = FDCAN_DATA_FRAME;
     header.DataLength = dlc;
     header.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
-    header.BitRateSwitch = FDCAN_BRS_OFF;
+    header.BitRateSwitch = FDCAN_BRS_ON;
     header.FDFormat = FDCAN_FD_CAN;
     header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
     header.MessageMarker = 0u;
@@ -219,7 +219,7 @@ Int_CanFd_StatusTypeDef Int_CanFd_Receive(Int_CanFd_FrameTypeDef *frame)
     if ((header.IdType != FDCAN_STANDARD_ID) ||
         (header.RxFrameType != FDCAN_DATA_FRAME) ||
         (header.FDFormat != FDCAN_FD_CAN) ||
-        (header.BitRateSwitch != FDCAN_BRS_OFF) ||
+        (header.BitRateSwitch != FDCAN_BRS_ON) ||
         (header.Identifier > INT_CANFD_STD_ID_MAX) ||
         !Int_CanFd_DlcToLength(header.DataLength, &len))
     {

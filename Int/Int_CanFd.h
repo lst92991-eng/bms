@@ -22,7 +22,7 @@ typedef struct
 /* 初始化或重新启动 FDCAN1，仅将指定的 11 位标准 ID 接收到 FIFO0。 */
 Int_CanFd_StatusTypeDef Int_CanFd_Init(uint16_t rx_std_id);
 
-/* 发送标准 11 位 ID、CAN FD、无 BRS 的数据帧。 */
+/* 发送标准 11 位 ID、CAN FD、BRS 的数据帧。 */
 Int_CanFd_StatusTypeDef Int_CanFd_Send(uint16_t std_id, const uint8_t *data, uint8_t len);
 
 /* 轮询 FIFO0；没有数据时立即返回 INT_CANFD_EMPTY。 */

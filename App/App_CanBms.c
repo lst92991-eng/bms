@@ -12,11 +12,11 @@
 
 /**
  * @file App_CanBms.c
- * @brief BMS CAN FD 查询、周期遥测和事件上报应用层。
+ * @brief BMS CAN FD 查询和整车 TPDO1 状态遥测应用层。
  *
  * CAN 驱动采用轮询接口，因此本模块应由独立周期任务调用。发送 FIFO 忙时只保留
  * 一帧待发送数据并在下个周期重试；周期状态采用合并策略，避免总线阻塞后补发大量
- * 过期状态。事件使用小型队列保存触发瞬间的数据。
+ * 过期状态。关键状态变化使用小型队列保存触发瞬间的 TPDO1 快照。
  */
 
 enum
@@ -34,7 +34,6 @@ enum
     APP_CAN_BMS_INVALID_PERCENT = 0xFFu,
     APP_CAN_BMS_ERROR_RESPONSE_LEN = 8u,
     APP_CAN_BMS_CELL_RESPONSE_LEN = 20u,
-    APP_CAN_BMS_EVENT_LEN = 20u,
     APP_CAN_BMS_PROTECTION_RESPONSE_LEN = 24u,
     APP_CAN_BMS_STATUS_LEN = 32u,
     APP_CAN_BMS_SOH_RESPONSE_LEN = 32u
@@ -93,7 +92,7 @@ typedef struct
 
 typedef struct
 {
-    uint8_t data[APP_CAN_BMS_EVENT_LEN];
+    uint8_t data[APP_CAN_BMS_STATUS_LEN];
 } App_CanBms_EventFrameTypeDef;
 
 typedef enum
@@ -110,7 +109,7 @@ static bool s_low_soc_active;
 static bool s_critical_soc_active;
 static bool s_fault_seen;
 static bool s_fault_active;
-static uint8_t s_unsolicited_sequence;
+static uint32_t s_uptime_ms;
 static uint32_t s_status_elapsed_ms;
 static uint32_t s_reinit_elapsed_ms;
 
@@ -173,6 +172,22 @@ static uint8_t App_CanBms_MakePercent(float value, bool valid)
     }
 
     return (uint8_t)(value + 0.5f);
+}
+
+static int16_t App_CanBms_TempToDeciC(int16_t temp_c)
+{
+    int32_t temp_deci_c = (int32_t)temp_c * 10;
+
+    if (temp_deci_c > INT16_MAX)
+    {
+        return INT16_MAX;
+    }
+    if (temp_deci_c < INT16_MIN)
+    {
+        return INT16_MIN;
+    }
+
+    return (int16_t)temp_deci_c;
 }
 
 /**
@@ -319,38 +334,25 @@ static void App_CanBms_FillStatusBody(uint8_t data[APP_CAN_BMS_STATUS_LEN],
     App_CanBms_WriteU16Le(&data[20], snapshot->cell_min_mv);
     App_CanBms_WriteU16Le(&data[22], snapshot->cell_max_mv);
     App_CanBms_WriteU16Le(&data[24], snapshot->cell_delta_mv);
-    App_CanBms_WriteI16Le(&data[26], snapshot->temp_cell_c);
+    App_CanBms_WriteI16Le(&data[26], App_CanBms_TempToDeciC(snapshot->temp_cell_c));
     App_CanBms_WriteU16Le(&data[28],
                           App_CanBms_MakeLogicalBalanceMask(snapshot->balance_mask));
     data[30] = snapshot->health_score;
     data[31] = 0u;
 }
 
-static void App_CanBms_BuildEvent(uint8_t event_code,
-                                  const App_CanBms_SnapshotTypeDef *snapshot,
-                                  uint8_t data[APP_CAN_BMS_EVENT_LEN])
+static void App_CanBms_BuildEvent(const App_CanBms_SnapshotTypeDef *snapshot,
+                                  uint8_t data[APP_CAN_BMS_STATUS_LEN])
 {
-    bool soc_valid = App_CanBms_IsSocValid(snapshot);
-
-    (void)memset(data, 0, APP_CAN_BMS_EVENT_LEN);
-    data[0] = APP_CAN_BMS_PROTOCOL_VERSION;
-    data[1] = event_code;
-    data[2] = s_unsolicited_sequence++;
-    data[3] = 0u;
-    App_CanBms_WriteU16Le(&data[4], App_CanBms_MakeFlags(snapshot));
-    data[6] = App_CanBms_MakePercent(snapshot->soc_percent, soc_valid);
-    data[7] = (uint8_t)snapshot->power_state;
-    App_CanBms_WriteU16Le(&data[8], snapshot->cell_min_mv);
-    App_CanBms_WriteU16Le(&data[10], snapshot->cell_max_mv);
-    App_CanBms_WriteU32Le(&data[12], snapshot->pack_mv);
-    App_CanBms_WriteI32Le(&data[16], snapshot->current_ma);
+    (void)memset(data, 0, APP_CAN_BMS_STATUS_LEN);
+    App_CanBms_WriteU32Le(&data[0], s_uptime_ms);
+    App_CanBms_FillStatusBody(data, snapshot);
 }
 
 /**
  * @brief 保存状态变化事件；队列满时淘汰最旧事件，保证最新安全状态可见。
  */
-static void App_CanBms_QueueEvent(uint8_t event_code,
-                                  const App_CanBms_SnapshotTypeDef *snapshot)
+static void App_CanBms_QueueEvent(const App_CanBms_SnapshotTypeDef *snapshot)
 {
     uint8_t tail;
 
@@ -361,7 +363,7 @@ static void App_CanBms_QueueEvent(uint8_t event_code,
     }
 
     tail = (uint8_t)((s_event_head + s_event_count) % APP_CAN_BMS_EVENT_QUEUE_CAPACITY);
-    App_CanBms_BuildEvent(event_code, snapshot, s_event_queue[tail].data);
+    App_CanBms_BuildEvent(snapshot, s_event_queue[tail].data);
     s_event_count++;
 }
 
@@ -375,15 +377,13 @@ static void App_CanBms_UpdateEventState(const App_CanBms_SnapshotTypeDef *snapsh
         s_fault_active = snapshot->fault;
         if (snapshot->fault)
         {
-            App_CanBms_QueueEvent(APP_CAN_BMS_EVENT_FAULT_ACTIVE, snapshot);
+            App_CanBms_QueueEvent(snapshot);
         }
     }
     else if (snapshot->fault != s_fault_active)
     {
         s_fault_active = snapshot->fault;
-        App_CanBms_QueueEvent(snapshot->fault ? APP_CAN_BMS_EVENT_FAULT_ACTIVE
-                                              : APP_CAN_BMS_EVENT_FAULT_CLEARED,
-                              snapshot);
+        App_CanBms_QueueEvent(snapshot);
     }
 
     /* SOC 无效时保持原告警锁存，不能把通信丢失误判成低电恢复。 */
@@ -399,12 +399,12 @@ static void App_CanBms_UpdateEventState(const App_CanBms_SnapshotTypeDef *snapsh
         {
             s_low_soc_active = true;
             s_critical_soc_active = true;
-            App_CanBms_QueueEvent(APP_CAN_BMS_EVENT_CRITICAL_SOC, snapshot);
+            App_CanBms_QueueEvent(snapshot);
         }
         else if (snapshot->soc_percent <= (float)APP_CAN_BMS_LOW_SOC_PERCENT)
         {
             s_low_soc_active = true;
-            App_CanBms_QueueEvent(APP_CAN_BMS_EVENT_LOW_SOC, snapshot);
+            App_CanBms_QueueEvent(snapshot);
         }
         return;
     }
@@ -415,12 +415,12 @@ static void App_CanBms_UpdateEventState(const App_CanBms_SnapshotTypeDef *snapsh
         {
             s_low_soc_active = true;
             s_critical_soc_active = true;
-            App_CanBms_QueueEvent(APP_CAN_BMS_EVENT_CRITICAL_SOC, snapshot);
+            App_CanBms_QueueEvent(snapshot);
         }
         else if (snapshot->soc_percent <= (float)APP_CAN_BMS_LOW_SOC_PERCENT)
         {
             s_low_soc_active = true;
-            App_CanBms_QueueEvent(APP_CAN_BMS_EVENT_LOW_SOC, snapshot);
+            App_CanBms_QueueEvent(snapshot);
         }
         return;
     }
@@ -429,7 +429,7 @@ static void App_CanBms_UpdateEventState(const App_CanBms_SnapshotTypeDef *snapsh
         (snapshot->soc_percent <= (float)APP_CAN_BMS_CRITICAL_SOC_PERCENT))
     {
         s_critical_soc_active = true;
-        App_CanBms_QueueEvent(APP_CAN_BMS_EVENT_CRITICAL_SOC, snapshot);
+        App_CanBms_QueueEvent(snapshot);
     }
 
     /* 低电和严重低电均保持锁存，只有达到统一恢复阈值才解除，避免阈值附近重复告警。 */
@@ -437,7 +437,7 @@ static void App_CanBms_UpdateEventState(const App_CanBms_SnapshotTypeDef *snapsh
     {
         s_low_soc_active = false;
         s_critical_soc_active = false;
-        App_CanBms_QueueEvent(APP_CAN_BMS_EVENT_SOC_RECOVERED, snapshot);
+        App_CanBms_QueueEvent(snapshot);
     }
 }
 
@@ -510,9 +510,7 @@ static bool App_CanBms_FlushPending(void)
 
 static void App_CanBms_PrioritizeEvent(void)
 {
-    if (s_tx_pending &&
-        (s_pending_frame.id != APP_CAN_BMS_ID_EVENT) &&
-        (s_event_count > 0u))
+    if (s_tx_pending && (s_event_count > 0u))
     {
         /* 故障/低电事件可淘汰尚未进入硬件 FIFO 的旧查询应答或周期帧。 */
         s_tx_pending = false;
@@ -650,9 +648,9 @@ static bool App_CanBms_SendNextEvent(void)
         return true;
     }
 
-    send_result = App_CanBms_SendOrDefer(APP_CAN_BMS_ID_EVENT,
+    send_result = App_CanBms_SendOrDefer(APP_CAN_BMS_ID_PERIODIC_STATUS,
                                          s_event_queue[s_event_head].data,
-                                         APP_CAN_BMS_EVENT_LEN);
+                                         APP_CAN_BMS_STATUS_LEN);
     /* DEFERRED 时待发送槽已接管帧；内部参数错误也必须出队，避免永久卡住事件队头。 */
     s_event_head = (uint8_t)((s_event_head + 1u) % APP_CAN_BMS_EVENT_QUEUE_CAPACITY);
     s_event_count--;
@@ -713,10 +711,7 @@ static bool App_CanBms_SendPeriodicStatus(const App_CanBms_SnapshotTypeDef *snap
         return true;
     }
 
-    data[0] = APP_CAN_BMS_PROTOCOL_VERSION;
-    data[1] = APP_CAN_BMS_QUERY_STATUS_SUMMARY;
-    data[2] = s_unsolicited_sequence++;
-    data[3] = 0u;
+    App_CanBms_WriteU32Le(&data[0], s_uptime_ms);
     App_CanBms_FillStatusBody(data, snapshot);
 
     send_result = App_CanBms_SendOrDefer(APP_CAN_BMS_ID_PERIODIC_STATUS,
@@ -757,7 +752,7 @@ bool App_CanBms_Init(void)
     s_critical_soc_active = false;
     s_fault_seen = false;
     s_fault_active = false;
-    s_unsolicited_sequence = 0u;
+    s_uptime_ms = 0u;
     s_status_elapsed_ms = APP_CAN_BMS_PERIODIC_STATUS_MS;
     s_reinit_elapsed_ms = 0u;
     s_tx_pending = false;
@@ -778,6 +773,7 @@ void App_CanBms_Task(uint32_t interval_ms)
         (void)App_CanBms_Init();
     }
 
+    s_uptime_ms += interval_ms;
     s_status_elapsed_ms = App_CanBms_AddElapsed(s_status_elapsed_ms,
                                                  interval_ms,
                                                  APP_CAN_BMS_PERIODIC_STATUS_MS);

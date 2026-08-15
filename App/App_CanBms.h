@@ -14,10 +14,10 @@
  * 帧格式：
  * - 0x600 查询请求固定 3 B：[版本, 命令, 主机序号]。
  * - 0x580 查询应答公共头 4 B：[版本, 命令, 主机序号, 结果]。
- * - 0x180 周期状态 32 B：[版本, 0x01, 设备序号, 保留] + 状态摘要。
- * - 0x100 事件 20 B：[版本, 事件码, 设备序号, 保留] + 触发瞬间快照。
+ * - 0x183 TPDO1 32 B：[节点启动毫秒时间戳] + 状态摘要；每秒及关键状态变化发送。
+ * - 0x600/0x580 仅保留旧板测查询兼容，整车运行网络不得使用。
  *
- * 电压、电流、容量和温度单位分别为 mV、mA、mAh、摄氏度；有符号电流正值
+ * 电压、电流、容量和 TPDO 温度单位分别为 mV、mA、mAh、0.1 摄氏度；有符号电流正值
  * 表示充电、负值表示放电。百分比无效值编码为 0xFF。
  */
 
@@ -25,8 +25,7 @@ enum
 {
     APP_CAN_BMS_PROTOCOL_VERSION = 1u,
 
-    APP_CAN_BMS_ID_EVENT = 0x100u,
-    APP_CAN_BMS_ID_PERIODIC_STATUS = 0x180u,
+    APP_CAN_BMS_ID_PERIODIC_STATUS = 0x183u,
     APP_CAN_BMS_ID_QUERY_RESPONSE = 0x580u,
     APP_CAN_BMS_ID_QUERY_REQUEST = 0x600u,
 
@@ -34,12 +33,6 @@ enum
     APP_CAN_BMS_QUERY_CELL_VOLTAGES = 0x02u,
     APP_CAN_BMS_QUERY_SOH_STATISTICS = 0x03u,
     APP_CAN_BMS_QUERY_PROTECTION_STATUS = 0x04u,
-
-    APP_CAN_BMS_EVENT_LOW_SOC = 0x01u,
-    APP_CAN_BMS_EVENT_CRITICAL_SOC = 0x02u,
-    APP_CAN_BMS_EVENT_SOC_RECOVERED = 0x03u,
-    APP_CAN_BMS_EVENT_FAULT_ACTIVE = 0x04u,
-    APP_CAN_BMS_EVENT_FAULT_CLEARED = 0x05u,
 
     APP_CAN_BMS_RESULT_OK = 0x00u,
     APP_CAN_BMS_RESULT_UNSUPPORTED_VERSION = 0x01u,
