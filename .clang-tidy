@@ -1,0 +1,20 @@
+---
+Checks: >
+  -*,
+  clang-analyzer-*,
+  bugprone-*,
+  cert-*,
+  performance-*,
+  portability-*,
+  -bugprone-easily-swappable-parameters,
+  -cert-err33-c,
+  -clang-analyzer-security.insecureAPI.DeprecatedOrUnsafeBufferHandling
+WarningsAsErrors: '*'
+HeaderFilterRegex: '(^|/)(firmware|tests)/.*'
+AnalyzeTemporaryDtors: false
+FormatStyle: file
+CheckOptions:
+  bugprone-assert-side-effect.AssertMacros: 'assert,configASSERT,EXPECT_TRUE,EXPECT_FALSE,EXPECT_EQ_U32'
+  bugprone-narrowing-conversions.PedanticMode: 'true'
+  cert-dcl16-c.NewSuffixes: 'L;LL;LU;LLU'
+...
