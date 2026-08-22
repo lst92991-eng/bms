@@ -77,8 +77,31 @@ jobs:
       - name: Run host tests
         run: ctest --test-dir build/host --output-on-failure
 
+      - name: Configure sanitizer tests
+        run: |
+          cmake \
+            -S tests \
+            -B build/sanitize \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_FLAGS="-fsanitize=address,undefined -fno-omit-frame-pointer" \
+            -DCMAKE_EXE_LINKER_FLAGS="-fsanitize=address,undefined"
+
+      - name: Build sanitizer tests
+        run: cmake --build build/sanitize --parallel
+
+      - name: Run sanitizer tests
+        env:
+          ASAN_OPTIONS: detect_leaks=1:halt_on_error=1
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+        run: ctest --test-dir build/sanitize --output-on-failure
+
       - name: Run clang-tidy on domain logic
-        run: clang-tidy -p build/host firmware/domain/bms_fault.c
+        run: |
+          clang-tidy \
+            -p build/host \
+            firmware/domain/bms_fault.c \
+            firmware/domain/bms_safety.c
 
       - name: Run cppcheck on BMS V2 sources
         run: |
