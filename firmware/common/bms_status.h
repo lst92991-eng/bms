@@ -1,0 +1,28 @@
+#ifndef BMS_STATUS_H
+#define BMS_STATUS_H
+
+#ifdef __cplusplus
+extern "C" {
+#endif
+
+typedef enum
+{
+    BMS_STATUS_OK = 0,
+    BMS_STATUS_INVALID_ARGUMENT,
+    BMS_STATUS_NOT_INITIALIZED,
+    BMS_STATUS_BUSY,
+    BMS_STATUS_TIMEOUT,
+    BMS_STATUS_IO_ERROR,
+    BMS_STATUS_PROTOCOL_ERROR,
+    BMS_STATUS_CRC_ERROR,
+    BMS_STATUS_RANGE_ERROR,
+    BMS_STATUS_STATE_ERROR,
+    BMS_STATUS_CONFIG_MISMATCH,
+    BMS_STATUS_INTERNAL_ERROR
+} BmsStatus;
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif /* BMS_STATUS_H */
