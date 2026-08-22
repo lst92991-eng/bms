@@ -56,11 +56,10 @@ jobs:
           )
           if not files:
               raise SystemExit("No BMS V2 C source files found")
-          subprocess.run(
-              ["clang-format", "--dry-run", "--Werror", *files],
-              check=True,
-          )
+          subprocess.run(["clang-format", "-i", *files], check=True)
           PY
+          git diff -- firmware tests
+          git diff --exit-code -- firmware tests
 
       - name: Configure host tests
         run: |
@@ -131,6 +130,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes --no-install-recommends \
             gcc-arm-none-eabi \
+            libnewlib-arm-none-eabi \
             ninja-build
 
       - name: Configure Debug firmware
