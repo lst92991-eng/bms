@@ -1,7 +1,8 @@
 #include "App_DebugCli.h"
 
+#if APP_DEBUG_CLI_ENGINEERING_ENABLED
+
 #include <stdbool.h>
-#include <stdio.h>
 #include <string.h>
 
 #include "FreeRTOS.h"
@@ -10,16 +11,15 @@
 /*
  * AI bring-up/debug 专用串口入口。
  *
- * 本模块允许临时读取 BQ/SC/Power 状态、输出 CSV 数据、触发少量手动探测命令。
+ * 本模块仅允许读取状态、输出 CSV，以及向 Power supervisor 提交受控请求。
  * 生产业务不能依赖这里的命令才能运行；删除步骤见 docs/rules/debug_cli_removal.md。
  */
 #include "App_BatMan.h"
+#include "App_Buzzer.h"
 #include "App_Power.h"
 #include "App_SC8815.h"
-#include "Int_BQ76952.h"
-#include "Int_BQ76952_BSP.h"
+#include "Int_Log.h"
 #include "Int_SC8815.h"
-#include "Int_SC8815_BSP.h"
 #include "main.h"
 #include "usart.h"
 
@@ -32,7 +32,7 @@ enum
     APP_DEBUG_CLI_BQ_PERIOD_MS = 1000u,
     APP_DEBUG_CLI_BQ_FAST_PERIOD_MS = 200u,
     APP_DEBUG_CLI_PACK_RAW_MAX_MV = 5000u,
-    APP_DEBUG_CLI_PDSG_PROBE_COUNT = 20u
+    APP_DEBUG_CLI_UNLOCK_TIMEOUT_MS = 60000u
 };
 
 static char s_cli_line[APP_DEBUG_CLI_LINE_SIZE];
@@ -48,6 +48,8 @@ static bool s_bq_monitor_enabled;
 static bool s_bq_monitor_stop_on_fault;
 static uint16_t s_bq_monitor_period_ms;
 static uint16_t s_bq_monitor_ms;
+static bool s_cli_unlocked;
+static uint32_t s_cli_unlock_ms;
 
 static void App_DebugCli_StartRx(void)
 {
@@ -117,7 +119,9 @@ static void App_DebugCli_Normalize(char *line)
 
 static void App_DebugCli_PrintHelp(void)
 {
-    printf("CLI help: help ping diag bq bq on bqfast on bq off bq shutdown power fault clear scd clear dsg clear pdsg test pdsg probe pdsg off sc scprobe charge on charge off csv csv on csv off\r\n");
+    Int_Log_Printf(
+        "CLI help: unlock <token> help ping lanhua diag bq bq on bqfast on bq off bq shutdown "
+        "power fault clear sc charge on charge off csv csv on csv off\r\n");
 }
 
 static void App_DebugCli_PrintSignedMilli(int32_t milli_value)
@@ -126,24 +130,23 @@ static void App_DebugCli_PrintSignedMilli(int32_t milli_value)
 
     if (milli_value < 0)
     {
-        printf("-");
-        abs_value = (uint32_t)(-milli_value);
+        Int_Log_Printf("-");
+        /* 先向零偏移再取反，避免 INT32_MIN 的有符号溢出。 */
+        abs_value = (uint32_t)(-(milli_value + 1)) + 1u;
     }
     else
     {
         abs_value = (uint32_t)milli_value;
     }
 
-    printf("%lu.%03lu",
-           (unsigned long)(abs_value / 1000u),
-           (unsigned long)(abs_value % 1000u));
+    Int_Log_Printf(
+        "%lu.%03lu", (unsigned long)(abs_value / 1000u), (unsigned long)(abs_value % 1000u));
 }
 
 static void App_DebugCli_PrintUnsignedMilli(uint32_t milli_value)
 {
-    printf("%lu.%03lu",
-           (unsigned long)(milli_value / 1000u),
-           (unsigned long)(milli_value % 1000u));
+    Int_Log_Printf(
+        "%lu.%03lu", (unsigned long)(milli_value / 1000u), (unsigned long)(milli_value % 1000u));
 }
 
 static void App_DebugCli_PrintCsvFrame(void)
@@ -155,7 +158,7 @@ static void App_DebugCli_PrintCsvFrame(void)
 
     /*
      * BatMan 任务会成组更新 PACK、电流和 6 节电压。先复制完整快照，
-     * 避免任务切换发生在多次 printf 之间时，同一 CSV 行混入前后两帧。
+     * 避免任务切换发生在多次格式化输出之间时，同一 CSV 行混入前后两帧。
      */
     taskENTER_CRITICAL();
     csv_current_ma = current_ma;
@@ -174,31 +177,33 @@ static void App_DebugCli_PrintCsvFrame(void)
 
     /* current/voltage/time 分别按 A/V/s 输出，均保留 3 位小数。 */
     App_DebugCli_PrintSignedMilli(csv_current_ma);
-    printf(",");
+    Int_Log_Printf(",");
     App_DebugCli_PrintUnsignedMilli(csv_pack_mv);
     for (uint8_t i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
     {
-        printf(",");
+        Int_Log_Printf(",");
         App_DebugCli_PrintUnsignedMilli(csv_cell_mv[i]);
     }
-    printf(",");
+    Int_Log_Printf(",");
     App_DebugCli_PrintUnsignedMilli(frame_time_ms);
-    printf("\r\n");
+    Int_Log_Printf("\r\n");
 }
 
 static void App_DebugCli_PrintSc(void)
 {
-    printf("---------- SC8815详细 ----------\r\n");
-    printf("CLI sc comm:%u ac:%u fault:%u charging:%u vbus:%lu vbat:%lu input_lim:%lu bus:%02x swap:%u\r\n",
-           App_SC8815_IsCommOk() ? 1u : 0u,
-           App_SC8815_IsAcOk() ? 1u : 0u,
-           App_SC8815_HasFault() ? 1u : 0u,
-           App_SC8815_IsCharging() ? 1u : 0u,
-           (unsigned long)App_SC8815_GetVbusMv(),
-           (unsigned long)App_SC8815_GetVbatMv(),
-           (unsigned long)App_SC8815_GetInputLimitMa(),
-           (unsigned int)Int_SC8815_GetBusLevels(),
-           Int_SC8815_IsIicLineSwapped() ? 1u : 0u);
+    Int_Log_Printf("---------- SC8815详细 ----------\r\n");
+    Int_Log_Printf(
+        "CLI sc comm:%u ac:%u fault:%u charging:%u vbus:%lu vbat:%lu input_lim:%lu bus:%02x "
+        "swap:%u\r\n",
+        App_SC8815_IsCommOk() ? 1u : 0u,
+        App_SC8815_IsAcOk() ? 1u : 0u,
+        App_SC8815_HasFault() ? 1u : 0u,
+        App_SC8815_IsCharging() ? 1u : 0u,
+        (unsigned long)App_SC8815_GetVbusMv(),
+        (unsigned long)App_SC8815_GetVbatMv(),
+        (unsigned long)App_SC8815_GetInputLimitMa(),
+        (unsigned int)Int_SC8815_GetBusLevels(),
+        Int_SC8815_IsIicLineSwapped() ? 1u : 0u);
 }
 
 static bool App_DebugCli_ShouldStopBqFast(void)
@@ -209,8 +214,7 @@ static bool App_DebugCli_ShouldStopBqFast(void)
     }
 
     if ((App_Power_GetState() == APP_POWER_STATE_LOW) ||
-        (App_Power_GetState() == APP_POWER_STATE_FAULT) ||
-        !App_Power_IsDischargeAllowed())
+        (App_Power_GetState() == APP_POWER_STATE_FAULT) || !App_Power_IsDischargeAllowed())
     {
         return true;
     }
@@ -224,104 +228,13 @@ static void App_DebugCli_StopBqFastAndPrintReason(void)
     s_bq_monitor_stop_on_fault = false;
     s_bq_monitor_ms = 0u;
 
-    printf("---------- BQFAST自动停表 ----------\r\n");
-    printf("BQFAST: 检测到放电异常，已停止连续输出，下面是停表瞬间原因。\r\n");
+    Int_Log_Printf("---------- BQFAST自动停表 ----------\r\n");
+    Int_Log_Printf("BQFAST: 检测到放电异常，已停止连续输出，下面是停表瞬间原因。\r\n");
     App_Power_PrintStopReason();
     App_BatMan_PrintMonitorStopReason();
     App_Power_PrintSnapshot();
     App_BatMan_PrintSnapshot();
-    printf("BQFAST: 处理后可发送 fault clear，再发送 bqfast on 重新监视。\r\n");
-}
-
-static void App_DebugCli_PrintScProbe(void)
-{
-    uint8_t reg = 0u;
-    uint8_t normal_mask = 0u;
-    uint8_t swapped_mask = 0u;
-    Int_SC8815_StatusTypeDef normal_read;
-    Int_SC8815_StatusTypeDef swapped_read;
-
-    for (uint8_t addr = 0x70u; addr <= 0x77u; addr++)
-    {
-        if (Int_SC8815_ProbeAddress(addr, false) == INT_SC8815_OK)
-        {
-            normal_mask |= (uint8_t)(1u << (addr - 0x70u));
-        }
-        if (Int_SC8815_ProbeAddress(addr, true) == INT_SC8815_OK)
-        {
-            swapped_mask |= (uint8_t)(1u << (addr - 0x70u));
-        }
-    }
-
-    printf("---------- SC8815探测 ----------\r\n");
-    normal_read = Int_SC8815_ReadRegWithLineOrder(SC8815_REG_STATUS, false, &reg);
-    printf("CLI scprobe normal bus:%02x ack70_77:%02x read:%u val:%02x\r\n",
-           (unsigned int)Int_SC8815_GetBusLevels(),
-           (unsigned int)normal_mask,
-           (unsigned int)normal_read,
-           (unsigned int)reg);
-
-    reg = 0u;
-    swapped_read = Int_SC8815_ReadRegWithLineOrder(SC8815_REG_STATUS, true, &reg);
-    printf("CLI scprobe swapped bus:%02x ack70_77:%02x read:%u val:%02x\r\n",
-           (unsigned int)Int_SC8815_GetBusLevels(),
-           (unsigned int)swapped_mask,
-           (unsigned int)swapped_read,
-           (unsigned int)reg);
-}
-
-static uint16_t App_DebugCli_ReadDirectU16(uint8_t command)
-{
-    uint8_t data[2] = {0u, 0u};
-
-    if (Int_BQ76952_ReadDirect(command, data, 2u) != INT_BQ76952_OK)
-    {
-        return 0xFFFFu;
-    }
-
-    return (uint16_t)(((uint16_t)data[1] << 8u) | data[0]);
-}
-
-static uint8_t App_DebugCli_ReadDirectU8(uint8_t command)
-{
-    uint8_t value = 0xFFu;
-
-    (void)Int_BQ76952_ReadDirect(command, &value, 1u);
-    return value;
-}
-
-static void App_DebugCli_RunPdsgProbe(void)
-{
-    printf("---------- PDSG探测 ----------\r\n");
-    if (!App_BatMan_TestPreDischargeOnly())
-    {
-        printf("PDSG探测 写入失败\r\n");
-        return;
-    }
-
-    for (uint8_t i = 0u; i < APP_DEBUG_CLI_PDSG_PROBE_COUNT; i++)
-    {
-        uint8_t fet = App_DebugCli_ReadDirectU8(BQ76952_CMD_FET_STATUS);
-        uint8_t safety_a = App_DebugCli_ReadDirectU8(BQ76952_CMD_SAFETY_STATUS_A);
-        uint16_t alarm = App_DebugCli_ReadDirectU16(BQ76952_CMD_ALARM_RAW_STATUS);
-        uint16_t pack_raw = App_DebugCli_ReadDirectU16(BQ76952_CMD_PACK_PIN_VOLTAGE);
-        uint16_t ld_raw = App_DebugCli_ReadDirectU16(BQ76952_CMD_LD_PIN_VOLTAGE);
-
-        printf("PDSG探测 %u FET:%02x CHG:%u DSG:%u PCHG:%u PDSG:%u SCD:%u XDSG:%u PACKraw:%u LDraw:%u\r\n",
-               (unsigned int)i,
-               (unsigned int)fet,
-               (fet & BQ76952_FET_STATUS_CHG_FET_MASK) != 0u ? 1u : 0u,
-               (fet & BQ76952_FET_STATUS_DSG_FET_MASK) != 0u ? 1u : 0u,
-               (fet & BQ76952_FET_STATUS_PCHG_FET_MASK) != 0u ? 1u : 0u,
-               (fet & BQ76952_FET_STATUS_PDSG_FET_MASK) != 0u ? 1u : 0u,
-               (safety_a & BQ76952_SAFETY_A_SCD_MASK) != 0u ? 1u : 0u,
-               (alarm & BQ76952_ALARM_XDSG_MASK) != 0u ? 1u : 0u,
-               (unsigned int)pack_raw,
-               (unsigned int)ld_raw);
-    }
-
-    (void)App_BatMan_AllMainFetsOff();
-    printf("PDSG探测 完成: 已恢复全FET关断\r\n");
+    Int_Log_Printf("BQFAST: 处理后可发送 fault clear，再发送 bqfast on 重新监视。\r\n");
 }
 
 static void App_DebugCli_ProcessLine(char *line)
@@ -334,13 +247,40 @@ static void App_DebugCli_ProcessLine(char *line)
         return;
     }
 
+    if (!APP_DEBUG_CLI_PHYSICAL_ENABLE_ACTIVE())
+    {
+        s_cli_unlocked = false;
+        Int_Log_Printf("CLI locked: physical enable inactive\r\n");
+        return;
+    }
+    if (strcmp(line, "unlock 8815-eng") == 0)
+    {
+        s_cli_unlocked = true;
+        s_cli_unlock_ms = 0u;
+        Int_Log_Printf("CLI unlocked: timeout %lu ms\r\n",
+                       (unsigned long)APP_DEBUG_CLI_UNLOCK_TIMEOUT_MS);
+        return;
+    }
+    if (!s_cli_unlocked)
+    {
+        Int_Log_Printf("CLI locked: use unlock token\r\n");
+        return;
+    }
+    s_cli_unlock_ms = 0u;
+
     if (strcmp(line, "help") == 0)
     {
         App_DebugCli_PrintHelp();
     }
     else if (strcmp(line, "ping") == 0)
     {
-        printf("CLI pong tick:%lu\r\n", (unsigned long)HAL_GetTick());
+        Int_Log_Printf("CLI pong tick:%lu\r\n", (unsigned long)HAL_GetTick());
+    }
+    else if (strcmp(line, "lanhua") == 0)
+    {
+        App_Buzzer_PlayLanhua();
+        Int_Log_Printf("CLI lanhua: playing %u ms\r\n",
+                       (unsigned int)APP_BUZZER_LANHUA_DURATION_MS);
     }
     else if (strcmp(line, "sc") == 0)
     {
@@ -365,8 +305,7 @@ static void App_DebugCli_ProcessLine(char *line)
         s_bq_monitor_stop_on_fault = false;
         s_bq_monitor_period_ms = APP_DEBUG_CLI_BQ_PERIOD_MS;
         s_bq_monitor_ms = APP_DEBUG_CLI_BQ_PERIOD_MS;
-        printf("CLI BQ连续监视: 开启 周期:%u ms\r\n",
-               (unsigned int)s_bq_monitor_period_ms);
+        Int_Log_Printf("CLI BQ连续监视: 开启 周期:%u ms\r\n", (unsigned int)s_bq_monitor_period_ms);
     }
     else if ((strcmp(line, "bqfast on") == 0) || (strcmp(line, "bq fast") == 0))
     {
@@ -377,15 +316,15 @@ static void App_DebugCli_ProcessLine(char *line)
         s_bq_monitor_stop_on_fault = true;
         s_bq_monitor_period_ms = APP_DEBUG_CLI_BQ_FAST_PERIOD_MS;
         s_bq_monitor_ms = APP_DEBUG_CLI_BQ_FAST_PERIOD_MS;
-        printf("CLI bqfast:1 周期:%u ms 异常自动停表:1\r\n",
-               (unsigned int)s_bq_monitor_period_ms);
+        Int_Log_Printf("CLI bqfast:1 周期:%u ms 异常自动停表:1\r\n",
+                       (unsigned int)s_bq_monitor_period_ms);
     }
     else if (strcmp(line, "bq off") == 0)
     {
         s_bq_monitor_enabled = false;
         s_bq_monitor_stop_on_fault = false;
         s_bq_monitor_ms = 0u;
-        printf("CLI BQ连续监视: 关闭\r\n");
+        Int_Log_Printf("CLI BQ连续监视: 关闭\r\n");
     }
     else if (strcmp(line, "bq shutdown") == 0)
     {
@@ -397,59 +336,44 @@ static void App_DebugCli_ProcessLine(char *line)
         s_csv_ms = 0u;
         if (App_Power_RequestBqShutdown())
         {
-            printf("CLI BQ shutdown: 请求已提交，将由电源任务安全执行\r\n");
+            Int_Log_Printf("CLI BQ shutdown: 请求已提交，将由电源任务安全执行\r\n");
         }
         else
         {
-            printf("CLI BQ shutdown: 失败，请发送 bq/power 查看状态\r\n");
+            Int_Log_Printf("CLI BQ shutdown: 失败，请发送 bq/power 查看状态\r\n");
         }
     }
     else if (strcmp(line, "power") == 0)
     {
         App_Power_PrintSnapshot();
     }
-    else if ((strcmp(line, "fault clear") == 0) ||
-             (strcmp(line, "scd clear") == 0) ||
+    else if ((strcmp(line, "fault clear") == 0) || (strcmp(line, "scd clear") == 0) ||
              (strcmp(line, "dsg clear") == 0))
     {
         if (App_Power_ClearDischargeFault())
         {
-            printf("CLI 放电SCD锁存: 已清除，可重新尝试放电\r\n");
+            Int_Log_Printf("CLI 放电SCD锁存: 已清除，可重新尝试放电\r\n");
         }
         else
         {
-            printf("CLI 放电SCD锁存: 未清除，BQ当前仍处于SCD保护\r\n");
+            Int_Log_Printf("CLI 放电SCD锁存: 未清除，BQ当前仍处于SCD保护\r\n");
         }
     }
     else if (strcmp(line, "pdsg test") == 0)
     {
-        if (App_BatMan_TestPreDischargeOnly())
-        {
-            printf("CLI PDSG测试: 已写入0x0d并发送ALL_FETS_ON，建议立刻发送 bq 查看FET位\r\n");
-        }
-        else
-        {
-            printf("CLI PDSG测试: 写入失败\r\n");
-        }
+        Int_Log_Printf("CLI denied: PDSG actuator bypass removed\r\n");
     }
     else if (strcmp(line, "pdsg probe") == 0)
     {
-        App_DebugCli_RunPdsgProbe();
+        Int_Log_Printf("CLI denied: direct BQ probe removed\r\n");
     }
     else if (strcmp(line, "pdsg off") == 0)
     {
-        if (App_BatMan_AllMainFetsOff())
-        {
-            printf("CLI PDSG测试: 已恢复全FET关断\r\n");
-        }
-        else
-        {
-            printf("CLI PDSG测试: 恢复全关失败\r\n");
-        }
+        Int_Log_Printf("CLI denied: use Power supervisor\r\n");
     }
     else if (strcmp(line, "scprobe") == 0)
     {
-        App_DebugCli_PrintScProbe();
+        Int_Log_Printf("CLI denied: runtime I2C line probing removed\r\n");
     }
     else if (strcmp(line, "csv") == 0)
     {
@@ -469,21 +393,21 @@ static void App_DebugCli_ProcessLine(char *line)
         s_csv_enabled = false;
         s_csv_header_pending = false;
         s_csv_ms = 0u;
-        printf("CLI csv:0\r\n");
+        Int_Log_Printf("CLI csv:0\r\n");
     }
     else if ((strcmp(line, "charge on") == 0) || (strcmp(line, "sc on") == 0))
     {
-        App_SC8815_RequestCharge(true);
-        printf("CLI charge request:1\r\n");
+        (void)App_Power_RequestChargeInhibit(false);
+        Int_Log_Printf("CLI Power charge inhibit:0 (policy still applies)\r\n");
     }
     else if ((strcmp(line, "charge off") == 0) || (strcmp(line, "sc off") == 0))
     {
-        App_SC8815_RequestCharge(false);
-        printf("CLI charge request:0\r\n");
+        (void)App_Power_RequestChargeInhibit(true);
+        Int_Log_Printf("CLI Power charge inhibit:1\r\n");
     }
     else
     {
-        printf("CLI unknown:%s\r\n", line);
+        Int_Log_Printf("CLI unknown:%s\r\n", line);
         App_DebugCli_PrintHelp();
     }
 }
@@ -522,7 +446,7 @@ static void App_DebugCli_PushByte(uint8_t byte)
     else
     {
         s_cli_pos = 0u;
-        printf("CLI line too long\r\n");
+        Int_Log_Printf("CLI line too long\r\n");
     }
 }
 
@@ -531,20 +455,46 @@ void App_DebugCli_Init(void)
     s_cli_pos = 0u;
     s_rx_head = 0u;
     s_rx_tail = 0u;
-    s_csv_enabled = true;
-    s_csv_header_pending = true;
-    s_csv_ms = APP_DEBUG_CLI_CSV_PERIOD_MS;
+    s_csv_enabled = false;
+    s_csv_header_pending = false;
+    s_csv_ms = 0u;
     s_bq_monitor_enabled = false;
     s_bq_monitor_stop_on_fault = false;
     s_bq_monitor_period_ms = APP_DEBUG_CLI_BQ_PERIOD_MS;
     s_bq_monitor_ms = 0u;
+    s_cli_unlocked = false;
+    s_cli_unlock_ms = 0u;
+    if (!APP_DEBUG_CLI_PHYSICAL_ENABLE_ACTIVE())
+    {
+        return;
+    }
     App_DebugCli_StartRx();
-    printf("CLI ready: type help\r\n");
+    Int_Log_Printf("Engineering CLI locked\r\n");
 }
 
 void App_DebugCli_Task(uint16_t interval_ms)
 {
     uint8_t byte;
+
+    if (!APP_DEBUG_CLI_PHYSICAL_ENABLE_ACTIVE())
+    {
+        s_cli_unlocked = false;
+        s_csv_enabled = false;
+        s_bq_monitor_enabled = false;
+        return;
+    }
+
+    if (s_cli_unlocked)
+    {
+        s_cli_unlock_ms += interval_ms;
+        if (s_cli_unlock_ms >= APP_DEBUG_CLI_UNLOCK_TIMEOUT_MS)
+        {
+            s_cli_unlocked = false;
+            s_csv_enabled = false;
+            s_bq_monitor_enabled = false;
+            Int_Log_Printf("Engineering CLI lock timeout\r\n");
+        }
+    }
 
     while (s_rx_tail != s_rx_head)
     {
@@ -556,7 +506,8 @@ void App_DebugCli_Task(uint16_t interval_ms)
     if (s_csv_enabled && s_csv_header_pending)
     {
         s_csv_header_pending = false;
-        printf("current_a,pack_v,cell1_v,cell2_v,cell3_v,cell4_v,cell5_v,cell6_v,frame_time_s\r\n");
+        Int_Log_Printf(
+            "current_a,pack_v,cell1_v,cell2_v,cell3_v,cell4_v,cell5_v,cell6_v,frame_time_s\r\n");
     }
 
     if (s_csv_enabled)
@@ -600,7 +551,7 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 {
     uint8_t next_head;
 
-    if (huart->Instance != USART1)
+    if (!APP_DEBUG_CLI_PHYSICAL_ENABLE_ACTIVE() || (huart->Instance != USART1))
     {
         return;
     }
@@ -615,10 +566,32 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
     App_DebugCli_StartRx();
 }
 
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+void App_DebugCli_OnUartError(void)
 {
-    if (huart->Instance == USART1)
+    if (APP_DEBUG_CLI_PHYSICAL_ENABLE_ACTIVE())
     {
         App_DebugCli_StartRx();
     }
 }
+
+#else
+
+void App_DebugCli_Init(void)
+{
+}
+
+void App_DebugCli_Task(uint16_t interval_ms)
+{
+    (void)interval_ms;
+}
+
+bool App_DebugCli_IsStreaming(void)
+{
+    return false;
+}
+
+void App_DebugCli_OnUartError(void)
+{
+}
+
+#endif /* APP_DEBUG_CLI_ENGINEERING_ENABLED */

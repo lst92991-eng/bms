@@ -1,10 +1,33 @@
 cmake_minimum_required(VERSION 3.22)
 
+option(BMS_HOST_TESTS_ONLY "Build executable host-side algorithm tests only" OFF)
+
+if(BMS_HOST_TESTS_ONLY)
+    project(bms_host_tests C)
+
+    set(CMAKE_C_STANDARD 11)
+    set(CMAKE_C_STANDARD_REQUIRED ON)
+    set(CMAKE_C_EXTENSIONS OFF)
+
+    include(CTest)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_subdirectory(tests/host)
+    return()
+endif()
+
 project(bms24v_platform C ASM)
 
 set(CMAKE_C_STANDARD 11)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS ON)
+
+option(BMS_ENGINEERING_BUILD "Enable engineering CLI task" OFF)
+option(BMS_ENFORCE_SIZE_BUDGET "Fail build when flash/RAM budget is exceeded" ON)
+set(BMS_MAX_FLASH_BYTES 122880 CACHE STRING "Maximum firmware flash bytes")
+set(BMS_MAX_RAM_BYTES 135168 CACHE STRING "Maximum firmware RAM bytes")
+
+include(CTest)
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
 
 set(TARGET_NAME bms24v_platform)
 set(PLATFORM_DIR ${CMAKE_CURRENT_SOURCE_DIR}/bms24v_platform)
@@ -30,6 +53,8 @@ target_sources(${TARGET_NAME}
         ${PLATFORM_DIR}/Core/Src/system_stm32g0xx.c
 
         ${CMAKE_CURRENT_SOURCE_DIR}/App/App_Main.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/App/App_Safety.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/App/App_Buzzer.c
         ${CMAKE_CURRENT_SOURCE_DIR}/App/App_BatMan.c
         ${CMAKE_CURRENT_SOURCE_DIR}/App/App_BatMan_Config.c
         ${CMAKE_CURRENT_SOURCE_DIR}/App/App_BatMan_Sample.c
@@ -44,12 +69,18 @@ target_sources(${TARGET_NAME}
 
         ${CMAKE_CURRENT_SOURCE_DIR}/Com/Com_BQ76952.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Com/Com_BatteryParam.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Com/Com_Format.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Com/Com_SOC.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Com/Com_SOH.c
 
         ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_BQ76952.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_Buzzer.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_Fault.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_I2C2Bus.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_Log.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_OLED.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_SC8815.c
+        ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_Watchdog.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_CanFd.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_Led.c
         ${CMAKE_CURRENT_SOURCE_DIR}/Int/Int_EEPROM.c
@@ -62,7 +93,6 @@ target_sources(${TARGET_NAME}
         ${FREERTOS_DIR}/source/stream_buffer.c
         ${FREERTOS_DIR}/source/croutine.c
         ${FREERTOS_DIR}/portable/GCC/ARM_CM0/port.c
-        ${FREERTOS_DIR}/portable/MemMang/heap_4.c
 
         ${PLATFORM_DIR}/Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_tim.c
         ${PLATFORM_DIR}/Drivers/STM32G0xx_HAL_Driver/Src/stm32g0xx_hal_tim_ex.c
@@ -106,6 +136,7 @@ target_compile_definitions(${TARGET_NAME}
     PRIVATE
         USE_HAL_DRIVER
         STM32G0B1xx
+        BMS_ENGINEERING_BUILD=$<BOOL:${BMS_ENGINEERING_BUILD}>
 )
 
 target_compile_options(${TARGET_NAME}
@@ -116,6 +147,7 @@ target_compile_options(${TARGET_NAME}
         -fdata-sections
         -Wall
         -Wextra
+        -Werror
         -Wno-unused-parameter
         $<$<CONFIG:Debug>:-Og -g3>
         $<$<CONFIG:Release>:-Os -g0>
@@ -145,3 +177,29 @@ add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
     COMMAND ${CMAKE_SIZE} $<TARGET_FILE:${TARGET_NAME}>
     COMMENT "Generating HEX/BIN and size report"
 )
+
+if(BMS_ENFORCE_SIZE_BUDGET)
+    add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+        COMMAND ${Python3_EXECUTABLE}
+                ${CMAKE_CURRENT_SOURCE_DIR}/tests/host/check_size_budget.py
+                --size-tool ${CMAKE_SIZE}
+                --elf $<TARGET_FILE:${TARGET_NAME}>
+                --max-flash ${BMS_MAX_FLASH_BYTES}
+                --max-ram ${BMS_MAX_RAM_BYTES}
+        COMMENT "Checking firmware flash/RAM budget"
+        VERBATIM
+    )
+endif()
+
+add_custom_command(TARGET ${TARGET_NAME} POST_BUILD
+    COMMAND ${Python3_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/tests/host/check_forbidden_symbols.py
+            --nm ${CMAKE_NM}
+            --elf $<TARGET_FILE:${TARGET_NAME}>
+    COMMENT "Checking firmware heap/stdio symbol policy"
+    VERBATIM
+)
+
+if(BUILD_TESTING)
+    add_subdirectory(tests/host)
+endif()

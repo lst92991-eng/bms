@@ -590,13 +590,13 @@ CSV 遥测默认开启：调度器启动后先输出表头，随后每 1s 输出
 
 ## 12. 构建、内存与初版 bring-up 顺序
 
-当前仓库保留 CMake/GCC 路径和 Keil/MDK 工程。GCC 链接脚本定义 FLASH 128KB、RAM 144KB；Keil scatter 文件也按 0x08000000/0x20000 FLASH 和 0x20000000/0x24000 RAM 布局。FreeRTOS heap 为 32KB，需要结合任务栈、HAL、OLED 缓冲、BQ/SC 临时缓冲继续看 map 文件。
+当前仓库保留 CMake/GCC 路径和 Keil/MDK 工程。GCC 链接脚本定义 FLASH 128KB、RAM 144KB；Keil 工程在 target memory 中声明相同 IROM/IRAM 范围，但 `ScatterFile` 为空，应以实际 Keil map 作最终证据。FreeRTOS 仅允许静态分配，动态分配已关闭；仍需结合任务栈高水位、HAL、OLED 缓冲、BQ/SC 临时缓冲审核 map。
 
-出处：`CMakeLists.txt:1-14`、`CMakeLists.txt:55-106`、`bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:1-12`、`bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:108-113`、`bms24v_platform/MDK-ARM/bms24v_platform/bms24v_platform.sct:5-12`、`bms24v_platform/MDK-ARM/FreeRTOS/include/FreeRTOSConfig.h:27`。
+出处：`CMakeLists.txt:1-16`、`CMakeLists.txt:39-119`、`bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:1-12`、`bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:108-113`、`bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:247-255`、`bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:366-375`、`bms24v_platform/MDK-ARM/FreeRTOS/include/FreeRTOSConfig.h:46-47`。
 
 //TODO 此处应该放一次 CMake 或 Keil 完整构建结果截图/日志，用于证明当前文档对应版本可编译。当前可引用的配置证据是 `CMakeLists.txt:1-14`、`CMakeLists.txt:55-100`。
 
-//TODO 此处应该放 map 文件内存占用摘要，用于证明 FLASH/RAM/heap/stack 余量。当前可引用的布局证据是 `bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:1-12` 和 `bms24v_platform/MDK-ARM/bms24v_platform/bms24v_platform.sct:5-12`。
+//TODO 此处应该放 map 文件内存占用摘要，用于证明 FLASH/RAM/stack 余量。当前可引用的配置证据是 `bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:1-12` 和 `bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:247-255`；Keil 实际占用仍需 map 证明。
 
 初版 bring-up 建议按下面顺序做：
 
@@ -650,4 +650,4 @@ CSV 遥测默认开启：调度器启动后先输出表头，随后每 1s 输出
 | SC APP 层 | `App/App_SC8815.c:99-119`、`App/App_SC8815.c:122-248`、`App/App_SC8815.c:281-354` |
 | 电源状态机 | `App/App_Power.c:54-121`、`App/App_Power.c:321-522` |
 | OLED/EEPROM/FDCAN/CLI | `Int/Int_OLED.h:8-30`、`Int/Int_OLED.c:6-31`、`Int/Int_OLED.c:427-464`、`Int/Int_EEPROM.h:7-29`、`Int/Int_EEPROM.c:9-135`、`Int/Int_CanFd.c:68-198`、`App/App_DebugCli.c:111-587` |
-| 构建/内存 | `CMakeLists.txt:1-14`、`CMakeLists.txt:55-106`、`bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:1-12`、`bms24v_platform/MDK-ARM/bms24v_platform/bms24v_platform.sct:5-12` |
+| 构建/内存 | `CMakeLists.txt:1-16`、`CMakeLists.txt:39-119`、`bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:1-12`、`bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:247-255,366-375` |

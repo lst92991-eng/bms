@@ -7,6 +7,7 @@
 
 #include "App_BatMan.h"
 #include "App_Power.h"
+#include "Com_SOC.h"
 #include "Int_BQ76952_BSP.h"
 #include "Int_CanFd.h"
 
@@ -36,6 +37,7 @@ enum
     APP_CAN_BMS_CELL_RESPONSE_LEN = 20u,
     APP_CAN_BMS_EVENT_LEN = 20u,
     APP_CAN_BMS_PROTECTION_RESPONSE_LEN = 24u,
+    APP_CAN_BMS_SOC_DIAGNOSTICS_LEN = 20u,
     APP_CAN_BMS_STATUS_LEN = 32u,
     APP_CAN_BMS_SOH_RESPONSE_LEN = 32u
 };
@@ -45,11 +47,17 @@ typedef struct
     bool online;
     bool fault;
     bool discharge_allowed;
+    bool soc_valid;
     bool soh_valid;
     bool soh_learning;
     App_Power_StateTypeDef power_state;
     float soc_percent;
+    float soc_raw_percent;
+    Com_SOC_SeedSourceTypeDef soc_seed_source;
     uint8_t soc_confidence;
+    uint32_t soc_age_ms;
+    uint32_t soc_anchor_sequence;
+    App_Power_StopReasonTypeDef stop_reason;
     uint8_t soh_percent;
     uint8_t soh_confidence;
     uint8_t health_score;
@@ -146,9 +154,7 @@ static void App_CanBms_WriteI32Le(uint8_t *data, int32_t value)
     App_CanBms_WriteU32Le(data, (uint32_t)value);
 }
 
-static uint32_t App_CanBms_AddElapsed(uint32_t elapsed,
-                                     uint32_t interval_ms,
-                                     uint32_t limit_ms)
+static uint32_t App_CanBms_AddElapsed(uint32_t elapsed, uint32_t interval_ms, uint32_t limit_ms)
 {
     if ((elapsed >= limit_ms) || (interval_ms >= (limit_ms - elapsed)))
     {
@@ -160,8 +166,7 @@ static uint32_t App_CanBms_AddElapsed(uint32_t elapsed,
 
 static bool App_CanBms_IsSocValid(const App_CanBms_SnapshotTypeDef *snapshot)
 {
-    return snapshot->online &&
-           (snapshot->soc_percent >= 0.0f) &&
+    return snapshot->soc_valid && (snapshot->soc_percent >= 0.0f) &&
            (snapshot->soc_percent <= 100.0f);
 }
 
@@ -181,16 +186,24 @@ static uint8_t App_CanBms_MakePercent(float value, bool valid)
 static void App_CanBms_CaptureSnapshot(App_CanBms_SnapshotTypeDef *snapshot)
 {
     uint8_t i;
+    Com_SOC_ResultTypeDef soc;
 
     taskENTER_CRITICAL();
+    Com_SOC_GetResult(&soc);
     snapshot->online = App_BatMan_IsOnline();
     snapshot->fault = fault_active;
     snapshot->discharge_allowed = App_Power_IsDischargeAllowed();
     snapshot->soh_valid = soh_capacity_valid;
     snapshot->soh_learning = soh_learning_active;
     snapshot->power_state = App_Power_GetState();
-    snapshot->soc_percent = display_soc_percent;
-    snapshot->soc_confidence = soc_confidence_percent;
+    snapshot->soc_valid = soc.valid;
+    snapshot->soc_percent = soc.display_percent;
+    snapshot->soc_raw_percent = soc.soc_percent;
+    snapshot->soc_seed_source = soc.seed_source;
+    snapshot->soc_confidence = soc.confidence_percent;
+    snapshot->soc_age_ms = soc.age_ms;
+    snapshot->soc_anchor_sequence = soc.anchor_event_sequence;
+    snapshot->stop_reason = App_Power_GetStopReason();
     snapshot->soh_percent = soh_percent;
     snapshot->soh_confidence = soh_confidence_percent;
     snapshot->health_score = health_score_percent;
@@ -275,15 +288,13 @@ static uint16_t App_CanBms_MakeFlags(const App_CanBms_SnapshotTypeDef *snapshot)
 
 static uint16_t App_CanBms_MakeLogicalBalanceMask(uint16_t hardware_mask)
 {
-    static const uint16_t hardware_cell_mask[APP_BATMAN_CELL_COUNT] =
-    {
+    static const uint16_t hardware_cell_mask[APP_BATMAN_CELL_COUNT] = {
         BQ76952_CELL_MASK_6S_HW_CELL1,
         BQ76952_CELL_MASK_6S_HW_CELL2,
         BQ76952_CELL_MASK_6S_HW_CELL3,
         BQ76952_CELL_MASK_6S_HW_CELL4,
         BQ76952_CELL_MASK_6S_HW_CELL5,
-        BQ76952_CELL_MASK_6S_HW_CELL6
-    };
+        BQ76952_CELL_MASK_6S_HW_CELL6};
     uint16_t logical_mask = 0u;
     uint8_t i;
 
@@ -302,7 +313,7 @@ static uint16_t App_CanBms_MakeLogicalBalanceMask(uint16_t hardware_mask)
  * @brief 填充状态摘要公共区，查询应答和周期上报共用同一字段布局。
  */
 static void App_CanBms_FillStatusBody(uint8_t data[APP_CAN_BMS_STATUS_LEN],
-                                     const App_CanBms_SnapshotTypeDef *snapshot)
+                                      const App_CanBms_SnapshotTypeDef *snapshot)
 {
     bool soc_valid = App_CanBms_IsSocValid(snapshot);
     uint16_t flags = App_CanBms_MakeFlags(snapshot);
@@ -320,10 +331,9 @@ static void App_CanBms_FillStatusBody(uint8_t data[APP_CAN_BMS_STATUS_LEN],
     App_CanBms_WriteU16Le(&data[22], snapshot->cell_max_mv);
     App_CanBms_WriteU16Le(&data[24], snapshot->cell_delta_mv);
     App_CanBms_WriteI16Le(&data[26], snapshot->temp_cell_c);
-    App_CanBms_WriteU16Le(&data[28],
-                          App_CanBms_MakeLogicalBalanceMask(snapshot->balance_mask));
+    App_CanBms_WriteU16Le(&data[28], App_CanBms_MakeLogicalBalanceMask(snapshot->balance_mask));
     data[30] = snapshot->health_score;
-    data[31] = 0u;
+    data[31] = (uint8_t)snapshot->stop_reason;
 }
 
 static void App_CanBms_BuildEvent(uint8_t event_code,
@@ -336,7 +346,7 @@ static void App_CanBms_BuildEvent(uint8_t event_code,
     data[0] = APP_CAN_BMS_PROTOCOL_VERSION;
     data[1] = event_code;
     data[2] = s_unsolicited_sequence++;
-    data[3] = 0u;
+    data[3] = (uint8_t)snapshot->stop_reason;
     App_CanBms_WriteU16Le(&data[4], App_CanBms_MakeFlags(snapshot));
     data[6] = App_CanBms_MakePercent(snapshot->soc_percent, soc_valid);
     data[7] = (uint8_t)snapshot->power_state;
@@ -349,8 +359,7 @@ static void App_CanBms_BuildEvent(uint8_t event_code,
 /**
  * @brief 保存状态变化事件；队列满时淘汰最旧事件，保证最新安全状态可见。
  */
-static void App_CanBms_QueueEvent(uint8_t event_code,
-                                  const App_CanBms_SnapshotTypeDef *snapshot)
+static void App_CanBms_QueueEvent(uint8_t event_code, const App_CanBms_SnapshotTypeDef *snapshot)
 {
     uint8_t tail;
 
@@ -450,9 +459,8 @@ static void App_CanBms_SavePending(uint16_t id, const uint8_t *data, uint8_t len
     s_tx_pending = true;
 }
 
-static App_CanBms_SendResultTypeDef App_CanBms_SendOrDefer(uint16_t id,
-                                                           const uint8_t *data,
-                                                           uint8_t len)
+static App_CanBms_SendResultTypeDef
+App_CanBms_SendOrDefer(uint16_t id, const uint8_t *data, uint8_t len)
 {
     Int_CanFd_StatusTypeDef ret = Int_CanFd_Send(id, data, len);
 
@@ -483,9 +491,7 @@ static bool App_CanBms_FlushPending(void)
         return true;
     }
 
-    ret = Int_CanFd_Send(s_pending_frame.id,
-                         s_pending_frame.data,
-                         s_pending_frame.len);
+    ret = Int_CanFd_Send(s_pending_frame.id, s_pending_frame.data, s_pending_frame.len);
     if (ret == INT_CANFD_OK)
     {
         s_tx_pending = false;
@@ -510,9 +516,7 @@ static bool App_CanBms_FlushPending(void)
 
 static void App_CanBms_PrioritizeEvent(void)
 {
-    if (s_tx_pending &&
-        (s_pending_frame.id != APP_CAN_BMS_ID_EVENT) &&
-        (s_event_count > 0u))
+    if (s_tx_pending && (s_pending_frame.id != APP_CAN_BMS_ID_EVENT) && (s_event_count > 0u))
     {
         /* 故障/低电事件可淘汰尚未进入硬件 FIFO 的旧查询应答或周期帧。 */
         s_tx_pending = false;
@@ -527,9 +531,8 @@ static void App_CanBms_AgePending(uint32_t interval_ms)
         return;
     }
 
-    s_pending_elapsed_ms = App_CanBms_AddElapsed(s_pending_elapsed_ms,
-                                                  interval_ms,
-                                                  APP_CAN_BMS_PENDING_TIMEOUT_MS);
+    s_pending_elapsed_ms =
+        App_CanBms_AddElapsed(s_pending_elapsed_ms, interval_ms, APP_CAN_BMS_PENDING_TIMEOUT_MS);
     if (s_pending_elapsed_ms >= APP_CAN_BMS_PENDING_TIMEOUT_MS)
     {
         /*
@@ -573,17 +576,15 @@ static void App_CanBms_BuildQueryResponse(const Int_CanFd_FrameTypeDef *request,
     {
         case APP_CAN_BMS_QUERY_STATUS_SUMMARY:
             response->len = APP_CAN_BMS_STATUS_LEN;
-            response->data[3] = App_CanBms_IsSocValid(snapshot)
-                                    ? APP_CAN_BMS_RESULT_OK
-                                    : APP_CAN_BMS_RESULT_DATA_INVALID;
+            response->data[3] = App_CanBms_IsSocValid(snapshot) ? APP_CAN_BMS_RESULT_OK
+                                                                : APP_CAN_BMS_RESULT_DATA_INVALID;
             App_CanBms_FillStatusBody(response->data, snapshot);
             break;
 
         case APP_CAN_BMS_QUERY_CELL_VOLTAGES:
             response->len = APP_CAN_BMS_CELL_RESPONSE_LEN;
-            response->data[3] = snapshot->online
-                                    ? APP_CAN_BMS_RESULT_OK
-                                    : APP_CAN_BMS_RESULT_DATA_INVALID;
+            response->data[3] =
+                snapshot->online ? APP_CAN_BMS_RESULT_OK : APP_CAN_BMS_RESULT_DATA_INVALID;
             for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
             {
                 App_CanBms_WriteU16Le(&response->data[4u + ((uint16_t)i * 2u)],
@@ -594,16 +595,14 @@ static void App_CanBms_BuildQueryResponse(const Int_CanFd_FrameTypeDef *request,
 
         case APP_CAN_BMS_QUERY_SOH_STATISTICS:
             response->len = APP_CAN_BMS_SOH_RESPONSE_LEN;
-            response->data[3] = snapshot->soh_valid
-                                    ? APP_CAN_BMS_RESULT_OK
-                                    : APP_CAN_BMS_RESULT_DATA_INVALID;
-            response->data[4] = snapshot->soh_valid
-                                    ? snapshot->soh_percent
-                                    : APP_CAN_BMS_INVALID_PERCENT;
+            response->data[3] =
+                snapshot->soh_valid ? APP_CAN_BMS_RESULT_OK : APP_CAN_BMS_RESULT_DATA_INVALID;
+            response->data[4] =
+                snapshot->soh_valid ? snapshot->soh_percent : APP_CAN_BMS_INVALID_PERCENT;
             response->data[5] = snapshot->health_score;
             response->data[6] = snapshot->soh_confidence;
-            response->data[7] = (uint8_t)((snapshot->soh_valid ? 1u : 0u) |
-                                          (snapshot->soh_learning ? 2u : 0u));
+            response->data[7] =
+                (uint8_t)((snapshot->soh_valid ? 1u : 0u) | (snapshot->soh_learning ? 2u : 0u));
             App_CanBms_WriteU32Le(&response->data[8], snapshot->learned_capacity_mah);
             App_CanBms_WriteU32Le(&response->data[12], snapshot->charge_throughput_mah);
             App_CanBms_WriteU32Le(&response->data[16], snapshot->discharge_throughput_mah);
@@ -614,9 +613,8 @@ static void App_CanBms_BuildQueryResponse(const Int_CanFd_FrameTypeDef *request,
 
         case APP_CAN_BMS_QUERY_PROTECTION_STATUS:
             response->len = APP_CAN_BMS_PROTECTION_RESPONSE_LEN;
-            response->data[3] = snapshot->online
-                                    ? APP_CAN_BMS_RESULT_OK
-                                    : APP_CAN_BMS_RESULT_DATA_INVALID;
+            response->data[3] =
+                snapshot->online ? APP_CAN_BMS_RESULT_OK : APP_CAN_BMS_RESULT_DATA_INVALID;
             App_CanBms_WriteU16Le(&response->data[4], snapshot->alarm_status);
             App_CanBms_WriteU16Le(&response->data[6], snapshot->alarm_raw);
             App_CanBms_WriteU16Le(&response->data[8], snapshot->battery_status);
@@ -635,6 +633,25 @@ static void App_CanBms_BuildQueryResponse(const Int_CanFd_FrameTypeDef *request,
             response->data[23] = snapshot->fault ? 1u : 0u;
             break;
 
+        case APP_CAN_BMS_QUERY_SOC_DIAGNOSTICS:
+            response->len = APP_CAN_BMS_SOC_DIAGNOSTICS_LEN;
+            response->data[3] = App_CanBms_IsSocValid(snapshot) ? APP_CAN_BMS_RESULT_OK
+                                                                : APP_CAN_BMS_RESULT_DATA_INVALID;
+            response->data[4] = snapshot->soc_valid ? 1u : 0u;
+            response->data[5] = (uint8_t)snapshot->soc_seed_source;
+            response->data[6] = snapshot->soc_confidence;
+            response->data[7] = (uint8_t)snapshot->stop_reason;
+            App_CanBms_WriteU32Le(&response->data[8], snapshot->soc_age_ms);
+            App_CanBms_WriteU32Le(&response->data[12], snapshot->soc_anchor_sequence);
+            App_CanBms_WriteU16Le(&response->data[16],
+                                  snapshot->soc_valid
+                                      ? (uint16_t)(snapshot->soc_raw_percent * 100.0f + 0.5f)
+                                      : 0xFFFFu);
+            App_CanBms_WriteU16Le(
+                &response->data[18],
+                snapshot->soc_valid ? (uint16_t)(snapshot->soc_percent * 100.0f + 0.5f) : 0xFFFFu);
+            break;
+
         default:
             response->data[3] = APP_CAN_BMS_RESULT_UNSUPPORTED_COMMAND;
             break;
@@ -650,9 +667,8 @@ static bool App_CanBms_SendNextEvent(void)
         return true;
     }
 
-    send_result = App_CanBms_SendOrDefer(APP_CAN_BMS_ID_EVENT,
-                                         s_event_queue[s_event_head].data,
-                                         APP_CAN_BMS_EVENT_LEN);
+    send_result = App_CanBms_SendOrDefer(
+        APP_CAN_BMS_ID_EVENT, s_event_queue[s_event_head].data, APP_CAN_BMS_EVENT_LEN);
     /* DEFERRED 时待发送槽已接管帧；内部参数错误也必须出队，避免永久卡住事件队头。 */
     s_event_head = (uint8_t)((s_event_head + 1u) % APP_CAN_BMS_EVENT_QUEUE_CAPACITY);
     s_event_count--;
@@ -691,9 +707,7 @@ static bool App_CanBms_ProcessQueries(const App_CanBms_SnapshotTypeDef *snapshot
         }
 
         App_CanBms_BuildQueryResponse(&request, snapshot, &response);
-        send_result = App_CanBms_SendOrDefer(response.id,
-                                             response.data,
-                                             response.len);
+        send_result = App_CanBms_SendOrDefer(response.id, response.data, response.len);
         if (send_result == APP_CAN_BMS_SEND_DEFERRED)
         {
             return false;
@@ -719,9 +733,8 @@ static bool App_CanBms_SendPeriodicStatus(const App_CanBms_SnapshotTypeDef *snap
     data[3] = 0u;
     App_CanBms_FillStatusBody(data, snapshot);
 
-    send_result = App_CanBms_SendOrDefer(APP_CAN_BMS_ID_PERIODIC_STATUS,
-                                         data,
-                                         APP_CAN_BMS_STATUS_LEN);
+    send_result =
+        App_CanBms_SendOrDefer(APP_CAN_BMS_ID_PERIODIC_STATUS, data, APP_CAN_BMS_STATUS_LEN);
     /* 忙时待发送帧已经保存；内部错误也按周期节流，不能在每次任务里连续重试。 */
     s_status_elapsed_ms = 0u;
 
@@ -735,9 +748,8 @@ static bool App_CanBms_TryRestoreCan(uint32_t interval_ms)
         return true;
     }
 
-    s_reinit_elapsed_ms = App_CanBms_AddElapsed(s_reinit_elapsed_ms,
-                                                 interval_ms,
-                                                 APP_CAN_BMS_REINIT_PERIOD_MS);
+    s_reinit_elapsed_ms =
+        App_CanBms_AddElapsed(s_reinit_elapsed_ms, interval_ms, APP_CAN_BMS_REINIT_PERIOD_MS);
     if (s_reinit_elapsed_ms < APP_CAN_BMS_REINIT_PERIOD_MS)
     {
         return false;
@@ -778,9 +790,8 @@ void App_CanBms_Task(uint32_t interval_ms)
         (void)App_CanBms_Init();
     }
 
-    s_status_elapsed_ms = App_CanBms_AddElapsed(s_status_elapsed_ms,
-                                                 interval_ms,
-                                                 APP_CAN_BMS_PERIODIC_STATUS_MS);
+    s_status_elapsed_ms =
+        App_CanBms_AddElapsed(s_status_elapsed_ms, interval_ms, APP_CAN_BMS_PERIODIC_STATUS_MS);
     App_CanBms_CaptureSnapshot(&snapshot);
     App_CanBms_UpdateEventState(&snapshot);
     App_CanBms_PrioritizeEvent();

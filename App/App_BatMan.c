@@ -1,11 +1,12 @@
 #include "App_BatMan.h"
 #include "App_BatMan_Internal.h"
 
-#include <stdio.h>
-
 #include "Int_BQ76952.h"
 #include "Int_BQ76952_BSP.h"
+#include "Int_Log.h"
 #include "App_OLED.h"
+#include "App_SC8815.h"
+#include "App_Safety.h"
 #include "main.h"
 
 /**
@@ -13,7 +14,7 @@
  * @brief BQ76952 电池监控 APP 层主流程门面。
  *
  * 本文件只保留初始化和周期任务的执行顺序。BQ Data Memory 配置、采样、
- * SOC/SOH 适配、均衡更新、OLED/printf 辅助分别放在 App_BatMan_xxx.c。
+ * SOC/SOH 适配、均衡更新、OLED/非阻塞日志辅助分别放在 App_BatMan_xxx.c。
  */
 
 /*
@@ -24,7 +25,14 @@
 enum
 {
     APP_BATMAN_CRC_BOOT_ENABLE = 0u,
-    APP_BATMAN_BQ_RESET_SETTLE_MS = 200u
+    APP_BATMAN_BQ_RESET_SETTLE_MS = 200u,
+    APP_BATMAN_ALERT_CONFIGURED_MASK = BQ76952_ALARM_SAFETY_PIN_MASK,
+    APP_BATMAN_ALERT_CRITICAL_ALARM_MASK =
+        BQ76952_ALARM_SSBC_MASK | BQ76952_ALARM_SSA_MASK | BQ76952_ALARM_PF_MASK,
+    APP_BATMAN_ALERT_UNRESOLVED_RAW_MASK = BQ76952_ALARM_SSBC_MASK | BQ76952_ALARM_SSA_MASK |
+                                           BQ76952_ALARM_PF_MASK | BQ76952_ALARM_MSK_SFALERT_MASK |
+                                           BQ76952_ALARM_MSK_PFALERT_MASK |
+                                           BQ76952_ALARM_SHUTV_MASK | BQ76952_ALARM_FUSE_MASK
 };
 
 /*
@@ -97,24 +105,15 @@ bool s_comm_fault = false;
 bool s_cells_sample_valid = false;
 bool s_current_sample_valid = false;
 bool s_temp_cell_sample_valid = false;
+uint32_t s_fault_flags = APP_BATMAN_FAULT_NONE;
 bool s_soc_full_anchor_used = false;
 bool s_soc_empty_anchor_used = false;
 bool s_soh_capacity_updated = false;
 
-static uint16_t s_power_config = 0u;
-
-static void App_BatMan_BusyDelayMs(uint32_t ms)
-{
-    volatile uint32_t i;
-    uint32_t loop;
-
-    for (loop = 0u; loop < ms; loop++)
-    {
-        for (i = 0u; i < 6400u; i++)
-        {
-        }
-    }
-}
+static bool s_bq_alert_recheck_required = false;
+static bool s_bq_alert_critical_reported = false;
+static bool s_bq_ready_reported = false;
+static bool s_bq_ready_state = false;
 
 /**
  * @brief 按 BQ76952 little-endian 格式读取 16-bit 值。
@@ -142,6 +141,220 @@ void App_BatMan_WriteU32Le(uint32_t value, uint8_t data[4])
     data[1] = (uint8_t)((value >> 8u) & 0xFFu);
     data[2] = (uint8_t)((value >> 16u) & 0xFFu);
     data[3] = (uint8_t)((value >> 24u) & 0xFFu);
+}
+
+static bool App_BatMan_IsAlertPinAsserted(void)
+{
+    return (HAL_GPIO_ReadPin(BQ_INT_GPIO_Port, BQ_INT_Pin) == GPIO_PIN_RESET);
+}
+
+static uint32_t App_BatMan_MakeAlertContext(uint32_t fault_flags)
+{
+    return ((uint32_t)alarm_status << 16u) | (fault_flags & 0xFFFFu);
+}
+
+static bool App_BatMan_HasUnresolvedAlertSource(void)
+{
+    /*
+     * XCHG/XDSG 不作为恢复阻断源：host FET_CONTROL 全关本身可能维持这些观察位。
+     * 是否安全只由同帧 Safety/PF、温度、配置和其他独立实时源决定。
+     */
+    return ((safety_alert_a != 0u) || (safety_alert_b != 0u) || (safety_alert_c != 0u) ||
+            ((alarm_raw & APP_BATMAN_ALERT_UNRESOLVED_RAW_MASK) != 0u) ||
+            ((battery_status & BQ76952_BATTERY_STATUS_SDM_MASK) != 0u));
+}
+
+static bool App_BatMan_ClearResolvedAlarmLatch(void)
+{
+    uint8_t data[2];
+    uint16_t clear_mask = alarm_status & APP_BATMAN_ALERT_CONFIGURED_MASK;
+    Int_BQ76952_StatusTypeDef ret;
+
+    if (clear_mask == 0u)
+    {
+        return true;
+    }
+
+    /* 只在 Safety/PF/实时限制均明确解除后 W1C 本帧看到的非关键锁存位。 */
+    App_BatMan_WriteU16Le(clear_mask, data);
+    ret = Int_BQ76952_WriteDirect(BQ76952_CMD_ALARM_STATUS, data, 2u);
+    if (ret != INT_BQ76952_OK)
+    {
+        s_comm_fault = true;
+        s_fault_flags |= APP_BATMAN_FAULT_COMMUNICATION;
+        fault_active = true;
+        return false;
+    }
+    return true;
+}
+
+static void App_BatMan_ObserveAlert(bool *pending, uint32_t *sequence)
+{
+    *pending = Int_BQ76952_IsAlertPending();
+    *sequence = Int_BQ76952_GetAlertSequence();
+
+    if (*pending || App_BatMan_IsAlertPinAsserted())
+    {
+        if (!s_bq_alert_recheck_required)
+        {
+            App_Safety_SetPowerInhibit(APP_SAFETY_INHIBIT_BQ_ALERT);
+        }
+        s_bq_alert_recheck_required = true;
+    }
+}
+
+static void App_BatMan_ProcessAlertAfterSample(bool sample_valid,
+                                               bool pending_before_sample,
+                                               uint32_t sequence_before_sample)
+{
+    uint32_t flags;
+    uint32_t context;
+    bool critical;
+    bool unresolved_source;
+
+    if (Int_BQ76952_IsAlertPending() || App_BatMan_IsAlertPinAsserted())
+    {
+        if (!s_bq_alert_recheck_required)
+        {
+            App_Safety_SetPowerInhibit(APP_SAFETY_INHIBIT_BQ_ALERT);
+        }
+        s_bq_alert_recheck_required = true;
+    }
+    if (!sample_valid)
+    {
+        /* 半帧/通信失败时保留 pending 和功率 inhibit，等待下一完整状态帧。 */
+        return;
+    }
+
+    flags = App_BatMan_GetFaultFlags();
+    context = App_BatMan_MakeAlertContext(flags);
+    unresolved_source = App_BatMan_HasUnresolvedAlertSource();
+    critical = (((flags & (APP_BATMAN_FAULT_SAFETY | APP_BATMAN_FAULT_PERMANENT_FAILURE)) != 0u) ||
+                ((alarm_status & APP_BATMAN_ALERT_CRITICAL_ALARM_MASK) != 0u) ||
+                ((alarm_raw & APP_BATMAN_ALERT_CRITICAL_ALARM_MASK) != 0u));
+    if (critical)
+    {
+        if (!s_bq_alert_critical_reported)
+        {
+            App_Safety_ResolveBqAlert(true, context);
+            s_bq_alert_critical_reported = true;
+        }
+        /* Safety 锁存和 BQ 主 FET 关断必须在同一 owner 周期闭环。 */
+        (void)App_BatMan_KeepMainFetsOff();
+        (void)Int_BQ76952_AcknowledgeAlert(sequence_before_sample);
+        return;
+    }
+
+    /* 配置、温度、FET、范围或任何未解除实时源都必须继续禁止功率。 */
+    if (unresolved_source && !s_bq_alert_recheck_required)
+    {
+        App_Safety_SetPowerInhibit(APP_SAFETY_INHIBIT_BQ_ALERT);
+        s_bq_alert_recheck_required = true;
+    }
+    if ((flags != APP_BATMAN_FAULT_NONE) || unresolved_source)
+    {
+        return;
+    }
+
+    if ((alarm_status & APP_BATMAN_ALERT_CONFIGURED_MASK) != 0u)
+    {
+        /* 本周期仅清锁存；下一完整帧且 ALERT 已回高后才撤销 inhibit。 */
+        (void)App_BatMan_ClearResolvedAlarmLatch();
+        return;
+    }
+
+    if (!s_bq_alert_recheck_required || App_BatMan_IsAlertPinAsserted())
+    {
+        return;
+    }
+
+    /*
+     * 关中断后再次核对序号和 active-low 电平，避免新 ALERT 恰好落在“判定安全”
+     * 与清 inhibit 之间而被旧完整帧错误确认。
+     */
+    {
+        uint32_t primask = __get_PRIMASK();
+
+        __disable_irq();
+        if ((Int_BQ76952_GetAlertSequence() == sequence_before_sample) &&
+            !App_BatMan_IsAlertPinAsserted() &&
+            (pending_before_sample || s_bq_alert_recheck_required))
+        {
+            App_Safety_ResolveBqAlert(false, context);
+            (void)Int_BQ76952_AcknowledgeAlert(sequence_before_sample);
+            s_bq_alert_recheck_required = false;
+        }
+        if (primask == 0u)
+        {
+            __enable_irq();
+        }
+    }
+}
+
+static void App_BatMan_ReportBqReadiness(void)
+{
+    bool ready = App_BatMan_IsOnline() && App_BatMan_IsConfigValid();
+
+    if (!s_bq_ready_reported || (ready != s_bq_ready_state))
+    {
+        App_Safety_ReportBqReady(ready);
+        s_bq_ready_state = ready;
+        s_bq_ready_reported = true;
+    }
+}
+
+static bool App_BatMan_FrameLostConfigProof(void)
+{
+    const uint16_t invalid_battery_status =
+        BQ76952_BATTERY_STATUS_POR_MASK | BQ76952_BATTERY_STATUS_CFGUPDATE_MASK;
+
+    /*
+     * 采样层只原子发布原始快照；安全门面在这里解释复位指纹。这样一旦确认
+     * POR/CFGUPDATE 或 FET_EN 丢失，第一项有副作用的操作就是硬件 PSTOP。
+     */
+    return ((battery_status & invalid_battery_status) != 0u) ||
+           ((manufacturing_status & BQ76952_MFG_STATUS_FET_EN_MASK) == 0u);
+}
+
+static void App_BatMan_EnforceRuntimeProof(bool sample_valid)
+{
+    bool frame_lost_config_proof = sample_valid && App_BatMan_FrameLostConfigProof();
+    bool proof_invalid = !sample_valid || frame_lost_config_proof || !App_BatMan_IsConfigValid();
+
+    if (!proof_invalid)
+    {
+        return;
+    }
+
+    /* 证明丢失后的第一项有副作用操作是 PSTOP；然后撤权，最后有界尝试 BQ ALL-OFF。 */
+    App_SC8815_EmergencyStop();
+    if (!sample_valid || frame_lost_config_proof)
+    {
+        /* 撤销启动期配置缓存，不能把下一次 transport ACK 当成配置证明。 */
+        App_BatMan_MarkConfigRecoveryRequired();
+    }
+    App_Safety_ReportBqReady(false);
+    s_bq_ready_state = false;
+    s_bq_ready_reported = true;
+    if (App_BatMan_KeepMainFetsOff() != INT_BQ76952_OK)
+    {
+        s_comm_fault = true;
+        s_fault_flags |= APP_BATMAN_FAULT_COMMUNICATION | APP_BATMAN_FAULT_FET_CONTROL_INVALID;
+        fault_active = true;
+    }
+}
+
+void App_BatMan_NotifyAlertFromISR(void)
+{
+    Int_BQ76952_NotifyAlertFromISR();
+}
+
+bool App_BatMan_EarlySafeOutputs(void)
+{
+    /* 可重复调用；驱动锁为静态对象，ALL_FETS_OFF 只会强化安全状态。 */
+    Int_BQ76952_InitBoard();
+    Int_BQ76952_SetCrcEnabled(APP_BATMAN_CRC_BOOT_ENABLE != 0u);
+    return App_BatMan_PreResetAllFetsOff();
 }
 
 /**
@@ -218,9 +431,14 @@ static void App_BatMan_ResetState(void)
     balance_mask = BQ76952_CELL_MASK_NONE;
 
     s_comm_fault = false;
+    s_fault_flags = APP_BATMAN_FAULT_NONE;
+    App_BatMan_ResetConfigState();
     App_BatMan_ResetSampleState();
     App_BatMan_ResetDebugState();
-    s_power_config = 0u;
+    s_bq_alert_recheck_required = false;
+    s_bq_alert_critical_reported = false;
+    s_bq_ready_reported = false;
+    s_bq_ready_state = false;
     App_BatMan_ResetEstimatorState();
 }
 
@@ -228,170 +446,222 @@ static void App_BatMan_ResetState(void)
  * @brief 初始化 BQ76952 APP 层。
  *
  * 流程顺序不能随意调整：
- * 1. 先复位 APP 快照和 OLED 状态；
- * 2. 从 EEPROM 恢复累计吞吐量和已完成的容量 SOH 结果；
- * 3. 初始化板级 BQ 通信并设置 CRC 模式；
- * 4. reset BQ 并读取 Device Number 验证 I2C/协议；
- * 5. 进入 ConfigUpdate 写 Data Memory；
- * 6. 退出 ConfigUpdate 后清启动告警，并明确保持主充放电 MOS 关断；
- * 7. 采样一次，给上层提供首帧有效快照。
+ * 1. 无日志地请求并确认 ALL_FETS_OFF；
+ * 2. RESET、基于 HAL 时基等待并再次确认全关；
+ * 3. 核对 Device Number 后进入 ConfigUpdate 写 Data Memory；
+ * 4. 退出后逐项回读 manifest、清启动告警并闭环确认 FET_CONTROL 全关；
+ * 5. 在安全关断后恢复 EEPROM 状态并发布第一帧完整快照。
  */
-void App_BatMan_Init(void)
+bool App_BatMan_Init(void)
 {
     uint8_t data[2];
     uint16_t device_number;
     Int_BQ76952_StatusTypeDef ret;
+    bool pre_reset_fets_off;
+    bool post_reset_fets_off;
+    bool alert_pending;
+    uint32_t alert_sequence;
 
-    printf("电池管理初始化: 开始\r\n");
-
-    /* OLED 先显示 FAIL，直到 Device Number 读取成功。 */
+    /*
+     * MCU 看门狗复位时 BQ 可能仍维持上次 FET 状态。第一条外设动作必须是
+     * ALL_FETS_OFF + FET_STATUS 确认；在此之前禁止格式化日志、EEPROM 和显示访问。
+     */
     App_BatMan_ResetState();
-    App_BatMan_InitAlgorithms();
-    if (App_BatMan_NvmInit())
-    {
-        printf("SOH持久化: EEPROM在线\r\n");
-    }
-    else
-    {
-        printf("SOH持久化: EEPROM暂不可用，将周期重试\r\n");
-    }
-    App_OLED_ShowIicStatus(false);
-    printf("电池管理初始化: 状态复位完成\r\n");
+    pre_reset_fets_off = App_BatMan_EarlySafeOutputs();
 
-    /*
-     * CRC 模式必须在第一条 BQ 命令前确定；主从 CRC 设置不一致时，
-     * 后续读写会表现为协议失败。
-     */
-    Int_BQ76952_InitBoard();
-    Int_BQ76952_SetCrcEnabled(APP_BATMAN_CRC_BOOT_ENABLE != 0u);
-    printf("BQ板级初始化完成 CRC:%u\r\n", APP_BATMAN_CRC_BOOT_ENABLE != 0u ? 1u : 0u);
+    if (!pre_reset_fets_off)
+    {
+        /* 未确认全关时禁止 RESET 清掉 ALL_FETS_OFF blocker，保持安全驻留。 */
+        App_BatMan_LatchConfigInvalid();
+        App_OLED_ShowIicStatus(false);
+        return false;
+    }
 
-    /*
-     * reset 失败时不继续写配置，避免芯片处于未知状态时留下半配置。
-     */
-    printf("BQ复位: 开始\r\n");
+    /* 关断尝试后立即 RESET，不在未知 FET 状态下执行任何可变时长维护工作。 */
     ret = Int_BQ76952_Reset();
     if (ret != INT_BQ76952_OK)
     {
-        printf("BQ复位失败 ret:%d hal:0x%08lx\r\n",
-               (int)ret,
-               (unsigned long)Int_BQ76952_GetLastHalError());
-        return;
+        App_BatMan_LatchConfigInvalid();
+        App_OLED_ShowIicStatus(false);
+        return false;
     }
-    printf("BQ复位: 完成\r\n");
-    printf("BQ复位等待: 开始 tick:%lu primask:%lu\r\n",
-           HAL_GetTick(),
-           __get_PRIMASK());
-    App_BatMan_BusyDelayMs(APP_BATMAN_BQ_RESET_SETTLE_MS);
-    printf("BQ复位等待: 结束 tick:%lu primask:%lu\r\n",
-           HAL_GetTick(),
-           __get_PRIMASK());
+
+    /* HAL 时基给出可审计的 200 ms；复位窗口仍须 HIL 测 FET 波形。 */
+    HAL_Delay(APP_BATMAN_BQ_RESET_SETTLE_MS);
+    post_reset_fets_off = App_BatMan_PreResetAllFetsOff();
+
+    Int_Log_Printf("电池管理初始化: 开始 CRC:%u\r\n", APP_BATMAN_CRC_BOOT_ENABLE != 0u ? 1u : 0u);
+    if (!pre_reset_fets_off || !post_reset_fets_off)
+    {
+        Int_Log_Printf("BQ复位前后主FET关断未确认，配置门禁已锁存\r\n");
+        App_BatMan_LatchConfigInvalid();
+        App_OLED_ShowIicStatus(false);
+        return false;
+    }
+    App_OLED_ShowIicStatus(false);
 
     /*
-     * Device Number 是通信链路的第一道硬确认：地址、subcommand 帧和
-     * 读回长度都必须正确。
+     * Device Number 同时验证地址、subcommand 帧、长度和器件身份；仅“读成功”
+     * 不足以证明当前总线节点就是 BQ76952。
      */
-    printf("BQ设备号读取: 开始\r\n");
     ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_DEVICE_NUMBER, data, 2u);
     if (ret != INT_BQ76952_OK)
     {
-        printf("BQ设备号读取失败 ret:%d hal:0x%08lx\r\n",
-               (int)ret,
-               (unsigned long)Int_BQ76952_GetLastHalError());
-        return;
+        Int_Log_Printf("BQ设备号读取失败 ret:%d hal:0x%08lx\r\n",
+                       (int)ret,
+                       (unsigned long)Int_BQ76952_GetLastHalError());
+        s_comm_fault = true;
+        App_BatMan_LatchConfigInvalid();
+        App_OLED_ShowIicStatus(false);
+        (void)App_BatMan_PreResetAllFetsOff();
+        return false;
     }
 
     device_number = App_BatMan_ReadU16Le(data);
-    printf("BQ通信正常 设备号:0x%04x CRC:%u\r\n",
-           (unsigned int)device_number,
-           Int_BQ76952_IsCrcEnabled() ? 1u : 0u);
+    if (device_number != BQ76952_DEVICE_NUMBER_EXPECTED)
+    {
+        Int_Log_Printf("BQ设备号不匹配 exp:0x%04x act:0x%04x\r\n",
+                       (unsigned int)BQ76952_DEVICE_NUMBER_EXPECTED,
+                       (unsigned int)device_number);
+        App_BatMan_LatchConfigInvalid();
+        App_OLED_ShowIicStatus(false);
+        (void)App_BatMan_PreResetAllFetsOff();
+        return false;
+    }
+    Int_Log_Printf("BQ通信正常 设备号:0x%04x CRC:%u\r\n",
+                   (unsigned int)device_number,
+                   Int_BQ76952_IsCrcEnabled() ? 1u : 0u);
     App_OLED_ShowIicStatus(true);
 
     /*
      * Data Memory 写入必须包在 ConfigUpdate 内。ConfigUpdate 未退出前，
      * 不做正常采样，也不执行 FET_ENABLE。
      */
-    printf("BQ配置模式: 进入开始\r\n");
+    Int_Log_Printf("BQ配置模式: 进入开始\r\n");
     if (Int_BQ76952_EnterConfigUpdate() != INT_BQ76952_OK)
     {
-        printf("BQ配置模式进入失败\r\n");
+        Int_Log_Printf("BQ配置模式进入失败\r\n");
         App_OLED_ShowIicStatus(false);
-        return;
+        App_BatMan_LatchConfigInvalid();
+        (void)App_BatMan_PreResetAllFetsOff();
+        return false;
     }
-    printf("BQ配置模式: 进入完成\r\n");
+    Int_Log_Printf("BQ配置模式: 进入完成\r\n");
 
-    printf("BQ配置写入: 开始\r\n");
+    Int_Log_Printf("BQ配置写入: 开始\r\n");
     if (!App_BatMan_ConfigBq())
     {
-        printf("BQ配置写入失败\r\n");
+        Int_Log_Printf("BQ配置写入失败\r\n");
         App_OLED_ShowIicStatus(false);
         (void)Int_BQ76952_ExitConfigUpdate();
-        return;
+        (void)App_BatMan_KeepMainFetsOff();
+        App_BatMan_LatchConfigInvalid();
+        return false;
     }
-    printf("BQ配置写入: 完成\r\n");
-    /*
-     * Power Config 显示在 OLED 上，用作现场快速确认 Data Memory 读链路。
-     */
-    printf("BQ电源配置读取: 开始\r\n");
-    if (Int_BQ76952_ReadDataMemory(BQ76952_DM_POWER_CONFIG, data, 2u) == INT_BQ76952_OK)
-    {
-        s_power_config = App_BatMan_ReadU16Le(data);
-        App_OLED_ShowBqIicPowerConfig(true, s_power_config);
-        printf("BQ电源配置:0x%04x\r\n", (unsigned int)s_power_config);
-    }
+    Int_Log_Printf("BQ配置写入: 完成\r\n");
 
-    printf("BQ配置模式: 退出开始\r\n");
+    Int_Log_Printf("BQ配置模式: 退出开始\r\n");
     if (Int_BQ76952_ExitConfigUpdate() != INT_BQ76952_OK)
     {
-        printf("BQ配置模式退出失败\r\n");
+        Int_Log_Printf("BQ配置模式退出失败\r\n");
         App_OLED_ShowIicStatus(false);
-        return;
+        App_BatMan_LatchConfigInvalid();
+        (void)App_BatMan_PreResetAllFetsOff();
+        return false;
     }
-    printf("BQ配置模式: 退出完成\r\n");
+    Int_Log_Printf("BQ配置模式: 退出完成\r\n");
+
+    Int_Log_Printf("BQ配置全量回读: 开始\r\n");
+    if (!App_BatMan_VerifyBqConfig())
+    {
+        Int_Log_Printf("BQ配置全量回读失败，主FET保持全关\r\n");
+        App_OLED_ShowIicStatus(false);
+        (void)App_BatMan_KeepMainFetsOff();
+        App_BatMan_LatchConfigInvalid();
+        return false;
+    }
+    Int_Log_Printf("BQ配置全量回读: 一致\r\n");
 
     /*
      * Bring-up 阶段先禁止 BQ 进入 Sleep，避免 CHG FET 被低功耗策略压住。
      * 后续若要做低功耗版本，再把 Sleep 策略放回电源管理状态机统一控制。
      */
-    printf("BQ Sleep禁用: 开始\r\n");
+    Int_Log_Printf("BQ Sleep禁用: 开始\r\n");
     ret = Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_SLEEP_DISABLE);
     if (ret != INT_BQ76952_OK)
     {
-        printf("BQ Sleep禁用失败 ret:%d hal:0x%08lx\r\n",
-               (int)ret,
-               (unsigned long)Int_BQ76952_GetLastHalError());
+        Int_Log_Printf("BQ Sleep禁用失败 ret:%d hal:0x%08lx\r\n",
+                       (int)ret,
+                       (unsigned long)Int_BQ76952_GetLastHalError());
         App_OLED_ShowIicStatus(false);
-        return;
+        App_BatMan_LatchConfigInvalid();
+        (void)App_BatMan_KeepMainFetsOff();
+        return false;
     }
-    printf("BQ Sleep禁用: 完成\r\n");
+    Int_Log_Printf("BQ Sleep禁用: 完成\r\n");
 
     /*
      * ConfigUpdate 退出后，只清启动噪声告警，并先保持 CHG/DSG/PCHG/PDSG 关断。
      * 主功率路径随后由 App_Power 按保护、充电器和放电条件统一释放。
      */
-    printf("BQ启动告警: 清除\r\n");
-    App_BatMan_ClearStartupAlarms();
-    printf("BQ主FET默认关断: 开始\r\n");
-    if (App_BatMan_KeepMainFetsOff() != INT_BQ76952_OK)
+    Int_Log_Printf("BQ启动告警: 清除\r\n");
+    ret = App_BatMan_ClearStartupAlarms();
+    if (ret != INT_BQ76952_OK)
     {
-        printf("BQ主FET默认关断失败\r\n");
-        App_OLED_ShowIicStatus(false);
-        return;
+        Int_Log_Printf("BQ启动告警清除失败 ret:%d\r\n", (int)ret);
+        s_comm_fault = true;
+        App_BatMan_LatchConfigInvalid();
+        (void)App_BatMan_KeepMainFetsOff();
+        return false;
     }
-    printf("BQ主FET默认关断: 完成\r\n");
+    Int_Log_Printf("BQ主FET安全控制启用: 开始\r\n");
+    if (!App_BatMan_EnableFetControlSafely())
+    {
+        Int_Log_Printf("BQ主FET安全控制启用失败\r\n");
+        App_OLED_ShowIicStatus(false);
+        App_BatMan_LatchConfigInvalid();
+        return false;
+    }
+    Int_Log_Printf("BQ主FET安全控制启用: 全关确认\r\n");
 
     /*
      * 初始化成功后立即采样一次，避免 UART/OLED/CAN 首帧仍是全零快照。
      */
-    printf("电池管理首帧采样: 开始\r\n");
-    App_BatMan_Sample();
+    /* 可阻塞的 EEPROM 恢复放在主 FET 已闭环确认全关之后。 */
+    App_BatMan_InitAlgorithms();
+    if (App_BatMan_NvmInit())
+    {
+        Int_Log_Printf("SOH持久化: EEPROM在线\r\n");
+    }
+    else
+    {
+        Int_Log_Printf("SOH持久化: EEPROM暂不可用，将由维护任务重试\r\n");
+    }
+
+    Int_Log_Printf("电池管理首帧采样: 开始\r\n");
+    App_BatMan_ObserveAlert(&alert_pending, &alert_sequence);
+    if (!App_BatMan_Sample())
+    {
+        App_BatMan_EnforceRuntimeProof(false);
+        App_BatMan_ProcessAlertAfterSample(false, alert_pending, alert_sequence);
+        Int_Log_Printf("电池管理首帧采样失败，主FET保持全关\r\n");
+        return false;
+    }
+    App_BatMan_EnforceRuntimeProof(true);
+    App_BatMan_ProcessAlertAfterSample(true, alert_pending, alert_sequence);
+    if (!App_BatMan_IsOnline() || !App_BatMan_IsConfigValid())
+    {
+        Int_Log_Printf("电池管理首帧配置/告警证明无效，主FET保持全关\r\n");
+        return false;
+    }
     App_BatMan_UpdateRcModel(0u);
     App_BatMan_UpdateSoc(0u);
     App_BatMan_UpdateHealth(0u);
     App_BatMan_NvmTask(0u);
     App_BatMan_UpdateBalance(APP_BATMAN_BALANCE_PERIOD_MS);
     App_BatMan_UpdateRuntimeOledStatus();
-    printf("电池管理初始化成功\r\n");
+    Int_Log_Printf("电池管理初始化成功\r\n");
+    return true;
 }
 
 /**
@@ -402,19 +672,25 @@ void App_BatMan_Init(void)
  */
 void App_BatMan_Task(uint32_t interval_ms)
 {
-    /*
-     * 通信故障按采样周期计算。瞬时 I2C 异常应出现在当次日志中，
-     * 但不永久污染后续正常采样。
-     */
-    s_comm_fault = false;
+    bool alert_pending;
+    bool sample_valid;
+    uint32_t alert_sequence;
 
-    App_BatMan_Sample();
+    App_BatMan_ObserveAlert(&alert_pending, &alert_sequence);
+    sample_valid = App_BatMan_Sample();
+    App_BatMan_EnforceRuntimeProof(sample_valid);
+    App_BatMan_ProcessAlertAfterSample(sample_valid, alert_pending, alert_sequence);
+    App_BatMan_ReportBqReadiness();
     App_BatMan_UpdateRcModel(interval_ms);
     App_BatMan_UpdateSoc(interval_ms);
     App_BatMan_UpdateHealth(interval_ms);
-    App_BatMan_NvmTask(interval_ms);
     App_BatMan_UpdateBalance(interval_ms);
     App_BatMan_UpdateRuntimeOledStatus();
+}
+
+void App_BatMan_MaintenanceTask(uint32_t interval_ms)
+{
+    App_BatMan_NvmTask(interval_ms);
     App_BatMan_UpdateDebugOutput(interval_ms);
 }
 

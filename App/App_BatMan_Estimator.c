@@ -39,25 +39,22 @@ enum
     APP_BATMAN_HEALTH_TEMP_WARN_C = 55
 };
 
-#define APP_BATMAN_SOC_KALMAN_Q                 (0.002f)
-#define APP_BATMAN_SOC_KALMAN_R                 (9.0f)
-#define APP_BATMAN_SOC_OCV_STEP_LIMIT_PERCENT   (3.0f)
-#define APP_BATMAN_SOC_DISPLAY_RISE_PER_S       (1.5f)
-#define APP_BATMAN_SOC_DISPLAY_FALL_PER_S       (2.5f)
+#define APP_BATMAN_SOC_KALMAN_Q (0.002f)
+#define APP_BATMAN_SOC_KALMAN_R (9.0f)
+#define APP_BATMAN_SOC_OCV_STEP_LIMIT_PERCENT (3.0f)
+#define APP_BATMAN_SOC_DISPLAY_RISE_PER_S (1.5f)
+#define APP_BATMAN_SOC_DISPLAY_FALL_PER_S (2.5f)
 
 static uint32_t s_balance_ms = 0u;
 static uint16_t s_last_balance_mask = BQ76952_CELL_MASK_NONE;
 static int32_t s_rc_polar_mv = 0;
 
-static const uint16_t s_balance_cell_mask[APP_BATMAN_CELL_COUNT] =
-{
-    BQ76952_CELL_MASK_6S_HW_CELL1,
-    BQ76952_CELL_MASK_6S_HW_CELL2,
-    BQ76952_CELL_MASK_6S_HW_CELL3,
-    BQ76952_CELL_MASK_6S_HW_CELL4,
-    BQ76952_CELL_MASK_6S_HW_CELL5,
-    BQ76952_CELL_MASK_6S_HW_CELL6
-};
+static const uint16_t s_balance_cell_mask[APP_BATMAN_CELL_COUNT] = {BQ76952_CELL_MASK_6S_HW_CELL1,
+                                                                    BQ76952_CELL_MASK_6S_HW_CELL2,
+                                                                    BQ76952_CELL_MASK_6S_HW_CELL3,
+                                                                    BQ76952_CELL_MASK_6S_HW_CELL4,
+                                                                    BQ76952_CELL_MASK_6S_HW_CELL5,
+                                                                    BQ76952_CELL_MASK_6S_HW_CELL6};
 
 void App_BatMan_ResetEstimatorState(void)
 {
@@ -229,7 +226,7 @@ static uint16_t App_BatMan_MakeBalanceMask(void)
     uint8_t max_index = 0u;
     uint8_t last_index = APP_BATMAN_CELL_COUNT;
 
-    if (s_comm_fault || fault_active || !s_cells_sample_valid)
+    if (s_comm_fault || fault_active || !s_cells_sample_valid || !s_temp_cell_sample_valid)
     {
         return BQ76952_CELL_MASK_NONE;
     }
@@ -290,9 +287,7 @@ void App_BatMan_UpdateBalance(uint32_t interval_ms)
     uint16_t new_mask;
 
     s_balance_ms += interval_ms;
-    if ((s_balance_ms < APP_BATMAN_BALANCE_PERIOD_MS) &&
-        !fault_active &&
-        !s_comm_fault)
+    if ((s_balance_ms < APP_BATMAN_BALANCE_PERIOD_MS) && !fault_active && !s_comm_fault)
     {
         return;
     }

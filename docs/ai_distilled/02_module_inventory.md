@@ -1,70 +1,79 @@
-# Module Inventory
+# 02 Module Inventory
 
-## Top-Level Folders
+更新日期：2026-08-22
 
-| Path | Role | Evidence | Notes |
-| --- | --- | --- | --- |
-| `bms24v_platform/Core` | CubeMX generated core sources, `main.c`, peripheral init, IRQ handlers | `bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:395-445` | Avoid broad edits unless changing CubeMX/Core behavior |
-| `bms24v_platform/Drivers` | STM32G0 HAL/CMSIS drivers | `bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:600-725` | Vendor/generated; do not put app behavior here |
-| `bms24v_platform/MDK-ARM` | Keil startup, scatter, project metadata | `bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:385-390`; `bms24v_platform/MDK-ARM/bms24v_platform/bms24v_platform.sct:5-12` | Keep in sync when adding sources |
-| `App` | Application state machines and bring-up workflows | `bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:450-480` | Public APIs use `App_*` |
-| `Com` | Pure conversion/shared helpers | `bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:485-495` | Should not access I2C/GPIO |
-| `Int` | Interface/driver layer for chips and board IO | `bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:500-595` | Public APIs use `Int_*`; BSP constants in `*_BSP.h` |
-| `docs` | Project rules and logic docs | `docs/rules/hardware_rules.md:7-13`; `docs/logic/hardware_interface_reservation.md:1-13` | Authoritative project intent when code/config conflicts are explicit |
-| `official_chip_docs_files` | Extracted chip/hardware/migration notes and netlists | `official_chip_docs_files/README.md:1-4` | Treat PDFs as requiring page-level confirmation unless rendered |
+## Module Inventory
 
-## App Modules
+下表描述当前实现，不把历史目录、构建产物或未来规划当作有效模块。
 
-| Module | Public API | Responsibility | Evidence | Risks |
+### App 层
+
+| 模块 | 单一职责/边界 | 关键证据 | 信心 | 人工确认 |
 | --- | --- | --- | --- | --- |
-| `App_BatMan` | `App_BatMan_Init`, `App_BatMan_Task` | BQ76952 init, Data Memory baseline, sampling, SOC/SOH, BQ FET enable/monitor | `App/App_BatMan.h:24-32`; `App/App_BatMan.c:807-928` | CRC default, current sign/gain, temperature config, FET status bits |
-| `App_SC8815` | `App_SC8815_Init`, `Task`, `RequestCharge`, `GetState` | SC8815 standby monitor, guarded charge request state machine, STATUS/ADC sample | `App/App_SC8815.h:31-51`; `App/App_SC8815.c:72-144,209-283` | Must not release PSTOP until hardware divider/safety confirmed |
-| `App_OLED` | `App_OLED_Init`, `ShowIicStatus`, `ShowBqIicPowerConfig` | Bring-up OLED status page for BQ I2C and power config | `App/App_OLED.h:7-9`; `App/App_OLED.c:56-143` | Display is bring-up only; no full UI state machine |
+| `App_Main` | 初始化顺序、静态任务内存、任务创建、绝对周期调度 | `App/App_Main.c:25-105,215-377` | High | Not needed |
+| `App_Safety` | inhibit、关键任务 deadline/stack、wake epoch、IWDG 唯一刷新者 | `App/App_Safety.h:12-65,85-94`；`App/App_Safety.c:67-117,155-211,301-609` | High | Needed，watchdog HIL |
+| `App_Power` | 充/放/预放/唤醒唯一业务授权；shutdown provenance；offline 每周期全关与重认证后新帧门禁；SC 启动失败同周期回滚 BQ 全关 | `App/App_Power.h:7-69`；`App/App_Power.c:125-304,330-480,600-829` | High | Needed，策略边界 HIL |
+| `App_BatMan` | BQ facade、初始化、ALERT 单调序号/保护锁存、PSTOP-first 运行期 proof 撤销、周期/维护入口 | `App/App_BatMan.c:191-346,455-700` | High | Needed，保护/失联实测 |
+| `App_BatMan_Config` | BQ DM manifest、写读回、FET desired/commanded/observed、`CONFIG_RECOVERY_REQUIRED` 与 1500 ms 整体重认证 transaction | `App/App_BatMan_Config.c:75-78,193-310,463-811` | High | Needed，TRM/BOM/HIL |
+| `App_BatMan_Sample` | 限时完整帧采集、原子发布、age/sequence、原始 POR/CFGUPDATE/FET_EN 快照；不在采样层先撤销 proof | `App/App_BatMan_Sample.c:281-336,352-530` | High | Needed，复位/失联 HIL |
+| `App_BatMan_Nvm` | SOC/SOH 双槽 CRC/sequence、写后读回；静态 recursive mutex 串行化 init/task/flush；短暂停调度抓取同一时刻 SOC+SOH snapshot | `App/App_BatMan_Nvm.c:17-38,49-175,204-539,713-894` | High | Needed，掉电/并发测试 |
+| `App_BatMan_Estimator` | 把采样帧、anchor 事件与 SOC/SOH 纯算法连接 | `App/App_BatMan_Estimator.c` | High | Needed，标定 |
+| `App_BatMan_Debug` | Engineering 诊断输出；不应成为生产授权入口 | `App/App_BatMan_Debug.c`；`App/App_DebugCli.c:3` | High | Not needed |
+| `App_SC8815` | SC 单写者、staged sample、配置读回、credentialed start；SC_EVENT sequence + 2-clean 原子清门禁 | `App/App_SC8815.c:20-47,106-412,435-505,508-661` | High | Needed，模拟量/事件竞态 HIL |
+| `App_CanBms` | 只读诊断协议、原子快照、有限 RX/event 队列、重初始化 | `App/App_CanBms.h:7-77`；`App/App_CanBms.c:23-40,186-244,362-550,679-819` | High | Needed，总线 HIL |
+| `App_DebugCli` | Engineering-only、物理 gate + 60 s 解锁；命令提交到 Power | `App/App_DebugCli.h:7-20`；`App/App_DebugCli.c:3,26-35,236-264,322-405,446-496,569-589` | High | Needed，确认量产宏 |
+| `App_OLED` | 低优先级状态显示，只消费快照 | `App/App_OLED.c`；`App/App_Main.c:178-206` | High | Not needed |
+| `App_Buzzer` | 蜂鸣器乐谱/报警节奏策略；底层 PWM 在 `Int_Buzzer` | `App/App_Buzzer.c`；`Int/Int_Buzzer.c` | High | Not needed |
 
-## Int Modules
+### Com 层
 
-| Module | Public API shape | Responsibility | Evidence | Risks |
+| 模块 | 职责/约束 | 证据 | 信心 | 人工确认 |
 | --- | --- | --- | --- | --- |
-| `Int_BQ76952` | status enum + board, CRC, direct, subcommand, Data Memory, ConfigUpdate functions | Low-level BQ76952 transport/protocol primitives | `Int/Int_BQ76952.h:7-122`; `Int/Int_BQ76952.c:328-614` | CRC default conflict; WAKE direction conflict |
-| `Int_BQ76952_BSP` | BQ commands, Data Memory, bit masks, 6S mapping | Detailed BQ76952 register/BSP macro reference | `Int/Int_BQ76952_BSP.h:210-237,297-311` | Must stay aligned with TRM and hardware mapping |
-| `Int_SC8815` | status enum + safe state, CE/PSTOP, IRQ pending, reg, status, ADC, current limits | Software IIC, guarded register access, and ISR-to-task event latch | `Int/Int_SC8815.h:7-120`; `Int/Int_SC8815.c:14-29,577-594,636-660` | Software IIC timing and physical SC8815 INT pulse need hardware verification |
-| `Int_SC8815_BSP` | SC8815 register masks, ratios, project safe/forbidden masks | Detailed SC8815 register/BSP macro reference | `Int/Int_SC8815_BSP.h:497-566` | R17/R18 and divider assumptions need actual-board confirmation |
-| `Int_CanFd` | init/send/receive/status with frame struct | FDCAN1 transport wrapper | `Int/Int_CanFd.h:39-75`; `Int/Int_CanFd.c:153-320` | Protocol ownership and init error handling missing |
-| `Int_EEPROM` | init/ready/read/write/write-readback | Raw M24C64 page-safe storage access | `Int/Int_EEPROM.h:7-65`; `Int/Int_EEPROM.c:117-207` | No application data schema yet |
-| `Int_OLED` | OLED draw/text/init primitives | SSD1315-style I2C display driver | `Int/Int_OLED.h:8-30`; `Int/Int_OLED.c:4-12,548-585` | Address and bounds should be verified before expanding UI |
-| `Int_Button` | init/task/state/events/hold | Polling debounce for PD3 button | `Int/Int_Button.h:18-59`; `Int/Int_Button.c:18,63-139` | No EXTI; task must be called regularly |
-| `Int_Buzzer` | init/set/start/task/stop/blocking tone | GPIO-driven buzzer control | `Int/Int_Buzzer.h:7-61`; `Int/Int_Buzzer.c:101-201` | Hardware note says TIM3_CH2; code is GPIO toggle |
-| `Int_Led` | init/set/toggle/all/read | Active-low red/green LED driver | `Int/Int_Led.h:14-42`; `Int/Int_Led.c:40-113` | Active-low must be preserved |
+| `Com_SOC` | 纯 SOC 算法；可信静置/持久化/anchor seed；输出 validity/confidence/age | `Com/Com_SOC.h:7-40,92-127`；`Com/Com_SOC.c` | High | Needed，OCV/容量标定 |
+| `Com_SOH` | 容量学习、健康度与持久结构，容量有上界保护 | `Com/Com_SOH.h:7-19`；`Com/Com_SOH.c` | High | Needed，循环数据 |
+| `Com_BatteryParam` | 目标电芯 OCV/容量等算法参数 | `Com/Com_BatteryParam.c`；`Com/Com_BatteryParam.h` | High | Needed，目标电芯标定 |
+| `Com_BQ76952` | BQ 原始量到工程量的纯换算/语义辅助 | `Com/Com_BQ76952.c`；`Com/Com_BQ76952.h` | High | Needed，单位与校准复核 |
+| `Com_Format` | 无堆、有界的整数/字符串格式化；不支持的格式失败，超长安全截断 | `Com/Com_Format.h:1-16`；`Com/Com_Format.c:13-269`；`tests/host/test_algorithms.c:376-408` | High | Not needed |
 
-## Com Modules
+### Int 层
 
-| Module | Responsibility | Evidence | Rules |
+| 模块 | 职责/安全边界 | 证据 | 信心 | 人工确认 |
+| --- | --- | --- | --- | --- |
+| `Int_BQ76952` | BQ I2C transaction、递归静态 mutex、绝对截止时间、direct/subcommand/DM | `Int/Int_BQ76952.c:1-38,48-61,86-240,524-659,1066-1195` | High | Needed，异常总线 HIL |
+| `Int_SC8815` | 确定性软件 I2C、clock-stretch/stuck recovery、读回、直接 PSTOP、单调 IRQ sequence | `Int/Int_SC8815.c:61-187,557-738,743-839,1028-1139` | High | Needed，逻辑分析仪 |
+| `Int_I2C2Bus` | OLED/EEPROM 共用 I2C2 的静态递归 mutex | `Int/Int_I2C2Bus.c:7-61` | High | Needed，总线压力 |
+| `Int_EEPROM` | M24C64 页边界安全读写，借用 I2C2 总线锁 | `Int/Int_EEPROM.h:7-15`；`Int/Int_EEPROM.c` | High | Needed，掉电/寿命 |
+| `Int_OLED` | 8 页批量刷新，共享 I2C2 锁；Clear 不隐式刷屏 | `Int/Int_OLED.c:16-17,114-147` | High | Not needed |
+| `Int_CanFd` | FDCAN 过滤、收发、错误恢复的 transport | `Int/Int_CanFd.c:83-199` | High | Needed，bus-off HIL |
+| `Int_Log` | `Int_Log_Printf` 用 384 B 固定栈缓冲 + `Com_FormatV`，投递到 1024 B 静态 UART IT ring；截断/满时计数且不等待 | `Int/Int_Log.h:16-41`；`Int/Int_Log.c:11-24,47-173,175-231`；`bms24v_platform/Core/Src/retarget.c:1-52` | High | Needed，拥塞/jitter 测试 |
+| `Int_Watchdog` | 直接配置/刷新 IWDG；无业务喂狗决策 | `Int/Int_Watchdog.c:17-78` | High | Needed，实测超时 |
+| `Int_Fault` | fault snapshot、backup register、Panic/HardFault/reset hooks | `Int/Int_Fault.h:7-63`；`Int/Int_Fault.c:63-174,176-215,256-272` | High | Needed，复位保持测试 |
+| `Int_Buzzer/Int_Led` | 板级定时器/GPIO 薄封装 | `Int/Int_Buzzer.c`；`Int/Int_Led.c` | High | Not needed |
+
+## 生成层与配置
+
+| 对象 | 当前作用 | 证据 | 变更策略 |
 | --- | --- | --- | --- |
-| `Com_BQ76952` | Pack constants, 0.1K-to-C conversion, OCV/SOC interpolation | `Com/Com_BQ76952.h:22-67`; `Com/Com_BQ76952.c:10-80` | Keep pure: no I2C, no GPIO, no Data Memory writes |
+| `Core/Src/main.c` | HAL 前直接建 SC safe GPIO；时钟后在 USER SysInit 执行 GPIO→SC standby→I2C1→BQ all-off，再初始化其余外设并调用 `App_Main()` | `bms24v_platform/Core/Src/main.c:83-128` | 保持 USER CODE 边界；早期安全顺序不可后移 |
+| `stm32g0xx_it.c` | 异常/IRQ 入口，SC/BQ EXTI 先急停 | `bms24v_platform/Core/Src/stm32g0xx_it.c:204-212` | ISR 必须短且可界定 |
+| `gpio/i2c/fdcan/usart/tim.c` | 引脚、时序、IRQ、外设参数 | `bms24v_platform/Core/Src/gpio.c:54-111`；`bms24v_platform/Core/Src/i2c.c:41-107` | 由 `.ioc` 管理，不承载业务 |
+| `.ioc` | CubeMX 单一生成配置源 | `bms24v_platform/bms24v_platform.ioc` | 修改时同步审阅生成 diff |
+| startup/linker | vector、Flash/RAM、初始 stack/heap | `bms24v_platform/MDK-ARM/startup_stm32g0b1xx.s:31-60`；`bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:3-9` | 不写业务 |
 
-## Generated Core Modules
+## 构建与验证模块
 
-| Module | Responsibility | Evidence | Notes |
+| 对象 | 作用 | 证据 | 当前判断 |
 | --- | --- | --- | --- |
-| `main.c` | Initialization and bare-metal scheduler | `bms24v_platform/Core/Src/main.c:107-169` | Keep behavior minimal |
-| `gpio.c` | GPIO init and EXTI4_15 enable | `bms24v_platform/Core/Src/gpio.c:42-118` | Generated-style file; update via CubeMX when possible |
-| `i2c.c` | I2C1/I2C2 init and MSP pin setup | `bms24v_platform/Core/Src/i2c.c:31-107,139-179` | BQ on I2C1, OLED/EEPROM on I2C2 |
-| `fdcan.c` | FDCAN1 init and PB8/PB9 AF setup | `bms24v_platform/Core/Src/fdcan.c:40-58,81-101` | Transport wrapper is `Int_CanFd` |
-| `usart.c` | USART1 115200 debug UART | `bms24v_platform/Core/Src/usart.c:41-52,99-106` | Used by `printf`/retarget |
-| `stm32g0xx_it.c` | IRQ handlers | `bms24v_platform/Core/Src/stm32g0xx_it.c:107-126` | BQ INT handler calls HAL only |
+| `CMakeLists.txt` | GCC 固件源、警告、link、尺寸门禁、heap/stdio 符号门禁、host tests | `CMakeLists.txt:9-15,24-205` | Active |
+| `CMakePresets.json` | debug/release/engineering-release 配置 | `CMakePresets.json:5-35` | Active |
+| Keil `.uvprojx` | STM32G0B1、App/Com/Int/FreeRTOS 文件清单 | `bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:10-21,343-851` | XML/member gates passed；实际 ARMCC build Unknown |
+| `tests/host` | 算法、结构与 repo hygiene 契约 | `tests/host/CMakeLists.txt:1-55`；`tests/host/test_algorithms.c`；`tests/host/test_*_contract.py`；`tests/host/check_repo_hygiene.py` | Host 5/5；三套 ARM 各 4/4 |
+| GitHub Actions | 三 preset 构建 + CTest | `.github/workflows/firmware-ci.yml:1-36` | 配置存在；远端运行结果 Unknown |
 
-## Code Size Guidance
+## 非模块/不应入库对象
 
-The current style favors one focused `.c/.h` pair per hardware or app responsibility. Large register definition sets belong in `*_BSP.h`, while behavior stays in `*.c`.
+`build/`、`logs/`、对象文件、固件二进制、map、pack/cache、`.log.lock` 和临时测试输出不是源代码模块；`.gitignore` 和 `repo_hygiene` CTest 已覆盖这些模式。最终 tracked forbidden=0，本交付版本已退跟踪 1098 项历史产物。【事实】
 
-Evidence: `Int/Int_BQ76952_BSP.h:210-313`, `Int/Int_SC8815_BSP.h:497-566`, `App/App_BatMan.c:807-928`, `App/App_SC8815.c:72-144`.  
-Confidence: High. Human confirmation: Not needed.
-
-Practical target for future additions:
-
-- Small board IO modules: keep public APIs under about 10 functions unless there is a clear state-machine need.
-- Chip INT modules: allow more functions, but group by protocol primitive, status read, and config write.
-- APP modules: keep one public `Init` and one public `Task` where possible; add explicit request/query APIs only for cross-module behavior.
-- Move dense macro/register tables to `*_BSP.h`, with comments next to safety-critical bits.
-
-Evidence basis: `Int/Int_Button.h:18-59`, `Int/Int_Buzzer.h:10-61`, `Int/Int_BQ76952.h:20-122`, `App/App_SC8815.h:31-51`.
+- 证据：`.gitignore:1-41`；`tests/host/check_repo_hygiene.py:11-105`；`tests/host/CMakeLists.txt:8-13`
+- 信心：High
+- 人工确认：Not needed，1098 项退跟踪 manifest 已人工审阅；冻结 SHA 的远端 CI 归档仍属于发布流程

@@ -20,6 +20,7 @@ extern bool s_comm_fault;
 extern bool s_cells_sample_valid;
 extern bool s_current_sample_valid;
 extern bool s_temp_cell_sample_valid;
+extern uint32_t s_fault_flags;
 extern bool s_soc_full_anchor_used;
 extern bool s_soc_empty_anchor_used;
 extern bool s_soh_capacity_updated;
@@ -33,10 +34,17 @@ void App_BatMan_ResetEstimatorState(void);
 void App_BatMan_ResetDebugState(void);
 
 bool App_BatMan_ConfigBq(void);
+bool App_BatMan_VerifyBqConfig(void);
+void App_BatMan_ResetConfigState(void);
+void App_BatMan_LatchConfigInvalid(void);
+void App_BatMan_MarkConfigRecoveryRequired(void);
+bool App_BatMan_PreResetAllFetsOff(void);
+bool App_BatMan_EnableFetControlSafely(void);
+bool App_BatMan_ObserveFetStatus(uint8_t observed_status);
 Int_BQ76952_StatusTypeDef App_BatMan_KeepMainFetsOff(void);
-void App_BatMan_ClearStartupAlarms(void);
+Int_BQ76952_StatusTypeDef App_BatMan_ClearStartupAlarms(void);
 
-void App_BatMan_Sample(void);
+bool App_BatMan_Sample(void);
 
 void App_BatMan_InitAlgorithms(void);
 void App_BatMan_UpdateRcModel(uint32_t interval_ms);

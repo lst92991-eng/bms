@@ -45,6 +45,22 @@ typedef struct
     uint8_t raw;
 } Int_SC8815_StatusFlagsTypeDef;
 
+typedef struct
+{
+    uint32_t transaction_count;
+    uint32_t nack_count;
+    uint32_t timeout_count;
+    uint32_t recovery_count;
+    uint32_t busy_count;
+} Int_SC8815_BusStatsTypeDef;
+
+/**
+ * @brief 在系统时钟配置前建立 SC8815 硬件安全电平。
+ * @note 仅使用 RCC/GPIO 寄存器；先置位输出锁存器，再切换 PB0/PB1 为推挽输出。
+ *       必须在 HAL_Init() 前调用，禁止在此函数内访问 HAL、I2C 或日志。
+ */
+void Int_SC8815_AssertBootSafeGpio(void);
+
 /**
  * @brief 进入 SC8815 安全态。
  * @note 只配置 MCU 控制脚到安全电平：PSTOP=standby，#CE=disable；不启动充电。
@@ -62,6 +78,13 @@ void Int_SC8815_SetChipEnabled(bool enabled);
 void Int_SC8815_SetStandby(bool standby);
 
 /**
+ * @brief 无条件同步拉高 PSTOP，使功率级立即进入 standby。
+ * @note 幂等、无 I2C、无队列、无日志，可在 ISR 调用。
+ */
+void Int_SC8815_ForceStandby(void);
+bool Int_SC8815_IsStandbyAsserted(void);
+
+/**
  * @brief 在 SC8815 INT 下降沿 ISR 中锁存待处理事件。
  * @note 该函数不访问软件 I2C，不调用阻塞接口。
  */
@@ -72,11 +95,15 @@ void Int_SC8815_NotifyInterruptFromISR(void);
  */
 bool Int_SC8815_TakeInterruptPending(void);
 
+/** @brief 返回 SC INT 单调事件序号，用于防止新 IRQ 被旧的解除流程覆盖。 */
+uint32_t Int_SC8815_GetInterruptSequence(void);
+
 /**
  * @brief 写 SC8815 单字节寄存器。
  * @note 所有写入都会经过项目 guard，禁止 OTG、反向输出、关闭关键保护和非法限流。
  */
 Int_SC8815_StatusTypeDef Int_SC8815_WriteReg(uint8_t reg, uint8_t value);
+Int_SC8815_StatusTypeDef Int_SC8815_ReadReg(uint8_t reg, uint8_t *value);
 
 /**
  * @brief 读改写 SC8815 单字节寄存器。
@@ -101,27 +128,40 @@ Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcRaw(Int_SC8815_AdcChannelTypeDef chan
 /**
  * @brief 读取电流 ADC 原始 10-bit 值。
  */
-Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentRaw(Int_SC8815_CurrentChannelTypeDef channel, uint16_t *raw);
+Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentRaw(Int_SC8815_CurrentChannelTypeDef channel,
+                                                      uint16_t *raw);
 
 /**
  * @brief 读取电压 ADC 并换算为 mV。
  */
-Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcVoltageMv(Int_SC8815_AdcChannelTypeDef channel, uint32_t *mv);
+Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcVoltageMv(Int_SC8815_AdcChannelTypeDef channel,
+                                                     uint32_t *mv);
 
 /**
  * @brief 读取电流 ADC 并换算为 mA。
  */
-Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentMa(Int_SC8815_CurrentChannelTypeDef channel, uint32_t *ma);
+Int_SC8815_StatusTypeDef Int_SC8815_ReadAdcCurrentMa(Int_SC8815_CurrentChannelTypeDef channel,
+                                                     uint32_t *ma);
+
+Int_SC8815_StatusTypeDef
+Int_SC8815_AdcVoltageRawToMv(Int_SC8815_AdcChannelTypeDef channel, uint16_t raw, uint32_t *mv);
+Int_SC8815_StatusTypeDef
+Int_SC8815_AdcCurrentRawToMa(Int_SC8815_CurrentChannelTypeDef channel, uint16_t raw, uint32_t *ma);
 
 /**
  * @brief 设置输入或电池侧限流，单位 mA。
  * @note 小于 300mA 或超过项目上限会被拒绝。
  */
-Int_SC8815_StatusTypeDef Int_SC8815_SetCurrentLimitMa(Int_SC8815_CurrentLimitTypeDef type, uint16_t current_ma);
+Int_SC8815_StatusTypeDef Int_SC8815_SetCurrentLimitMa(Int_SC8815_CurrentLimitTypeDef type,
+                                                      uint16_t current_ma);
+Int_SC8815_StatusTypeDef Int_SC8815_GetCurrentLimitMa(Int_SC8815_CurrentLimitTypeDef type,
+                                                      uint32_t *current_ma);
 Int_SC8815_StatusTypeDef Int_SC8815_ProbeAddress(uint8_t addr_7bit, bool swapped);
 Int_SC8815_StatusTypeDef Int_SC8815_ReadRegWithLineOrder(uint8_t reg, bool swapped, uint8_t *value);
 
 bool Int_SC8815_IsIicLineSwapped(void);
 uint8_t Int_SC8815_GetBusLevels(void);
+void Int_SC8815_GetBusStats(Int_SC8815_BusStatsTypeDef *stats);
+void Int_SC8815_ResetBusStats(void);
 
 #endif /* INT_SC8815_H */

@@ -1,411 +1,660 @@
 #include "App_SC8815.h"
 
-#include <stdio.h>
+#include <string.h>
 
-#include "FreeRTOS.h"
-#include "App_DebugCli.h"
+#include "App_Safety.h"
 #include "Int_SC8815.h"
 #include "Int_SC8815_BSP.h"
-#include "gpio.h"
-#include "queue.h"
+#include "main.h"
 
 /**
  * @file App_SC8815.c
- * @brief SC8815 充电芯片 APP 层。
- *
- * 本层只负责安全启停和状态监控，不直接实现充电环路算法。
- * SC8815 自己管理功率环路；MCU 只控制 CE_N/PSTOP、写入经过 INT 层
- * guard 校验的寄存器，并周期读取 STATUS/ADC。
- *
- * 默认启动后状态：
- * - `CE_N = 0`：芯片使能，允许寄存器和 ADC 监控。
- * - `PSTOP = 1`：保持 standby，充电功率级停止。
- * - `charge_requested = false`：默认不会自动启动充电。
+ * @brief SC8815 单所有者状态机：同步停机，异步且带代际校验的安全启动。
  */
 
 enum
 {
-    APP_SC8815_DEBUG_PERIOD_MS = 5000u,
-    APP_SC8815_SAMPLE_PERIOD_MS = 1000u,
-    APP_SC8815_CHARGE_QUEUE_LEN = 1u
+    APP_SC8815_SAMPLE_PERIOD_MS = 1000u
 };
 
-/*
- * SC8815 状态快照。
- * 当前只给本文件状态机使用，外部通过串口日志观察，不再暴露只读指针。
- */
-typedef struct
-{
-    bool comm_ok;
-    bool charge_requested;
-    bool chip_enabled;
-    bool standby;
-    bool ac_ok;
-    bool indet;
-    bool vbus_short;
-    bool otp;
-    bool eoc;
-    uint8_t status_raw;
-    uint32_t vbus_mv;
-    uint32_t vbat_mv;
-    uint32_t ibus_ma;
-    uint32_t ibat_ma;
-    uint16_t vbus_raw;
-    uint16_t vbat_raw;
-    uint16_t ibus_raw;
-    uint16_t ibat_raw;
-    uint8_t last_error;
-} App_SC8815_StateTypeDef;
+static App_SC8815_SnapshotTypeDef s_sc;
+static uint16_t s_sample_ms;
+static bool s_interrupt_resolution_pending;
+static uint8_t s_interrupt_clean_sample_count;
+static uint32_t s_interrupt_resolution_sequence;
+static bool s_gpo_released;
+static uint8_t s_ready_clean_sample_count;
+static bool s_ready_reported;
 
-static App_SC8815_StateTypeDef s_sc;
-static QueueHandle_t s_charge_queue = NULL;
-static uint16_t s_debug_ms = 0u;
-static uint16_t s_sample_ms = 0u;
-
-/**
- * @brief 进入 standby monitor 安全态。
- *
- * 该状态下 SC8815 已使能，便于读寄存器/ADC；同时 PSTOP 保持高电平，
- * 不启动充电功率环路。
- */
-static void App_SC8815_SetStandbyMonitor(void)
+static void App_SC8815_UpdateReadyReport(bool clean)
 {
-    Int_SC8815_SetStandby(true);
-    Int_SC8815_SetChipEnabled(true);
-    /*
-     * 本板 24V 输入 PMOS 不是接 PGATE，而是由 GPO->R1->Q4 gate 控制。
-     * 回到待机时释放 GPO，避免 SC 停止后输入开关仍被拉低导通。
-     */
-    (void)Int_SC8815_UpdateReg(SC8815_REG_CTRL3_SET,
-                               SC8815_CTRL3_SET_GPO_CTRL_MASK,
-                               0u);
-    s_sc.standby = true;
-    s_sc.chip_enabled = true;
+    if (!clean)
+    {
+        s_ready_clean_sample_count = 0u;
+        s_ready_reported = false;
+        App_Safety_ReportScReady(false);
+        return;
+    }
+    if (s_ready_clean_sample_count < 2u)
+    {
+        s_ready_clean_sample_count++;
+    }
+    if ((s_ready_clean_sample_count >= 2u) && !s_ready_reported)
+    {
+        s_ready_reported = true;
+        App_Safety_ReportScReady(true);
+    }
 }
 
-/**
- * @brief 将 INT 层返回值折叠为 APP 通信状态。
- *
- * APP 不在单个寄存器失败后做复杂重试；当前周期标记 `comm_ok=false`，
- * 下一次任务重新采样。
- */
+static uint32_t App_SC8815_EnterCritical(void)
+{
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    return primask;
+}
+
+static void App_SC8815_ExitCritical(uint32_t primask)
+{
+    __set_PRIMASK(primask);
+}
+
+static uint32_t App_SC8815_AddMs(uint32_t value, uint32_t add)
+{
+    return (value > (UINT32_MAX - add)) ? UINT32_MAX : (value + add);
+}
+
+static void App_SC8815_RecordFailure(Int_SC8815_StatusTypeDef ret)
+{
+    uint32_t primask = App_SC8815_EnterCritical();
+    s_sc.comm_ok = false;
+    s_sc.last_error = (uint8_t)ret;
+    App_SC8815_ExitCritical(primask);
+}
+
 static bool App_SC8815_Check(Int_SC8815_StatusTypeDef ret)
 {
     if (ret == INT_SC8815_OK)
     {
         return true;
     }
-
-    s_sc.comm_ok = false;
-    s_sc.last_error = (uint8_t)ret;
+    App_SC8815_RecordFailure(ret);
+    App_SC8815_UpdateReadyReport(false);
+    App_SC8815_EmergencyStop();
     return false;
 }
 
-/**
- * @brief 根据充电请求更新 SC8815 状态。
- *
- * 状态机约束：
- * - 无请求：保持 standby monitor。
- * - 通信异常、VBUS short、OTP：撤销请求并回到 standby。
- * - 已运行：不重复写配置，避免扰动硬件环路。
- * - 新请求：先在 PSTOP 高电平下写配置，再释放 PSTOP。
- */
+static void App_SC8815_SetStandbyMonitor(void)
+{
+    uint32_t primask;
+
+    Int_SC8815_ForceStandby();
+    Int_SC8815_SetChipEnabled(true);
+    primask = App_SC8815_EnterCritical();
+    s_sc.commanded_charge = false;
+    s_sc.observed_standby = true;
+    s_sc.chip_enabled = true;
+    App_SC8815_ExitCritical(primask);
+
+    /* GPO 控制本板输入 PMOS；PSTOP 已先拉高，寄存器失败也保持安全。 */
+    if (App_SC8815_Check(
+            Int_SC8815_UpdateReg(SC8815_REG_CTRL3_SET, SC8815_CTRL3_SET_GPO_CTRL_MASK, 0u)))
+    {
+        s_gpo_released = true;
+    }
+}
+
+static bool App_SC8815_CommandStillCurrent(uint32_t generation, uint32_t safety_authorization_epoch)
+{
+    bool current;
+    uint32_t primask = App_SC8815_EnterCritical();
+
+    current = s_sc.desired_charge && !s_sc.emergency_latched && (s_sc.generation == generation) &&
+              (s_sc.safety_authorization_epoch == safety_authorization_epoch);
+    App_SC8815_ExitCritical(primask);
+    return current && App_Safety_IsPowerReleaseAuthorized(safety_authorization_epoch);
+}
+
+static bool App_SC8815_TryReleasePstop(uint32_t generation, uint32_t safety_authorization_epoch)
+{
+    bool authorized;
+    uint32_t primask = App_SC8815_EnterCritical();
+
+    authorized = s_sc.desired_charge && !s_sc.emergency_latched &&
+                 (s_sc.generation == generation) &&
+                 (s_sc.safety_authorization_epoch == safety_authorization_epoch) &&
+                 App_Safety_IsPowerReleaseAuthorized(safety_authorization_epoch);
+    if (authorized)
+    {
+        /* 与最终授权校验同一极短临界区，退出后任何 pending trip 立即拉高。 */
+        Int_SC8815_SetStandby(false);
+        s_sc.chip_enabled = true;
+        s_sc.commanded_charge = true;
+        s_sc.observed_standby = Int_SC8815_IsStandbyAsserted();
+    }
+    App_SC8815_ExitCritical(primask);
+    return authorized;
+}
+
+static Int_SC8815_StatusTypeDef App_SC8815_VerifyReleaseManifest(uint16_t desired_ibat_limit_ma,
+                                                                 uint32_t *observed_ibat_limit_ma)
+{
+    uint8_t value;
+    uint32_t ibus_limit_ma;
+    Int_SC8815_StatusTypeDef ret;
+
+    ret = Int_SC8815_ReadReg(SC8815_REG_VBAT_SET, &value);
+    if ((ret != INT_SC8815_OK) || (value != SC8815_PROJECT_VBAT_SET_VALUE))
+    {
+        return (ret == INT_SC8815_OK) ? INT_SC8815_ERROR_STATE : ret;
+    }
+    ret = Int_SC8815_ReadReg(SC8815_REG_RATIO, &value);
+    if ((ret != INT_SC8815_OK) || (value != SC8815_PROJECT_RATIO_VALUE))
+    {
+        return (ret == INT_SC8815_OK) ? INT_SC8815_ERROR_STATE : ret;
+    }
+    ret = Int_SC8815_ReadReg(SC8815_REG_CTRL0_SET, &value);
+    if ((ret != INT_SC8815_OK) || ((value & SC8815_PROJECT_FORBID_CTRL0_SET_MASK) != 0u))
+    {
+        return (ret == INT_SC8815_OK) ? INT_SC8815_ERROR_STATE : ret;
+    }
+    ret = Int_SC8815_ReadReg(SC8815_REG_CTRL1_SET, &value);
+    if ((ret != INT_SC8815_OK) ||
+        ((value & SC8815_PROJECT_CTRL1_SAFE_SET_MASK) != SC8815_PROJECT_CTRL1_SAFE_SET_MASK) ||
+        ((value & SC8815_PROJECT_FORBID_CTRL1_SET_MASK) != 0u))
+    {
+        return (ret == INT_SC8815_OK) ? INT_SC8815_ERROR_STATE : ret;
+    }
+    ret = Int_SC8815_ReadReg(SC8815_REG_CTRL2_SET, &value);
+    if ((ret != INT_SC8815_OK) ||
+        ((value & SC8815_PROJECT_CTRL2_SAFE_SET_MASK) != SC8815_PROJECT_CTRL2_SAFE_SET_MASK))
+    {
+        return (ret == INT_SC8815_OK) ? INT_SC8815_ERROR_STATE : ret;
+    }
+    ret = Int_SC8815_ReadReg(SC8815_REG_CTRL3_SET, &value);
+    if ((ret != INT_SC8815_OK) ||
+        ((value & (SC8815_CTRL3_SET_GPO_CTRL_MASK | SC8815_CTRL3_SET_AD_START_MASK)) !=
+         (SC8815_CTRL3_SET_GPO_CTRL_MASK | SC8815_CTRL3_SET_AD_START_MASK)) ||
+        ((value & SC8815_PROJECT_FORBID_CTRL3_SET_MASK) != 0u))
+    {
+        return (ret == INT_SC8815_OK) ? INT_SC8815_ERROR_STATE : ret;
+    }
+    ret = Int_SC8815_ReadReg(SC8815_REG_MASK, &value);
+    if ((ret != INT_SC8815_OK) ||
+        ((value & SC8815_PROJECT_MASK_SAFE_SET_MASK) != SC8815_PROJECT_MASK_SAFE_SET_MASK))
+    {
+        return (ret == INT_SC8815_OK) ? INT_SC8815_ERROR_STATE : ret;
+    }
+    ret = Int_SC8815_GetCurrentLimitMa(INT_SC8815_LIMIT_IBUS, &ibus_limit_ma);
+    if ((ret != INT_SC8815_OK) || (ibus_limit_ma > SC8815_PROJECT_IBUS_LIMIT_MA) ||
+        ((SC8815_PROJECT_IBUS_LIMIT_MA - ibus_limit_ma) > 100u))
+    {
+        return (ret == INT_SC8815_OK) ? INT_SC8815_ERROR_STATE : ret;
+    }
+    ret = Int_SC8815_GetCurrentLimitMa(INT_SC8815_LIMIT_IBAT, observed_ibat_limit_ma);
+    if ((ret != INT_SC8815_OK) || (*observed_ibat_limit_ma > desired_ibat_limit_ma) ||
+        ((desired_ibat_limit_ma - *observed_ibat_limit_ma) > 100u))
+    {
+        return (ret == INT_SC8815_OK) ? INT_SC8815_ERROR_STATE : ret;
+    }
+    return INT_SC8815_OK;
+}
+
 static void App_SC8815_ApplyChargeRequest(void)
 {
-    if (!s_sc.charge_requested)
+    uint32_t generation;
+    uint16_t desired_limit_ma;
+    uint32_t safety_authorization_epoch;
+    bool desired;
+    bool emergency_latched;
+    bool comm_ok;
+    bool vbus_short;
+    bool otp;
+    bool commanded_charge;
+    bool observed_standby;
+    uint16_t commanded_limit_ma;
+    uint32_t observed_limit_ma;
+    uint32_t primask = App_SC8815_EnterCritical();
+
+    generation = s_sc.generation;
+    safety_authorization_epoch = s_sc.safety_authorization_epoch;
+    desired_limit_ma = s_sc.desired_ibat_limit_ma;
+    desired = s_sc.desired_charge;
+    emergency_latched = s_sc.emergency_latched;
+    comm_ok = s_sc.comm_ok;
+    vbus_short = s_sc.vbus_short;
+    otp = s_sc.otp;
+    commanded_charge = s_sc.commanded_charge;
+    commanded_limit_ma = s_sc.commanded_ibat_limit_ma;
+    App_SC8815_ExitCritical(primask);
+
+    observed_standby = Int_SC8815_IsStandbyAsserted();
+    primask = App_SC8815_EnterCritical();
+    s_sc.observed_standby = observed_standby;
+    App_SC8815_ExitCritical(primask);
+    if (!desired || emergency_latched)
     {
-        if (!s_sc.chip_enabled || !s_sc.standby)
+        if (!observed_standby || commanded_charge || !s_gpo_released)
         {
             App_SC8815_SetStandbyMonitor();
         }
         return;
     }
 
-    /*
-     * 最近一次状态读取失败，或 SC 已报告短路/过温时，不允许进入功率环路。
-     */
-    if (!s_sc.comm_ok || s_sc.vbus_short || s_sc.otp)
+    /* active 也必须逐周期复验；TTL/trip 失效后的第一动作仍是同步 PSTOP。 */
+    if (!App_Safety_IsPowerReleaseAuthorized(safety_authorization_epoch))
     {
-        s_sc.charge_requested = false;
-        App_SC8815_SetStandbyMonitor();
+        App_SC8815_EmergencyStop();
         return;
     }
 
-    /*
-     * 已进入工作态后不重复写 RATIO/VBAT/限流/CTRL 位。
-     * 周期性重写这些寄存器可能扰动 SC8815 的模拟控制环路。
-     */
-    if (s_sc.chip_enabled && !s_sc.standby)
+    if (!comm_ok || vbus_short || otp)
+    {
+        App_SC8815_EmergencyStop();
+        return;
+    }
+
+    if (commanded_charge && !observed_standby && (commanded_limit_ma == desired_limit_ma))
     {
         return;
     }
 
-    /*
-     * 关键寄存器必须在 PSTOP 高电平下配置。INT 层 guard 会拒绝项目禁止位，
-     * 例如 OTG/反向输出、关闭关键保护等危险配置。
-     */
-    Int_SC8815_SetStandby(true);
-    if (!App_SC8815_Check(Int_SC8815_WriteReg(SC8815_REG_VBAT_SET,
-                                              SC8815_PROJECT_VBAT_SET_VALUE)) ||
-        !App_SC8815_Check(Int_SC8815_WriteReg(SC8815_REG_RATIO,
-                                              SC8815_PROJECT_RATIO_VALUE)) ||
+    Int_SC8815_ForceStandby();
+    primask = App_SC8815_EnterCritical();
+    s_sc.commanded_charge = false;
+    s_sc.observed_standby = true;
+    App_SC8815_ExitCritical(primask);
+
+    if (!App_SC8815_Check(
+            Int_SC8815_WriteReg(SC8815_REG_VBAT_SET, SC8815_PROJECT_VBAT_SET_VALUE)) ||
+        !App_SC8815_Check(Int_SC8815_WriteReg(SC8815_REG_RATIO, SC8815_PROJECT_RATIO_VALUE)) ||
         !App_SC8815_Check(Int_SC8815_UpdateReg(SC8815_REG_CTRL0_SET,
                                                SC8815_PROJECT_CTRL0_SAFE_CLEAR_MASK,
                                                SC8815_PROJECT_CTRL0_EN_OTG_VALUE)) ||
         !App_SC8815_Check(Int_SC8815_UpdateReg(SC8815_REG_CTRL1_SET,
                                                SC8815_PROJECT_CTRL1_SAFE_CLEAR_MASK,
                                                SC8815_PROJECT_CTRL1_SAFE_SET_MASK)) ||
-        !App_SC8815_Check(Int_SC8815_UpdateReg(SC8815_REG_CTRL2_SET,
-                                               0u,
-                                               SC8815_PROJECT_CTRL2_SAFE_SET_MASK)) ||
-        /*
-         * 原理图中 PGATE/DITHER 未接；实际 24V_IN->VBUS 前级 PMOS 由 GPO 拉低开启。
-         */
+        !App_SC8815_Check(
+            Int_SC8815_UpdateReg(SC8815_REG_CTRL2_SET, 0u, SC8815_PROJECT_CTRL2_SAFE_SET_MASK)) ||
         !App_SC8815_Check(Int_SC8815_UpdateReg(SC8815_REG_CTRL3_SET,
                                                SC8815_PROJECT_CTRL3_SAFE_CLEAR_MASK,
                                                SC8815_CTRL3_SET_GPO_CTRL_MASK)) ||
-        !App_SC8815_Check(Int_SC8815_UpdateReg(SC8815_REG_MASK,
-                                               0u,
-                                               SC8815_PROJECT_MASK_SAFE_SET_MASK)) ||
-        !App_SC8815_Check(Int_SC8815_SetCurrentLimitMa(INT_SC8815_LIMIT_IBUS,
-                                                       SC8815_PROJECT_IBUS_LIMIT_MA)) ||
-        !App_SC8815_Check(Int_SC8815_SetCurrentLimitMa(INT_SC8815_LIMIT_IBAT,
-                                                       SC8815_PROJECT_IBAT_LIMIT_MA)) ||
-        !App_SC8815_Check(Int_SC8815_SetAdcEnabled(true)))
+        !App_SC8815_Check(
+            Int_SC8815_UpdateReg(SC8815_REG_MASK, 0u, SC8815_PROJECT_MASK_SAFE_SET_MASK)) ||
+        !App_SC8815_Check(
+            Int_SC8815_SetCurrentLimitMa(INT_SC8815_LIMIT_IBUS, SC8815_PROJECT_IBUS_LIMIT_MA)) ||
+        !App_SC8815_Check(Int_SC8815_SetCurrentLimitMa(INT_SC8815_LIMIT_IBAT, desired_limit_ma)) ||
+        !App_SC8815_Check(Int_SC8815_SetAdcEnabled(true)) ||
+        !App_SC8815_Check(App_SC8815_VerifyReleaseManifest(desired_limit_ma, &observed_limit_ma)))
     {
-        s_sc.charge_requested = false;
-        App_SC8815_SetStandbyMonitor();
         return;
     }
 
-    /*
-     * 这是唯一释放充电环路的动作。只有配置写入和项目限流全部成功后，
-     * 才允许 PSTOP 拉低。
-     */
+    if ((observed_limit_ma > desired_limit_ma) ||
+        !App_SC8815_CommandStillCurrent(generation, safety_authorization_epoch))
+    {
+        App_SC8815_EmergencyStop();
+        return;
+    }
+
+    primask = App_SC8815_EnterCritical();
+    s_sc.commanded_ibat_limit_ma = desired_limit_ma;
+    s_sc.observed_ibat_limit_ma = (uint16_t)observed_limit_ma;
+    App_SC8815_ExitCritical(primask);
+    s_gpo_released = false;
     Int_SC8815_SetChipEnabled(true);
-    Int_SC8815_SetStandby(false);
-    s_sc.chip_enabled = true;
-    s_sc.standby = false;
+
+    /* 释放 PSTOP 前最后一次代际校验，旧启动序列不能越过新的停机请求。 */
+    if (!App_SC8815_TryReleasePstop(generation, safety_authorization_epoch))
+    {
+        Int_SC8815_ForceStandby();
+    }
 }
 
-/**
- * @brief 读取 SC8815 STATUS 和 ADC 快照。
- *
- * standby monitor 和充电态都允许读取 ADC；任何读失败都会让本周期
- * `comm_ok=false`。
- */
-static void App_SC8815_Sample(void)
+static bool App_SC8815_Sample(void)
 {
     Int_SC8815_StatusFlagsTypeDef status;
+    App_SC8815_SnapshotTypeDef sample = {0};
+    Int_SC8815_StatusTypeDef ret;
+    uint32_t primask;
 
-    /* 每个采样周期重新评估通信状态，避免一次失败永久保持故障。 */
-    s_sc.comm_ok = true;
-    s_sc.last_error = INT_SC8815_OK;
-    if (App_SC8815_Check(Int_SC8815_ReadStatus(&status)))
+    ret = Int_SC8815_ReadStatus(&status);
+    if (ret != INT_SC8815_OK)
     {
-        s_sc.ac_ok = status.ac_ok;
-        s_sc.indet = status.indet;
-        s_sc.vbus_short = status.vbus_short;
-        s_sc.otp = status.otp;
-        s_sc.eoc = status.eoc;
-        s_sc.status_raw = status.raw;
+        goto sample_failed;
+    }
+    sample.ac_ok = status.ac_ok;
+    sample.indet = status.indet;
+    sample.vbus_short = status.vbus_short;
+    sample.otp = status.otp;
+    sample.eoc = status.eoc;
+    sample.status_raw = status.raw;
+
+    ret = Int_SC8815_ReadAdcRaw(INT_SC8815_ADC_VBUS, &sample.vbus_raw);
+    if (ret != INT_SC8815_OK)
+    {
+        goto sample_failed;
+    }
+    ret = Int_SC8815_AdcVoltageRawToMv(INT_SC8815_ADC_VBUS, sample.vbus_raw, &sample.vbus_mv);
+    if (ret != INT_SC8815_OK)
+    {
+        goto sample_failed;
+    }
+    ret = Int_SC8815_ReadAdcRaw(INT_SC8815_ADC_VBAT, &sample.vbat_raw);
+    if (ret != INT_SC8815_OK)
+    {
+        goto sample_failed;
+    }
+    ret = Int_SC8815_AdcVoltageRawToMv(INT_SC8815_ADC_VBAT, sample.vbat_raw, &sample.vbat_mv);
+    if (ret != INT_SC8815_OK)
+    {
+        goto sample_failed;
+    }
+    ret = Int_SC8815_ReadAdcCurrentRaw(INT_SC8815_CURRENT_IBUS, &sample.ibus_raw);
+    if (ret != INT_SC8815_OK)
+    {
+        goto sample_failed;
+    }
+    ret = Int_SC8815_AdcCurrentRawToMa(INT_SC8815_CURRENT_IBUS, sample.ibus_raw, &sample.ibus_ma);
+    if (ret != INT_SC8815_OK)
+    {
+        goto sample_failed;
+    }
+    ret = Int_SC8815_ReadAdcCurrentRaw(INT_SC8815_CURRENT_IBAT, &sample.ibat_raw);
+    if (ret != INT_SC8815_OK)
+    {
+        goto sample_failed;
+    }
+    ret = Int_SC8815_AdcCurrentRawToMa(INT_SC8815_CURRENT_IBAT, sample.ibat_raw, &sample.ibat_ma);
+    if (ret != INT_SC8815_OK)
+    {
+        goto sample_failed;
     }
 
-    (void)App_SC8815_Check(Int_SC8815_ReadAdcVoltageMv(INT_SC8815_ADC_VBUS,
-                                                       &s_sc.vbus_mv));
-    (void)App_SC8815_Check(Int_SC8815_ReadAdcVoltageMv(INT_SC8815_ADC_VBAT,
-                                                       &s_sc.vbat_mv));
-    (void)App_SC8815_Check(Int_SC8815_ReadAdcCurrentMa(INT_SC8815_CURRENT_IBUS,
-                                                       &s_sc.ibus_ma));
-    (void)App_SC8815_Check(Int_SC8815_ReadAdcCurrentMa(INT_SC8815_CURRENT_IBAT,
-                                                       &s_sc.ibat_ma));
-    (void)App_SC8815_Check(Int_SC8815_ReadAdcRaw(INT_SC8815_ADC_VBUS,
-                                                 &s_sc.vbus_raw));
-    (void)App_SC8815_Check(Int_SC8815_ReadAdcRaw(INT_SC8815_ADC_VBAT,
-                                                 &s_sc.vbat_raw));
-    (void)App_SC8815_Check(Int_SC8815_ReadAdcCurrentRaw(INT_SC8815_CURRENT_IBUS,
-                                                        &s_sc.ibus_raw));
-    (void)App_SC8815_Check(Int_SC8815_ReadAdcCurrentRaw(INT_SC8815_CURRENT_IBAT,
-                                                        &s_sc.ibat_raw));
+    sample.observed_standby = Int_SC8815_IsStandbyAsserted();
+    primask = App_SC8815_EnterCritical();
+    s_sc.comm_ok = true;
+    s_sc.last_error = INT_SC8815_OK;
+    s_sc.ac_ok = sample.ac_ok;
+    s_sc.indet = sample.indet;
+    s_sc.vbus_short = sample.vbus_short;
+    s_sc.otp = sample.otp;
+    s_sc.eoc = sample.eoc;
+    s_sc.status_raw = sample.status_raw;
+    s_sc.vbus_raw = sample.vbus_raw;
+    s_sc.vbat_raw = sample.vbat_raw;
+    s_sc.ibus_raw = sample.ibus_raw;
+    s_sc.ibat_raw = sample.ibat_raw;
+    s_sc.vbus_mv = sample.vbus_mv;
+    s_sc.vbat_mv = sample.vbat_mv;
+    s_sc.ibus_ma = sample.ibus_ma;
+    s_sc.ibat_ma = sample.ibat_ma;
+    s_sc.observed_standby = sample.observed_standby;
+    s_sc.sample_age_ms = 0u;
+    App_SC8815_ExitCritical(primask);
+
+    if (sample.vbus_short || sample.otp)
+    {
+        App_SC8815_UpdateReadyReport(false);
+        App_SC8815_EmergencyStop();
+    }
+    else
+    {
+        App_SC8815_UpdateReadyReport(true);
+    }
+    return true;
+
+sample_failed:
+    App_SC8815_UpdateReadyReport(false);
+    App_SC8815_EmergencyStop();
+    App_SC8815_RecordFailure(ret);
+    return false;
 }
 
-/**
- * @brief 输出 SC8815 紧凑调试信息。
- *
- * 安全审查重点看 `stby`：`stby=1` 表示功率环路停止，`stby=0` 表示
- * 已经明确请求并进入充电工作态。
- */
-static void App_SC8815_PrintDebug(void)
-{
-    printf("---------- SC8815 ----------\r\n");
-    printf("SC 摘要 通信:%u 错:%u 请求:%u 待机:%u 状态:%02x AC:%u 短路:%u 过温:%u 充满:%u VBUS:%lu VBAT:%lu IBUS:%lu IBAT:%lu\r\n",
-           s_sc.comm_ok ? 1u : 0u,
-           (unsigned int)s_sc.last_error,
-           s_sc.charge_requested ? 1u : 0u,
-           s_sc.standby ? 1u : 0u,
-           (unsigned int)s_sc.status_raw,
-           s_sc.ac_ok ? 1u : 0u,
-           s_sc.vbus_short ? 1u : 0u,
-           s_sc.otp ? 1u : 0u,
-           s_sc.eoc ? 1u : 0u,
-           (unsigned long)s_sc.vbus_mv,
-           (unsigned long)s_sc.vbat_mv,
-           (unsigned long)s_sc.ibus_ma,
-           (unsigned long)s_sc.ibat_ma);
-}
-
-/**
- * @brief 初始化 SC8815 APP 层。
- *
- * 初始化只进入 standby monitor，不自动启动充电。若寄存器通信失败，
- * 串口中的 `ok:0` 会提示排查软 I2C、供电或芯片状态。
- */
 void App_SC8815_Init(void)
 {
-    /*
-     * 先复位本地快照，再执行硬件安全初始化。即使首次寄存器读失败，
-     * 上层也能看到确定状态。
-     */
-    s_sc.comm_ok = true;
-    s_sc.charge_requested = false;
-    s_sc.chip_enabled = true;
-    s_sc.standby = true;
-    s_sc.ac_ok = false;
-    s_sc.indet = false;
-    s_sc.vbus_short = false;
-    s_sc.otp = false;
-    s_sc.eoc = false;
-    s_sc.status_raw = 0u;
-    s_sc.vbus_mv = 0u;
-    s_sc.vbat_mv = 0u;
-    s_sc.ibus_ma = 0u;
-    s_sc.ibat_ma = 0u;
-    s_sc.vbus_raw = 0u;
-    s_sc.vbat_raw = 0u;
-    s_sc.ibus_raw = 0u;
-    s_sc.ibat_raw = 0u;
+    memset(&s_sc, 0, sizeof(s_sc));
+    s_sc.desired_ibat_limit_ma = SC8815_PROJECT_IBAT_LIMIT_MA;
+    s_sc.observed_standby = true;
+    s_sc.emergency_latched = true;
+    s_sc.generation = 1u;
     s_sc.last_error = INT_SC8815_OK;
-    s_charge_queue = NULL;
-    s_debug_ms = 0u;
-    s_sample_ms = 0u;
+    s_interrupt_resolution_pending = false;
+    s_interrupt_clean_sample_count = 0u;
+    s_interrupt_resolution_sequence = Int_SC8815_GetInterruptSequence();
+    s_gpo_released = false;
+    s_ready_clean_sample_count = 0u;
+    s_ready_reported = false;
+    App_Safety_ReportScReady(false);
 
-    /*
-     * InitSafe 先输出 PSTOP=1、CE_N=1，随后只使能芯片并保持 PSTOP=1，
-     * 形成“可通信但不充电”的监控态。
-     */
     Int_SC8815_InitSafe();
     App_SC8815_SetStandbyMonitor();
-
-    /*
-     * standby monitor 下启用 ADC，用于串口观察 VBUS/VBAT/IBUS/IBAT；
-     * 该动作不等价于启动充电。
-     */
     (void)App_SC8815_Check(Int_SC8815_SetAdcEnabled(true));
-    App_SC8815_Sample();
-    printf("SC初始化待机监控 通信:%u\r\n", s_sc.comm_ok ? 1u : 0u);
+    (void)App_SC8815_Sample();
 }
 
-/**
- * @brief SC8815 周期任务。
- *
- * 20ms 调度只检查队列和 INT pending；STATUS/ADC 保持 1s 周期采样，
- * 中断到来时提前采样，保证最新 short/OTP/通信故障能阻止充电请求。
- */
 void App_SC8815_Task(uint16_t interval_ms)
 {
-    uint8_t request;
+    uint32_t elapsed_ms;
+    uint32_t primask;
     bool interrupt_pending;
+    bool sample_ok = false;
+    bool sample_attempted = false;
+    App_SC8815_SnapshotTypeDef snapshot;
 
-    if (s_charge_queue == NULL)
-    {
-        s_charge_queue = xQueueCreate(APP_SC8815_CHARGE_QUEUE_LEN, sizeof(request));
-    }
-
-    if (s_sample_ms < APP_SC8815_SAMPLE_PERIOD_MS)
-    {
-        uint32_t elapsed_ms = (uint32_t)s_sample_ms + interval_ms;
-
-        s_sample_ms = (elapsed_ms >= APP_SC8815_SAMPLE_PERIOD_MS) ?
-                      APP_SC8815_SAMPLE_PERIOD_MS : (uint16_t)elapsed_ms;
-    }
+    primask = App_SC8815_EnterCritical();
+    s_sc.sample_age_ms = App_SC8815_AddMs(s_sc.sample_age_ms, interval_ms);
+    App_SC8815_ExitCritical(primask);
+    elapsed_ms = (uint32_t)s_sample_ms + interval_ms;
+    s_sample_ms = (elapsed_ms >= APP_SC8815_SAMPLE_PERIOD_MS) ? APP_SC8815_SAMPLE_PERIOD_MS
+                                                              : (uint16_t)elapsed_ms;
 
     interrupt_pending = Int_SC8815_TakeInterruptPending();
+    if (interrupt_pending)
+    {
+        /* owner 重申门禁，防止旧 resolve 流程覆盖新 IRQ。 */
+        App_Safety_SetPowerInhibit(APP_SAFETY_INHIBIT_SC_EVENT);
+        App_SC8815_EmergencyStop();
+        s_interrupt_resolution_pending = true;
+        s_interrupt_clean_sample_count = 0u;
+        s_interrupt_resolution_sequence = Int_SC8815_GetInterruptSequence();
+    }
     if (interrupt_pending || (s_sample_ms >= APP_SC8815_SAMPLE_PERIOD_MS))
     {
         s_sample_ms = 0u;
-        App_SC8815_Sample();
+        sample_attempted = true;
+        sample_ok = App_SC8815_Sample();
     }
-
-    if ((s_charge_queue != NULL) &&
-        (xQueueReceive(s_charge_queue, &request, 0u) == pdPASS))
+    if (s_interrupt_resolution_pending && sample_ok)
     {
-        s_sc.charge_requested = (request != 0u);
-    }
-    App_SC8815_ApplyChargeRequest();
-
-    if (!App_DebugCli_IsStreaming())
-    {
-        s_debug_ms = (uint16_t)(s_debug_ms + interval_ms);
-        if (s_debug_ms >= APP_SC8815_DEBUG_PERIOD_MS)
+        App_SC8815_GetSnapshot(&snapshot);
+        if (snapshot.comm_ok && !snapshot.vbus_short && !snapshot.otp)
         {
-            s_debug_ms = 0u;
-            App_SC8815_PrintDebug();
+            s_interrupt_clean_sample_count++;
+            if (s_interrupt_clean_sample_count >= 2u)
+            {
+                uint32_t sequence;
+
+                /* 序号复验与 clear 共用一段 IRQ 临界区，新事件不能被旧流程清除。 */
+                primask = App_SC8815_EnterCritical();
+                sequence = Int_SC8815_GetInterruptSequence();
+                if (sequence == s_interrupt_resolution_sequence)
+                {
+                    App_Safety_ClearPowerInhibit(APP_SAFETY_INHIBIT_SC_EVENT);
+                    s_interrupt_resolution_pending = false;
+                    s_interrupt_clean_sample_count = 0u;
+                }
+                else
+                {
+                    App_Safety_SetPowerInhibit(APP_SAFETY_INHIBIT_SC_EVENT);
+                    App_SC8815_EmergencyStop();
+                    s_interrupt_resolution_sequence = sequence;
+                    s_interrupt_clean_sample_count = 0u;
+                }
+                App_SC8815_ExitCritical(primask);
+            }
+        }
+        else
+        {
+            s_interrupt_clean_sample_count = 0u;
         }
     }
+    else if (s_interrupt_resolution_pending && sample_attempted)
+    {
+        s_interrupt_clean_sample_count = 0u;
+    }
+    App_SC8815_ApplyChargeRequest();
 }
 
-/**
- * @brief 请求启动或停止 SC8815 充电。
- *
- * 这是唯一可能让 SC8815 离开 standby 的公开入口；其他模块不应直接写
- * CE_N/PSTOP 或 SC8815 寄存器来启动功率环路。
- */
 void App_SC8815_RequestCharge(bool enable)
 {
-    uint8_t request = enable ? 1u : 0u;
+    uint32_t primask;
 
-    if (s_charge_queue == NULL)
+    if (enable)
     {
-        s_sc.charge_requested = enable;
+        /* 无 Safety epoch 的启动请求按越权处理，并保持功率级关闭。 */
+        App_SC8815_EmergencyStop();
         return;
     }
-
-    if (xQueueOverwrite(s_charge_queue, &request) != pdPASS)
+    else
     {
-        s_sc.charge_requested = enable;
+        /* 禁充请求的第一动作必须是不依赖调度器的硬件停机。 */
+        Int_SC8815_ForceStandby();
     }
+
+    primask = App_SC8815_EnterCritical();
+    s_sc.generation++;
+    /* 启动必须走携带 Safety epoch 的授权接口；旧无令牌入口只能停机。 */
+    s_sc.desired_charge = false;
+    s_sc.commanded_charge = false;
+    s_sc.observed_standby = true;
+    s_sc.emergency_latched = true;
+    s_sc.safety_authorization_epoch = 0u;
+    App_SC8815_ExitCritical(primask);
+}
+
+void App_SC8815_EmergencyStop(void)
+{
+    uint32_t primask;
+
+    Int_SC8815_ForceStandby();
+    primask = App_SC8815_EnterCritical();
+    s_sc.generation++;
+    s_sc.desired_charge = false;
+    s_sc.commanded_charge = false;
+    s_sc.observed_standby = true;
+    s_sc.emergency_latched = true;
+    s_sc.safety_authorization_epoch = 0u;
+    App_SC8815_ExitCritical(primask);
+}
+
+void App_SC8815_EmergencyStopFromISR(void)
+{
+    App_SC8815_EmergencyStop();
+}
+
+void App_SC8815_InvalidateAuthorization(void)
+{
+    App_SC8815_EmergencyStop();
+}
+
+bool App_SC8815_RequestChargeAuthorized(uint32_t safety_authorization_epoch)
+{
+    bool accepted;
+    uint32_t primask;
+
+    if (!App_Safety_IsPowerReleaseAuthorized(safety_authorization_epoch))
+    {
+        return false;
+    }
+    primask = App_SC8815_EnterCritical();
+    s_sc.generation++;
+    accepted = true;
+    if (accepted)
+    {
+        s_sc.safety_authorization_epoch = safety_authorization_epoch;
+        s_sc.emergency_latched = false;
+        s_sc.desired_charge = true;
+    }
+    App_SC8815_ExitCritical(primask);
+    return accepted;
+}
+
+bool App_SC8815_SetChargeCurrentLimitMa(uint16_t current_ma)
+{
+    bool limit_changed;
+    bool release_active;
+    uint32_t primask;
+
+    if ((current_ma < SC8815_PROJECT_MIN_LIMIT_CURRENT_MA) ||
+        (current_ma > SC8815_PROJECT_MAX_IBAT_LIMIT_MA))
+    {
+        return false;
+    }
+
+    primask = App_SC8815_EnterCritical();
+    limit_changed = current_ma != s_sc.desired_ibat_limit_ma;
+    release_active = s_sc.desired_charge || s_sc.commanded_charge;
+    App_SC8815_ExitCritical(primask);
+    if (!limit_changed)
+    {
+        return true;
+    }
+    if (release_active)
+    {
+        Int_SC8815_ForceStandby();
+    }
+    primask = App_SC8815_EnterCritical();
+    s_sc.generation++;
+    s_sc.desired_ibat_limit_ma = current_ma;
+    if (release_active)
+    {
+        s_sc.desired_charge = false;
+        s_sc.commanded_charge = false;
+        s_sc.observed_standby = true;
+        s_sc.emergency_latched = true;
+        s_sc.safety_authorization_epoch = 0u;
+    }
+    App_SC8815_ExitCritical(primask);
+    return true;
+}
+
+void App_SC8815_GetSnapshot(App_SC8815_SnapshotTypeDef *snapshot)
+{
+    uint32_t primask;
+
+    if (snapshot == NULL)
+    {
+        return;
+    }
+    primask = App_SC8815_EnterCritical();
+    *snapshot = s_sc;
+    App_SC8815_ExitCritical(primask);
 }
 
 bool App_SC8815_IsCommOk(void)
 {
     return s_sc.comm_ok;
 }
-
 bool App_SC8815_IsAcOk(void)
 {
     return s_sc.ac_ok;
 }
-
 bool App_SC8815_HasFault(void)
 {
-    return (!s_sc.comm_ok || s_sc.vbus_short || s_sc.otp);
+    return !s_sc.comm_ok || s_sc.vbus_short || s_sc.otp;
 }
-
 bool App_SC8815_IsCharging(void)
 {
-    return (s_sc.charge_requested && s_sc.chip_enabled && !s_sc.standby);
+    return s_sc.desired_charge && s_sc.commanded_charge && !s_sc.observed_standby;
 }
-
 uint32_t App_SC8815_GetVbusMv(void)
 {
     return s_sc.vbus_mv;
 }
-
 uint32_t App_SC8815_GetVbatMv(void)
 {
     return s_sc.vbat_mv;
 }
-
 uint32_t App_SC8815_GetInputLimitMa(void)
 {
     return SC8815_PROJECT_IBUS_LIMIT_MA;

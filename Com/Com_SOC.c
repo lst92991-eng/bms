@@ -10,8 +10,8 @@ enum
     COM_SOC_CELL_MAX_VALID_MV = 4350u
 };
 
-#define COM_SOC_P_MIN                    (0.0001f)
-#define COM_SOC_P_MAX                    (400.0f)
+#define COM_SOC_P_MIN (0.0001f)
+#define COM_SOC_P_MAX (400.0f)
 
 typedef struct
 {
@@ -22,8 +22,9 @@ typedef struct
     uint32_t rest_ms;
     uint32_t voltage_stable_ms;
     uint16_t rest_start_cell_avg_mv;
-    uint32_t full_anchor_ms;
-    uint32_t empty_anchor_ms;
+    Com_SOC_AnchorEventTypeDef pending_anchor;
+    uint32_t pending_anchor_age_ms;
+    uint32_t anchor_event_sequence;
 } Com_SOC_StateTypeDef;
 
 static Com_SOC_StateTypeDef s_soc;
@@ -91,8 +92,7 @@ static bool Com_SOC_IsCellSampleValid(const Com_SOC_SampleTypeDef *sample)
     {
         return false;
     }
-    if ((sample->cell_min_mv > sample->cell_avg_mv) ||
-        (sample->cell_avg_mv > sample->cell_max_mv))
+    if ((sample->cell_min_mv > sample->cell_avg_mv) || (sample->cell_avg_mv > sample->cell_max_mv))
     {
         return false;
     }
@@ -110,8 +110,7 @@ static void Com_SOC_CheckConfig(Com_SOC_ConfigTypeDef *config)
         config->capacity_mah = 200000u;
     }
 
-    config->default_soc_percent =
-        Com_SOC_ClampFloat(config->default_soc_percent, 0.0f, 100.0f);
+    config->default_soc_percent = Com_SOC_ClampFloat(config->default_soc_percent, 0.0f, 100.0f);
     if ((config->current_sign != COM_SOC_CURRENT_POS_CHARGE) &&
         (config->current_sign != COM_SOC_CURRENT_POS_DISCHARGE))
     {
@@ -174,9 +173,8 @@ static void Com_SOC_SeedByVoltage(uint16_t cell_avg_mv)
 {
     uint16_t soc_0p01;
 
-    if (s_soc.result.seeded ||
-        (cell_avg_mv < COM_SOC_CELL_MIN_VALID_MV) ||
-        (cell_avg_mv > COM_SOC_CELL_MAX_VALID_MV))
+    if (s_soc.result.seeded || !s_soc.result.rest_ready ||
+        (cell_avg_mv < COM_SOC_CELL_MIN_VALID_MV) || (cell_avg_mv > COM_SOC_CELL_MAX_VALID_MV))
     {
         return;
     }
@@ -185,7 +183,9 @@ static void Com_SOC_SeedByVoltage(uint16_t cell_avg_mv)
     s_soc.soc_percent = (float)soc_0p01 / 100.0f;
     s_soc.result.display_percent = s_soc.soc_percent;
     s_soc.result.seeded = true;
+    s_soc.result.valid = true;
     s_soc.result.seed_source = COM_SOC_SEED_OCV;
+    s_soc.result.age_ms = 0u;
     s_soc.p_soc = 25.0f;
     Com_SOC_UpdatePublicResult();
 }
@@ -202,8 +202,7 @@ static void Com_SOC_Predict(uint32_t interval_ms, int32_t current_ma, float capa
 
     dt_s = (float)interval_ms / 1000.0f;
     soc_delta = ((float)current_ma * dt_s) / (capacity_mah * 36.0f);
-    s_soc.soc_percent =
-        Com_SOC_ClampFloat(s_soc.soc_percent + soc_delta, 0.0f, 100.0f);
+    s_soc.soc_percent = Com_SOC_ClampFloat(s_soc.soc_percent + soc_delta, 0.0f, 100.0f);
     s_soc.p_soc += s_soc.config.kalman_q * dt_s;
 }
 
@@ -235,13 +234,12 @@ static void Com_SOC_UpdateRestState(const Com_SOC_SampleTypeDef *sample, int32_t
     }
     else
     {
-        diff_mv = (sample->cell_avg_mv >= s_soc.rest_start_cell_avg_mv) ?
-                  (uint16_t)(sample->cell_avg_mv - s_soc.rest_start_cell_avg_mv) :
-                  (uint16_t)(s_soc.rest_start_cell_avg_mv - sample->cell_avg_mv);
+        diff_mv = (sample->cell_avg_mv >= s_soc.rest_start_cell_avg_mv)
+                      ? (uint16_t)(sample->cell_avg_mv - s_soc.rest_start_cell_avg_mv)
+                      : (uint16_t)(s_soc.rest_start_cell_avg_mv - sample->cell_avg_mv);
         if (diff_mv <= s_soc.config.rest_voltage_stable_mv)
         {
-            s_soc.voltage_stable_ms =
-                Com_SOC_AddMs(s_soc.voltage_stable_ms, sample->interval_ms);
+            s_soc.voltage_stable_ms = Com_SOC_AddMs(s_soc.voltage_stable_ms, sample->interval_ms);
         }
         else
         {
@@ -250,9 +248,8 @@ static void Com_SOC_UpdateRestState(const Com_SOC_SampleTypeDef *sample, int32_t
         }
     }
 
-    s_soc.result.rest_ready =
-        (s_soc.rest_ms >= s_soc.config.rest_need_ms) &&
-        (s_soc.voltage_stable_ms >= s_soc.config.rest_need_ms);
+    s_soc.result.rest_ready = (s_soc.rest_ms >= s_soc.config.rest_need_ms) &&
+                              (s_soc.voltage_stable_ms >= s_soc.config.rest_need_ms);
 }
 
 static void Com_SOC_KalmanByOcv(const Com_SOC_SampleTypeDef *sample)
@@ -280,12 +277,10 @@ static void Com_SOC_KalmanByOcv(const Com_SOC_SampleTypeDef *sample)
 
     gain = s_soc.p_soc / (s_soc.p_soc + s_soc.config.kalman_r);
     correction = gain * residual;
-    correction = Com_SOC_ClampFloat(correction,
-                                    -s_soc.config.ocv_update_limit_percent,
-                                    s_soc.config.ocv_update_limit_percent);
+    correction = Com_SOC_ClampFloat(
+        correction, -s_soc.config.ocv_update_limit_percent, s_soc.config.ocv_update_limit_percent);
 
-    s_soc.soc_percent =
-        Com_SOC_ClampFloat(s_soc.soc_percent + correction, 0.0f, 100.0f);
+    s_soc.soc_percent = Com_SOC_ClampFloat(s_soc.soc_percent + correction, 0.0f, 100.0f);
     s_soc.p_soc = (1.0f - gain) * s_soc.p_soc;
 
     s_soc.result.ocv_soc_percent = ocv_soc_percent;
@@ -296,43 +291,51 @@ static void Com_SOC_KalmanByOcv(const Com_SOC_SampleTypeDef *sample)
     s_soc.result.voltage_update_used = true;
 }
 
-static void Com_SOC_AnchorByVoltage(const Com_SOC_SampleTypeDef *sample, int32_t current_ma)
+static void Com_SOC_AnchorByEvent(const Com_SOC_SampleTypeDef *sample)
 {
-    bool full_condition;
-    bool empty_condition;
+    Com_SOC_AnchorEventTypeDef event = s_soc.pending_anchor;
 
     s_soc.result.full_anchor_used = false;
     s_soc.result.empty_anchor_used = false;
-    if (!Com_SOC_IsCellSampleValid(sample))
+    if ((event == COM_SOC_ANCHOR_NONE) || !Com_SOC_IsCellSampleValid(sample))
+    {
+        return;
+    }
+    if ((event == COM_SOC_ANCHOR_FULL_COMPLETE) &&
+        ((sample->cell_min_mv + 100u) < s_soc.config.full_cell_mv ||
+         ((uint16_t)(sample->cell_max_mv - sample->cell_min_mv) > 100u)))
+    {
+        return;
+    }
+    if ((event == COM_SOC_ANCHOR_EMPTY_CUTOFF) &&
+        (sample->cell_min_mv > (uint16_t)(s_soc.config.empty_cell_mv + 100u)))
     {
         return;
     }
 
-    full_condition = (sample->cell_max_mv >= s_soc.config.full_cell_mv) &&
-                     (current_ma > 0) &&
-                     (Com_SOC_AbsI32(current_ma) <= (uint32_t)s_soc.config.full_current_ma);
-    empty_condition = (sample->cell_min_mv <= s_soc.config.empty_cell_mv) &&
-                      (current_ma < 0) &&
-                      (Com_SOC_AbsI32(current_ma) <= (uint32_t)s_soc.config.empty_current_ma);
+    s_soc.pending_anchor = COM_SOC_ANCHOR_NONE;
+    s_soc.pending_anchor_age_ms = 0u;
+    s_soc.anchor_event_sequence++;
+    s_soc.result.anchor_event_sequence = s_soc.anchor_event_sequence;
+    s_soc.result.age_ms = 0u;
 
-    s_soc.full_anchor_ms = full_condition ?
-                           Com_SOC_AddMs(s_soc.full_anchor_ms, sample->interval_ms) :
-                           0u;
-    s_soc.empty_anchor_ms = empty_condition ?
-                            Com_SOC_AddMs(s_soc.empty_anchor_ms, sample->interval_ms) :
-                            0u;
-
-    if (s_soc.full_anchor_ms >= s_soc.config.full_anchor_hold_ms)
+    if (event == COM_SOC_ANCHOR_FULL_COMPLETE)
     {
         s_soc.soc_percent = 100.0f;
         s_soc.p_soc = 1.0f;
         s_soc.result.full_anchor_used = true;
+        s_soc.result.seeded = true;
+        s_soc.result.valid = true;
+        s_soc.result.seed_source = COM_SOC_SEED_FULL_ANCHOR;
     }
-    else if (s_soc.empty_anchor_ms >= s_soc.config.empty_anchor_hold_ms)
+    else if (event == COM_SOC_ANCHOR_EMPTY_CUTOFF)
     {
         s_soc.soc_percent = 0.0f;
         s_soc.p_soc = 1.0f;
         s_soc.result.empty_anchor_used = true;
+        s_soc.result.seeded = true;
+        s_soc.result.valid = true;
+        s_soc.result.seed_source = COM_SOC_SEED_EMPTY_ANCHOR;
     }
 }
 
@@ -372,6 +375,12 @@ static void Com_SOC_UpdateDisplay(uint32_t interval_ms)
 static void Com_SOC_UpdateConfidence(const Com_SOC_SampleTypeDef *sample)
 {
     uint8_t confidence = 40u;
+
+    if (!s_soc.result.valid)
+    {
+        s_soc.result.confidence_percent = 0u;
+        return;
+    }
 
     if (s_soc.result.seeded)
     {
@@ -431,14 +440,18 @@ void Com_SOC_Init(const Com_SOC_ConfigTypeDef *config)
     s_soc.rest_ms = 0u;
     s_soc.voltage_stable_ms = 0u;
     s_soc.rest_start_cell_avg_mv = 0u;
-    s_soc.full_anchor_ms = 0u;
-    s_soc.empty_anchor_ms = 0u;
+    s_soc.pending_anchor = COM_SOC_ANCHOR_NONE;
+    s_soc.pending_anchor_age_ms = 0u;
+    s_soc.anchor_event_sequence = 0u;
 
     s_soc.result.soc_percent = s_soc.soc_percent;
     s_soc.result.display_percent = s_soc.soc_percent;
     s_soc.result.remain_mah = 0u;
     s_soc.result.seeded = false;
+    s_soc.result.valid = false;
     s_soc.result.seed_source = COM_SOC_SEED_NONE;
+    s_soc.result.age_ms = UINT32_MAX;
+    s_soc.result.anchor_event_sequence = 0u;
     s_soc.result.rest_ready = false;
     s_soc.result.voltage_update_used = false;
     s_soc.result.full_anchor_used = false;
@@ -472,13 +485,27 @@ void Com_SOC_Update(const Com_SOC_SampleTypeDef *sample)
     s_soc.result.empty_anchor_used = false;
     s_soc.result.residual_percent = 0.0f;
     s_soc.result.kalman_gain_soc = 0.0f;
-
-    if (Com_SOC_IsCellSampleValid(sample))
+    if (s_soc.pending_anchor != COM_SOC_ANCHOR_NONE)
     {
-        Com_SOC_SeedByVoltage(sample->cell_avg_mv);
+        s_soc.pending_anchor_age_ms =
+            Com_SOC_AddMs(s_soc.pending_anchor_age_ms, sample->interval_ms);
+        if (s_soc.pending_anchor_age_ms > 10000u)
+        {
+            s_soc.pending_anchor = COM_SOC_ANCHOR_NONE;
+            s_soc.pending_anchor_age_ms = 0u;
+        }
     }
 
-    if (!s_soc.result.seeded || !sample->current_valid)
+    if (s_soc.result.valid && sample->current_valid && Com_SOC_IsCellSampleValid(sample))
+    {
+        s_soc.result.age_ms = 0u;
+    }
+    else
+    {
+        s_soc.result.age_ms = Com_SOC_AddMs(s_soc.result.age_ms, sample->interval_ms);
+    }
+
+    if (!sample->current_valid)
     {
         s_soc.rest_ms = 0u;
         s_soc.voltage_stable_ms = 0u;
@@ -500,6 +527,24 @@ void Com_SOC_Update(const Com_SOC_SampleTypeDef *sample)
         current_ma = (current_ma == INT32_MIN) ? INT32_MAX : -current_ma;
     }
 
+    /* 未播种时也必须先证明静置；禁止带载原始端电压直接作为 OCV。 */
+    Com_SOC_UpdateRestState(sample, current_ma);
+    if (Com_SOC_IsCellSampleValid(sample))
+    {
+        Com_SOC_SeedByVoltage(sample->cell_avg_mv);
+    }
+    if (!s_soc.result.seeded)
+    {
+        Com_SOC_AnchorByEvent(sample);
+    }
+    if (!s_soc.result.seeded)
+    {
+        Com_SOC_UpdateDisplay(sample->interval_ms);
+        Com_SOC_UpdatePublicResult();
+        Com_SOC_UpdateConfidence(sample);
+        return;
+    }
+
     capacity_mah = (float)s_soc.config.capacity_mah;
     if (sample->soh_valid && (sample->soh_percent >= 50u))
     {
@@ -516,9 +561,8 @@ void Com_SOC_Update(const Com_SOC_SampleTypeDef *sample)
     s_soc.result.active_capacity_mah = capacity_mah;
 
     Com_SOC_Predict(sample->interval_ms, current_ma, capacity_mah);
-    Com_SOC_UpdateRestState(sample, current_ma);
     Com_SOC_KalmanByOcv(sample);
-    Com_SOC_AnchorByVoltage(sample, current_ma);
+    Com_SOC_AnchorByEvent(sample);
     Com_SOC_UpdateDisplay(sample->interval_ms);
     Com_SOC_UpdatePublicResult();
     Com_SOC_UpdateConfidence(sample);
@@ -531,4 +575,56 @@ void Com_SOC_GetResult(Com_SOC_ResultTypeDef *result)
         return;
     }
     *result = s_soc.result;
+}
+
+void Com_SOC_NotifyAnchorEvent(Com_SOC_AnchorEventTypeDef event)
+{
+    if ((event == COM_SOC_ANCHOR_FULL_COMPLETE) || (event == COM_SOC_ANCHOR_EMPTY_CUTOFF))
+    {
+        s_soc.pending_anchor = event;
+        s_soc.pending_anchor_age_ms = 0u;
+    }
+}
+
+void Com_SOC_ExportPersistent(Com_SOC_PersistentTypeDef *state)
+{
+    if (state == 0)
+    {
+        return;
+    }
+    state->soc_0p01_percent =
+        (uint16_t)(Com_SOC_ClampFloat(s_soc.soc_percent, 0.0f, 100.0f) * 100.0f + 0.5f);
+    state->display_0p01_percent =
+        (uint16_t)(Com_SOC_ClampFloat(s_soc.result.display_percent, 0.0f, 100.0f) * 100.0f + 0.5f);
+    state->covariance_1e6 =
+        (uint32_t)(Com_SOC_ClampFloat(s_soc.p_soc, COM_SOC_P_MIN, COM_SOC_P_MAX) * 1000000.0f +
+                   0.5f);
+}
+
+bool Com_SOC_ValidatePersistent(const Com_SOC_PersistentTypeDef *state)
+{
+    if (state == 0)
+    {
+        return false;
+    }
+    return (state->soc_0p01_percent <= 10000u) && (state->display_0p01_percent <= 10000u) &&
+           (state->covariance_1e6 >= 100u) && (state->covariance_1e6 <= 400000000u);
+}
+
+bool Com_SOC_RestorePersistent(const Com_SOC_PersistentTypeDef *state)
+{
+    if (!Com_SOC_ValidatePersistent(state))
+    {
+        return false;
+    }
+
+    s_soc.soc_percent = (float)state->soc_0p01_percent / 100.0f;
+    s_soc.result.display_percent = (float)state->display_0p01_percent / 100.0f;
+    s_soc.p_soc = (float)state->covariance_1e6 / 1000000.0f;
+    s_soc.result.seeded = true;
+    s_soc.result.valid = true;
+    s_soc.result.seed_source = COM_SOC_SEED_NVM;
+    s_soc.result.age_ms = 0u;
+    Com_SOC_UpdatePublicResult();
+    return true;
 }

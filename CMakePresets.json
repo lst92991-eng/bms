@@ -8,7 +8,8 @@
       "binaryDir": "${sourceDir}/build/gcc-debug",
       "toolchainFile": "${sourceDir}/cmake/arm-none-eabi-gcc.cmake",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Debug"
+        "CMAKE_BUILD_TYPE": "Debug",
+        "BMS_ENGINEERING_BUILD": "ON"
       }
     },
     {
@@ -18,7 +19,29 @@
       "binaryDir": "${sourceDir}/build/gcc-release",
       "toolchainFile": "${sourceDir}/cmake/arm-none-eabi-gcc.cmake",
       "cacheVariables": {
-        "CMAKE_BUILD_TYPE": "Release"
+        "CMAKE_BUILD_TYPE": "Release",
+        "BMS_ENGINEERING_BUILD": "OFF"
+      }
+    },
+    {
+      "name": "gcc-engineering",
+      "displayName": "GCC Engineering",
+      "generator": "Ninja",
+      "binaryDir": "${sourceDir}/build/gcc-engineering",
+      "toolchainFile": "${sourceDir}/cmake/arm-none-eabi-gcc.cmake",
+      "cacheVariables": {
+        "CMAKE_BUILD_TYPE": "Release",
+        "BMS_ENGINEERING_BUILD": "ON"
+      }
+    },
+    {
+      "name": "host-msvc",
+      "displayName": "Host Tests (MSVC)",
+      "generator": "Visual Studio 18 2026",
+      "architecture": "x64",
+      "binaryDir": "${sourceDir}/build/host-msvc",
+      "cacheVariables": {
+        "BMS_HOST_TESTS_ONLY": "ON"
       }
     }
   ],
@@ -30,6 +53,25 @@
     {
       "name": "gcc-release",
       "configurePreset": "gcc-release"
+    },
+    {
+      "name": "gcc-engineering",
+      "configurePreset": "gcc-engineering"
+    },
+    {
+      "name": "host-msvc",
+      "configurePreset": "host-msvc",
+      "configuration": "Debug"
+    }
+  ],
+  "testPresets": [
+    {
+      "name": "host-msvc",
+      "configurePreset": "host-msvc",
+      "configuration": "Debug",
+      "output": {
+        "outputOnFailure": true
+      }
     }
   ]
 }

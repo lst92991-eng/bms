@@ -7,25 +7,28 @@
  * 超时校验。驱动固定使用 hi2c1 和 BSP 中的默认地址，不负责配置保护阈值、
  * FET 策略或自动切换 BQ 的 Comm Type。
  *
- * 所有访问均为阻塞式 HAL I2C 调用，部分流程还包含 HAL_Delay 和 printf，不能
- * 在 ISR 中调用。模块内部没有互斥保护；多个任务使用时必须由上层串行化，避免
- * 同时占用 I2C1 或交叉覆盖 BQ 的 0x3E~0x61 间接访问窗口。
+ * 所有总线访问均为阻塞式，不能在 ISR 中调用。公开访问入口共享一个静态递归
+ * 事务锁和绝对 deadline，确保多个任务不会交叉覆盖 0x3E~0x61 间接窗口；
+ * ALERT 中断只能调用 NotifyAlertFromISR() 锁存事件。
  */
 #include "Int_BQ76952.h"
 
 #include <stddef.h>
-#include <stdio.h>
 
 #include "Int_BQ76952_BSP.h"
+#include "FreeRTOS.h"
 #include "i2c.h"
+#include "semphr.h"
+#include "task.h"
 
 enum
 {
-    /* 单次 HAL I2C 事务的最长阻塞时间，不包含下方协议轮询时间。 */
-    INT_BQ76952_I2C_TIMEOUT_MS = 100u,
-    /* Echo/ConfigUpdate 最多轮询约 100 ms，防止 BQ 异常时永久阻塞任务。 */
-    INT_BQ76952_ECHO_POLL_COUNT = 100u,
-    INT_BQ76952_CFG_POLL_COUNT = 100u,
+    /* 每笔 HAL I2C 调用最多占用 10 ms，且不能越过外层事务绝对 deadline。 */
+    INT_BQ76952_I2C_TIMEOUT_MS = 10u,
+    INT_BQ76952_DIRECT_DEADLINE_MS = 12u,
+    INT_BQ76952_COMMAND_DEADLINE_MS = 30u,
+    INT_BQ76952_INDIRECT_DEADLINE_MS = 50u,
+    INT_BQ76952_CFG_DEADLINE_MS = 150u,
     INT_BQ76952_POLL_DELAY_MS = 1u,
     /* 覆盖 TRM 给出的典型命令执行时间，并给下一次 0x3E 访问留出裕量。 */
     INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS = 2u,
@@ -42,6 +45,23 @@ static bool s_bq76952_crc_enabled = false;
 /* 仅保存最近一次 HAL I2C 失败原因，成功事务不会主动清零。 */
 static uint32_t s_bq76952_last_hal_error = 0u;
 
+typedef struct
+{
+    StaticSemaphore_t storage;
+    SemaphoreHandle_t handle;
+    TaskHandle_t owner;
+    uint16_t depth;
+    uint32_t deadline_ms;
+} Int_BQ76952_RecursiveLockTypeDef;
+
+/*
+ * 静态递归 mutex 提供任务间互斥和优先级继承。owner/depth 只用于让嵌套公开
+ * API 继承最外层绝对 deadline；调度前仅有启动上下文，允许无阻塞递归旁路。
+ */
+static Int_BQ76952_RecursiveLockTypeDef s_bq76952_lock = {0};
+static volatile bool s_bq76952_alert_pending = false;
+static volatile uint32_t s_bq76952_alert_sequence = 0u;
+
 /**
  * @brief 快照保存 I2C1 最近一次 HAL 错误位。
  *
@@ -50,6 +70,172 @@ static uint32_t s_bq76952_last_hal_error = 0u;
 static void Int_BQ76952_RecordHalError(void)
 {
     s_bq76952_last_hal_error = HAL_I2C_GetError(&hi2c1);
+}
+
+static Int_BQ76952_StatusTypeDef Int_BQ76952_MapHalStatus(HAL_StatusTypeDef hal_status)
+{
+    if (hal_status == HAL_OK)
+    {
+        return INT_BQ76952_OK;
+    }
+
+    Int_BQ76952_RecordHalError();
+    return (hal_status == HAL_TIMEOUT) ? INT_BQ76952_ERROR_TIMEOUT : INT_BQ76952_ERROR_HAL;
+}
+
+static bool Int_BQ76952_DeadlineReached(uint32_t now_ms, uint32_t deadline_ms)
+{
+    return ((int32_t)(now_ms - deadline_ms) >= 0);
+}
+
+static uint32_t Int_BQ76952_RemainingMs(void)
+{
+    uint32_t now_ms = HAL_GetTick();
+
+    if (Int_BQ76952_DeadlineReached(now_ms, s_bq76952_lock.deadline_ms))
+    {
+        return 0u;
+    }
+
+    return s_bq76952_lock.deadline_ms - now_ms;
+}
+
+static bool Int_BQ76952_DelayMs(uint32_t delay_ms)
+{
+    uint32_t remaining_ms = Int_BQ76952_RemainingMs();
+
+    if ((delay_ms == 0u) || (delay_ms >= remaining_ms))
+    {
+        return (delay_ms == 0u);
+    }
+
+    if (xTaskGetSchedulerState() == taskSCHEDULER_RUNNING)
+    {
+        TickType_t ticks = pdMS_TO_TICKS(delay_ms);
+
+        if (ticks == 0u)
+        {
+            ticks = 1u;
+        }
+        vTaskDelay(ticks);
+    }
+    else
+    {
+        HAL_Delay(delay_ms);
+    }
+
+    return !Int_BQ76952_DeadlineReached(HAL_GetTick(), s_bq76952_lock.deadline_ms);
+}
+
+static bool Int_BQ76952_TransactionBegin(uint32_t budget_ms)
+{
+    uint32_t acquire_deadline_ms = HAL_GetTick() + budget_ms;
+    BaseType_t scheduler_state = xTaskGetSchedulerState();
+    TaskHandle_t current;
+    TickType_t wait_ticks = 0u;
+
+    if ((budget_ms == 0u) || (s_bq76952_lock.handle == NULL))
+    {
+        return false;
+    }
+
+    /* 普通总线 API 在调度前和调度后都严禁从 ISR 调用。 */
+    if (__get_IPSR() != 0u)
+    {
+        return false;
+    }
+
+    /* 调度前只有启动上下文，保留递归深度/deadline 但不依赖 RTOS 对象。 */
+    if (scheduler_state == taskSCHEDULER_NOT_STARTED)
+    {
+        if (s_bq76952_lock.depth == 0u)
+        {
+            s_bq76952_lock.deadline_ms = acquire_deadline_ms;
+        }
+        s_bq76952_lock.depth++;
+        return true;
+    }
+
+    current = xTaskGetCurrentTaskHandle();
+    if (scheduler_state == taskSCHEDULER_RUNNING)
+    {
+        uint32_t remaining_ms = acquire_deadline_ms - HAL_GetTick();
+
+        if (Int_BQ76952_DeadlineReached(HAL_GetTick(), acquire_deadline_ms))
+        {
+            return false;
+        }
+        wait_ticks = pdMS_TO_TICKS(remaining_ms);
+        if (wait_ticks == 0u)
+        {
+            wait_ticks = 1u;
+        }
+    }
+
+    if (xSemaphoreTakeRecursive(s_bq76952_lock.handle, wait_ticks) != pdTRUE)
+    {
+        return false;
+    }
+    if (Int_BQ76952_DeadlineReached(HAL_GetTick(), acquire_deadline_ms))
+    {
+        (void)xSemaphoreGiveRecursive(s_bq76952_lock.handle);
+        return false;
+    }
+
+    if (s_bq76952_lock.depth == 0u)
+    {
+        s_bq76952_lock.owner = current;
+        s_bq76952_lock.deadline_ms = acquire_deadline_ms;
+    }
+    else if (s_bq76952_lock.owner != current)
+    {
+        /* mutex 与软件递归状态不一致时拒绝继续访问总线。 */
+        (void)xSemaphoreGiveRecursive(s_bq76952_lock.handle);
+        return false;
+    }
+
+    /* 嵌套调用只增加递归深度，绝不延长最外层 deadline。 */
+    s_bq76952_lock.depth++;
+    return true;
+}
+
+static void Int_BQ76952_TransactionEnd(void)
+{
+    if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED)
+    {
+        if (s_bq76952_lock.depth > 0u)
+        {
+            s_bq76952_lock.depth--;
+            if (s_bq76952_lock.depth == 0u)
+            {
+                s_bq76952_lock.deadline_ms = 0u;
+            }
+        }
+        return;
+    }
+
+    if ((s_bq76952_lock.depth > 0u) && (s_bq76952_lock.owner == xTaskGetCurrentTaskHandle()))
+    {
+        s_bq76952_lock.depth--;
+        if (s_bq76952_lock.depth == 0u)
+        {
+            s_bq76952_lock.owner = NULL;
+            s_bq76952_lock.deadline_ms = 0u;
+        }
+        (void)xSemaphoreGiveRecursive(s_bq76952_lock.handle);
+    }
+}
+
+static uint32_t Int_BQ76952_GetHalTimeoutMs(void)
+{
+    uint32_t remaining_ms = Int_BQ76952_RemainingMs();
+
+    if (remaining_ms > INT_BQ76952_I2C_TIMEOUT_MS)
+    {
+        remaining_ms = INT_BQ76952_I2C_TIMEOUT_MS;
+    }
+
+    return remaining_ms;
 }
 
 /**
@@ -111,9 +297,8 @@ static uint8_t Int_BQ76952_Crc8(const uint8_t *data, uint8_t len)
  * @param len payload 字节数。
  * @return 写入/比对 0x60 的 checksum。
  */
-static uint8_t Int_BQ76952_BufferChecksum(uint16_t command_or_address,
-                                          const uint8_t *data,
-                                          uint8_t len)
+static uint8_t
+Int_BQ76952_BufferChecksum(uint16_t command_or_address, const uint8_t *data, uint8_t len)
 {
     uint16_t sum = (uint8_t)(command_or_address & 0xFFu);
 
@@ -157,7 +342,7 @@ static Int_BQ76952_StatusTypeDef Int_BQ76952_WaitEcho(uint16_t command_or_addres
 {
     uint8_t echo[2];
 
-    for (uint16_t poll = 0u; poll < INT_BQ76952_ECHO_POLL_COUNT; poll++)
+    while (Int_BQ76952_RemainingMs() > 0u)
     {
         Int_BQ76952_StatusTypeDef ret;
 
@@ -172,7 +357,10 @@ static Int_BQ76952_StatusTypeDef Int_BQ76952_WaitEcho(uint16_t command_or_addres
             return INT_BQ76952_OK;
         }
 
-        HAL_Delay(INT_BQ76952_POLL_DELAY_MS);
+        if (!Int_BQ76952_DelayMs(INT_BQ76952_POLL_DELAY_MS))
+        {
+            break;
+        }
     }
 
     return INT_BQ76952_ERROR_TIMEOUT;
@@ -189,9 +377,8 @@ static Int_BQ76952_StatusTypeDef Int_BQ76952_WaitEcho(uint16_t command_or_addres
  * @param data 调用者输出缓冲区；公开入口已负责非空检查。
  * @param len 调用者需要的 payload 字节数。
  */
-static Int_BQ76952_StatusTypeDef Int_BQ76952_ReadTransfer(uint16_t command_or_address,
-                                                          uint8_t *data,
-                                                          uint8_t len)
+static Int_BQ76952_StatusTypeDef
+Int_BQ76952_ReadTransfer(uint16_t command_or_address, uint8_t *data, uint8_t len)
 {
     uint8_t raw[INT_BQ76952_TRANSFER_MAX_LEN];
     Int_BQ76952_StatusTypeDef ret;
@@ -208,26 +395,17 @@ static Int_BQ76952_StatusTypeDef Int_BQ76952_ReadTransfer(uint16_t command_or_ad
     ret = Int_BQ76952_WaitEcho(command_or_address);
     if (ret != INT_BQ76952_OK)
     {
-        printf("bq transfer echo fail cmd:0x%04x ret:%d\r\n",
-               (unsigned int)command_or_address,
-               (int)ret);
         return ret;
     }
 
     ret = Int_BQ76952_ReadDirect(BQ76952_TRANSFER_LENGTH, &length, 1u);
     if (ret != INT_BQ76952_OK)
     {
-        printf("bq transfer length fail cmd:0x%04x ret:%d\r\n",
-               (unsigned int)command_or_address,
-               (int)ret);
         return ret;
     }
 
     if (length < BQ76952_TRANSFER_LENGTH_OVERHEAD)
     {
-        printf("bq transfer length short cmd:0x%04x len:%u\r\n",
-               (unsigned int)command_or_address,
-               (unsigned int)length);
         return INT_BQ76952_ERROR_LENGTH;
     }
 
@@ -235,39 +413,23 @@ static Int_BQ76952_StatusTypeDef Int_BQ76952_ReadTransfer(uint16_t command_or_ad
     data_len = (uint8_t)(length - BQ76952_TRANSFER_LENGTH_OVERHEAD);
     if ((data_len == 0u) || (data_len > INT_BQ76952_TRANSFER_MAX_LEN) || (len > data_len))
     {
-        printf("bq transfer data length bad cmd:0x%04x len:%u data_len:%u want:%u\r\n",
-               (unsigned int)command_or_address,
-               (unsigned int)length,
-               (unsigned int)data_len,
-               (unsigned int)len);
         return INT_BQ76952_ERROR_LENGTH;
     }
 
     ret = Int_BQ76952_ReadDirect(BQ76952_TRANSFER_BUFFER_START, raw, data_len);
     if (ret != INT_BQ76952_OK)
     {
-        printf("bq transfer buffer fail cmd:0x%04x ret:%d\r\n",
-               (unsigned int)command_or_address,
-               (int)ret);
         return ret;
     }
 
     ret = Int_BQ76952_ReadDirect(BQ76952_TRANSFER_CHECKSUM, &checksum, 1u);
     if (ret != INT_BQ76952_OK)
     {
-        printf("bq transfer checksum read fail cmd:0x%04x ret:%d\r\n",
-               (unsigned int)command_or_address,
-               (int)ret);
         return ret;
     }
 
     if (Int_BQ76952_BufferChecksum(command_or_address, raw, data_len) != checksum)
     {
-        printf("bq transfer checksum bad cmd:0x%04x got:0x%02x exp:0x%02x len:%u\r\n",
-               (unsigned int)command_or_address,
-               (unsigned int)checksum,
-               (unsigned int)Int_BQ76952_BufferChecksum(command_or_address, raw, data_len),
-               (unsigned int)data_len);
         return INT_BQ76952_ERROR_CHECKSUM;
     }
 
@@ -315,9 +477,8 @@ static Int_BQ76952_StatusTypeDef Int_BQ76952_ReadCfgUpdateBit(bool *is_set)
  * 写 checksum 和总长度，后者才触发 BQ 校验并提交整帧。两笔事务之间不能被
  * 其他任务的 BQ 间接访问插入。
  */
-static Int_BQ76952_StatusTypeDef Int_BQ76952_WriteTransfer(uint16_t command_or_address,
-                                                           const uint8_t *data,
-                                                           uint8_t len)
+static Int_BQ76952_StatusTypeDef
+Int_BQ76952_WriteTransfer(uint16_t command_or_address, const uint8_t *data, uint8_t len)
 {
     uint8_t transfer[2u + INT_BQ76952_TRANSFER_MAX_LEN];
     uint8_t meta[2];
@@ -342,9 +503,7 @@ static Int_BQ76952_StatusTypeDef Int_BQ76952_WriteTransfer(uint16_t command_or_a
         transfer[2u + i] = data[i];
     }
 
-    ret = Int_BQ76952_WriteDirect(BQ76952_SUBCMD_ADDR_LSB,
-                                  transfer,
-                                  (uint8_t)(len + 2u));
+    ret = Int_BQ76952_WriteDirect(BQ76952_SUBCMD_ADDR_LSB, transfer, (uint8_t)(len + 2u));
     if (ret != INT_BQ76952_OK)
     {
         return ret;
@@ -364,7 +523,13 @@ static Int_BQ76952_StatusTypeDef Int_BQ76952_WriteTransfer(uint16_t command_or_a
  */
 void Int_BQ76952_InitBoard(void)
 {
+    if (s_bq76952_lock.handle == NULL)
+    {
+        s_bq76952_lock.handle = xSemaphoreCreateRecursiveMutexStatic(&s_bq76952_lock.storage);
+    }
+    /* 重复初始化不得清空正在使用的 mutex 递归状态或延长事务 deadline。 */
     s_bq76952_crc_enabled = (BQ76952_I2C_CRC_DEFAULT_ENABLED != 0u);
+    /* 不清 ALERT provenance：GPIO 可能在 APP 初始化前已经产生下降沿。 */
 }
 
 /**
@@ -417,6 +582,75 @@ uint32_t Int_BQ76952_GetLastHalError(void)
     return s_bq76952_last_hal_error;
 }
 
+void Int_BQ76952_NotifyAlertFromISR(void)
+{
+    s_bq76952_alert_pending = true;
+    s_bq76952_alert_sequence++;
+}
+
+bool Int_BQ76952_TakeAlertPending(void)
+{
+    bool pending;
+    uint32_t primask = __get_PRIMASK();
+
+    __disable_irq();
+    pending = s_bq76952_alert_pending;
+    s_bq76952_alert_pending = false;
+    if (primask == 0u)
+    {
+        __enable_irq();
+    }
+
+    return pending;
+}
+
+bool Int_BQ76952_AcknowledgeAlert(uint32_t sequence)
+{
+    bool acknowledged = false;
+    uint32_t primask = __get_PRIMASK();
+
+    __disable_irq();
+    if (s_bq76952_alert_pending && (s_bq76952_alert_sequence == sequence))
+    {
+        s_bq76952_alert_pending = false;
+        acknowledged = true;
+    }
+    if (primask == 0u)
+    {
+        __enable_irq();
+    }
+
+    return acknowledged;
+}
+
+bool Int_BQ76952_IsAlertPending(void)
+{
+    return s_bq76952_alert_pending;
+}
+
+uint32_t Int_BQ76952_GetAlertSequence(void)
+{
+    return s_bq76952_alert_sequence;
+}
+
+Int_BQ76952_StatusTypeDef Int_BQ76952_BeginTransaction(uint32_t budget_ms)
+{
+    if (budget_ms == 0u)
+    {
+        return INT_BQ76952_ERROR_PARAM;
+    }
+    if (!Int_BQ76952_TransactionBegin(budget_ms))
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+    return INT_BQ76952_OK;
+}
+
+void Int_BQ76952_EndTransaction(void)
+{
+    Int_BQ76952_TransactionEnd();
+}
+
 /**
  * @brief 读取 BQ76952 的 8-bit direct command 地址空间。
  *
@@ -428,8 +662,12 @@ uint32_t Int_BQ76952_GetLastHalError(void)
  * @param data 输出数据缓冲区。
  * @param len 期望读取的数据字节数，不包含 CRC 字节。
  */
-Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data, uint8_t len)
+static Int_BQ76952_StatusTypeDef
+Int_BQ76952_ReadDirectUnlocked(uint8_t command, uint8_t *data, uint8_t len)
 {
+    uint32_t hal_timeout_ms;
+    HAL_StatusTypeDef hal_status;
+
     if (data == NULL)
     {
         return INT_BQ76952_ERROR_PARAM;
@@ -440,18 +678,24 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data,
         return INT_BQ76952_ERROR_LENGTH;
     }
 
+    hal_timeout_ms = Int_BQ76952_GetHalTimeoutMs();
+    if (hal_timeout_ms == 0u)
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+
     if (!s_bq76952_crc_enabled)
     {
-        if (HAL_I2C_Mem_Read(&hi2c1,
-                             BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT,
-                             command,
-                             I2C_MEMADD_SIZE_8BIT,
-                             data,
-                             len,
-                             INT_BQ76952_I2C_TIMEOUT_MS) != HAL_OK)
+        hal_status = HAL_I2C_Mem_Read(&hi2c1,
+                                      BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT,
+                                      command,
+                                      I2C_MEMADD_SIZE_8BIT,
+                                      data,
+                                      len,
+                                      hal_timeout_ms);
+        if (hal_status != HAL_OK)
         {
-            Int_BQ76952_RecordHalError();
-            return INT_BQ76952_ERROR_HAL;
+            return Int_BQ76952_MapHalStatus(hal_status);
         }
 
         return INT_BQ76952_OK;
@@ -460,16 +704,16 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data,
     {
         uint8_t rx[INT_BQ76952_DIRECT_MAX_LEN * 2u];
 
-        if (HAL_I2C_Mem_Read(&hi2c1,
-                             BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT,
-                             command,
-                             I2C_MEMADD_SIZE_8BIT,
-                             rx,
-                             (uint16_t)(len * 2u),
-                             INT_BQ76952_I2C_TIMEOUT_MS) != HAL_OK)
+        hal_status = HAL_I2C_Mem_Read(&hi2c1,
+                                      BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT,
+                                      command,
+                                      I2C_MEMADD_SIZE_8BIT,
+                                      rx,
+                                      (uint16_t)(len * 2u),
+                                      hal_timeout_ms);
+        if (hal_status != HAL_OK)
         {
-            Int_BQ76952_RecordHalError();
-            return INT_BQ76952_ERROR_HAL;
+            return Int_BQ76952_MapHalStatus(hal_status);
         }
 
         for (uint8_t i = 0u; i < len; i++)
@@ -496,24 +740,6 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data,
 
             if (crc != rx[(i * 2u) + 1u])
             {
-                uint8_t raw_len = (uint8_t)(len * 2u);
-                /* 故障日志只保留前 8 个原始字节，避免通信异常时刷屏。 */
-                if (raw_len > 8u)
-                {
-                    raw_len = 8u;
-                }
-
-                printf("bq crc fail cmd:0x%02x idx:%u data:0x%02x got:0x%02x exp:0x%02x raw:",
-                       (unsigned int)command,
-                       (unsigned int)i,
-                       (unsigned int)rx[i * 2u],
-                       (unsigned int)rx[(i * 2u) + 1u],
-                       (unsigned int)crc);
-                for (uint8_t j = 0u; j < raw_len; j++)
-                {
-                    printf("%02x", (unsigned int)rx[j]);
-                }
-                printf("\r\n");
                 return INT_BQ76952_ERROR_CRC;
             }
 
@@ -522,6 +748,20 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data,
     }
 
     return INT_BQ76952_OK;
+}
+
+Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data, uint8_t len)
+{
+    Int_BQ76952_StatusTypeDef ret;
+
+    if (!Int_BQ76952_TransactionBegin(INT_BQ76952_DIRECT_DEADLINE_MS))
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+
+    ret = Int_BQ76952_ReadDirectUnlocked(command, data, len);
+    Int_BQ76952_TransactionEnd();
+    return ret;
 }
 
 /**
@@ -535,8 +775,12 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data,
  * @param data 待写数据。
  * @param len 数据字节数，不包含 command 和 CRC 字节。
  */
-Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDirect(uint8_t command, const uint8_t *data, uint8_t len)
+static Int_BQ76952_StatusTypeDef
+Int_BQ76952_WriteDirectUnlocked(uint8_t command, const uint8_t *data, uint8_t len)
 {
+    uint32_t hal_timeout_ms;
+    HAL_StatusTypeDef hal_status;
+
     if (data == NULL)
     {
         return INT_BQ76952_ERROR_PARAM;
@@ -547,18 +791,24 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDirect(uint8_t command, const uint8_t
         return INT_BQ76952_ERROR_LENGTH;
     }
 
+    hal_timeout_ms = Int_BQ76952_GetHalTimeoutMs();
+    if (hal_timeout_ms == 0u)
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+
     if (!s_bq76952_crc_enabled)
     {
-        if (HAL_I2C_Mem_Write(&hi2c1,
-                              BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT,
-                              command,
-                              I2C_MEMADD_SIZE_8BIT,
-                              (uint8_t *)data,
-                              len,
-                              INT_BQ76952_I2C_TIMEOUT_MS) != HAL_OK)
+        hal_status = HAL_I2C_Mem_Write(&hi2c1,
+                                       BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT,
+                                       command,
+                                       I2C_MEMADD_SIZE_8BIT,
+                                       (uint8_t *)data,
+                                       len,
+                                       hal_timeout_ms);
+        if (hal_status != HAL_OK)
         {
-            Int_BQ76952_RecordHalError();
-            return INT_BQ76952_ERROR_HAL;
+            return Int_BQ76952_MapHalStatus(hal_status);
         }
 
         return INT_BQ76952_OK;
@@ -587,18 +837,32 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDirect(uint8_t command, const uint8_t
             }
         }
 
-        if (HAL_I2C_Master_Transmit(&hi2c1,
-                                    BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT,
-                                    tx,
-                                    (uint16_t)(1u + (len * 2u)),
-                                    INT_BQ76952_I2C_TIMEOUT_MS) != HAL_OK)
+        hal_status = HAL_I2C_Master_Transmit(&hi2c1,
+                                             BQ76952_I2C_8BIT_WRITE_ADDR_DEFAULT,
+                                             tx,
+                                             (uint16_t)(1u + (len * 2u)),
+                                             hal_timeout_ms);
+        if (hal_status != HAL_OK)
         {
-            Int_BQ76952_RecordHalError();
-            return INT_BQ76952_ERROR_HAL;
+            return Int_BQ76952_MapHalStatus(hal_status);
         }
     }
 
     return INT_BQ76952_OK;
+}
+
+Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDirect(uint8_t command, const uint8_t *data, uint8_t len)
+{
+    Int_BQ76952_StatusTypeDef ret;
+
+    if (!Int_BQ76952_TransactionBegin(INT_BQ76952_DIRECT_DEADLINE_MS))
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+
+    ret = Int_BQ76952_WriteDirectUnlocked(command, data, len);
+    Int_BQ76952_TransactionEnd();
+    return ret;
 }
 
 /**
@@ -612,6 +876,11 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_SendSubcommand(uint16_t subcommand)
     uint8_t data[2];
     Int_BQ76952_StatusTypeDef ret;
 
+    if (!Int_BQ76952_TransactionBegin(INT_BQ76952_COMMAND_DEADLINE_MS))
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+
     data[0] = (uint8_t)(subcommand & 0xFFu);
     data[1] = (uint8_t)(subcommand >> 8u);
 
@@ -619,9 +888,13 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_SendSubcommand(uint16_t subcommand)
     if (ret == INT_BQ76952_OK)
     {
         /* TRM 命令执行时间约 0.5 ms；完成前不能紧接下一条 0x3E/0x3F 命令。 */
-        HAL_Delay(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS);
+        if (!Int_BQ76952_DelayMs(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS))
+        {
+            ret = INT_BQ76952_ERROR_TIMEOUT;
+        }
     }
 
+    Int_BQ76952_TransactionEnd();
     return ret;
 }
 
@@ -631,7 +904,8 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_SendSubcommand(uint16_t subcommand)
  * 先向 0x3E/0x3F 写 little-endian subcommand，再等待 BQ 生成响应；ReadTransfer
  * 会继续确认 echo、长度和 checksum，任一环节失败都不会返回未经校验的数据。
  */
-Int_BQ76952_StatusTypeDef Int_BQ76952_ReadSubcommand(uint16_t subcommand, uint8_t *data, uint8_t len)
+Int_BQ76952_StatusTypeDef
+Int_BQ76952_ReadSubcommand(uint16_t subcommand, uint8_t *data, uint8_t len)
 {
     uint8_t command[2];
     Int_BQ76952_StatusTypeDef ret;
@@ -641,17 +915,34 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadSubcommand(uint16_t subcommand, uint8_
         return INT_BQ76952_ERROR_PARAM;
     }
 
+    ret = Int_BQ76952_CheckLen(len);
+    if (ret != INT_BQ76952_OK)
+    {
+        return ret;
+    }
+    if (!Int_BQ76952_TransactionBegin(INT_BQ76952_INDIRECT_DEADLINE_MS))
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+
     command[0] = (uint8_t)(subcommand & 0xFFu);
     command[1] = (uint8_t)(subcommand >> 8u);
 
     ret = Int_BQ76952_WriteDirect(BQ76952_SUBCMD_ADDR_LSB, command, 2u);
     if (ret != INT_BQ76952_OK)
     {
+        Int_BQ76952_TransactionEnd();
         return ret;
     }
-    HAL_Delay(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS);
+    if (!Int_BQ76952_DelayMs(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS))
+    {
+        Int_BQ76952_TransactionEnd();
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
 
-    return Int_BQ76952_ReadTransfer(subcommand, data, len);
+    ret = Int_BQ76952_ReadTransfer(subcommand, data, len);
+    Int_BQ76952_TransactionEnd();
+    return ret;
 }
 
 /**
@@ -660,18 +951,28 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadSubcommand(uint16_t subcommand, uint8_
  * WriteTransfer 完成 checksum/length 提交后仍需留出命令执行时间，确保返回给
  * 调用者时可以安全开始下一笔 BQ 命令。
  */
-Int_BQ76952_StatusTypeDef Int_BQ76952_WriteSubcommandData(uint16_t subcommand,
-                                                          const uint8_t *data,
-                                                          uint8_t len)
+Int_BQ76952_StatusTypeDef
+Int_BQ76952_WriteSubcommandData(uint16_t subcommand, const uint8_t *data, uint8_t len)
 {
-    Int_BQ76952_StatusTypeDef ret = Int_BQ76952_WriteTransfer(subcommand, data, len);
+    Int_BQ76952_StatusTypeDef ret;
+
+    if (!Int_BQ76952_TransactionBegin(INT_BQ76952_INDIRECT_DEADLINE_MS))
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+
+    ret = Int_BQ76952_WriteTransfer(subcommand, data, len);
 
     if (ret == INT_BQ76952_OK)
     {
         /* 等待 BQ 提交带数据子命令，保证调用者返回后可安全发下一条命令。 */
-        HAL_Delay(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS);
+        if (!Int_BQ76952_DelayMs(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS))
+        {
+            ret = INT_BQ76952_ERROR_TIMEOUT;
+        }
     }
 
+    Int_BQ76952_TransactionEnd();
     return ret;
 }
 
@@ -691,17 +992,34 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDataMemory(uint16_t address, uint8_t *
         return INT_BQ76952_ERROR_PARAM;
     }
 
+    ret = Int_BQ76952_CheckLen(len);
+    if (ret != INT_BQ76952_OK)
+    {
+        return ret;
+    }
+    if (!Int_BQ76952_TransactionBegin(INT_BQ76952_INDIRECT_DEADLINE_MS))
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+
     command[0] = (uint8_t)(address & 0xFFu);
     command[1] = (uint8_t)(address >> 8u);
 
     ret = Int_BQ76952_WriteDirect(BQ76952_SUBCMD_ADDR_LSB, command, 2u);
     if (ret != INT_BQ76952_OK)
     {
+        Int_BQ76952_TransactionEnd();
         return ret;
     }
-    HAL_Delay(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS);
+    if (!Int_BQ76952_DelayMs(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS))
+    {
+        Int_BQ76952_TransactionEnd();
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
 
-    return Int_BQ76952_ReadTransfer(address, data, len);
+    ret = Int_BQ76952_ReadTransfer(address, data, len);
+    Int_BQ76952_TransactionEnd();
+    return ret;
 }
 
 /**
@@ -710,9 +1028,23 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDataMemory(uint16_t address, uint8_t *
  * 本函数只执行协议写入，不自动进入或退出 ConfigUpdate。需要 ConfigUpdate 的
  * 配置项必须由上层先确认进入成功，并在全部写入结束后显式退出。
  */
-Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDataMemory(uint16_t address, const uint8_t *data, uint8_t len)
+Int_BQ76952_StatusTypeDef
+Int_BQ76952_WriteDataMemory(uint16_t address, const uint8_t *data, uint8_t len)
 {
-    return Int_BQ76952_WriteTransfer(address, data, len);
+    Int_BQ76952_StatusTypeDef ret;
+
+    if (!Int_BQ76952_TransactionBegin(INT_BQ76952_INDIRECT_DEADLINE_MS))
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+
+    ret = Int_BQ76952_WriteTransfer(address, data, len);
+    if ((ret == INT_BQ76952_OK) && !Int_BQ76952_DelayMs(INT_BQ76952_SUBCMD_RESPONSE_DELAY_MS))
+    {
+        ret = INT_BQ76952_ERROR_TIMEOUT;
+    }
+    Int_BQ76952_TransactionEnd();
+    return ret;
 }
 
 /**
@@ -728,9 +1060,40 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_SetBalanceMask(uint16_t mask)
     data[0] = (uint8_t)(mask & 0xFFu);
     data[1] = (uint8_t)(mask >> 8u);
 
-    return Int_BQ76952_WriteSubcommandData(BQ76952_SUBCMD_CB_ACTIVE_CELLS,
-                                           data,
-                                           2u);
+    return Int_BQ76952_WriteSubcommandData(BQ76952_SUBCMD_CB_ACTIVE_CELLS, data, 2u);
+}
+
+Int_BQ76952_StatusTypeDef Int_BQ76952_ApplyFetControl(uint8_t off_mask, uint8_t *observed_status)
+{
+    const uint8_t valid_mask = BQ76952_FET_CONTROL_PCHG_OFF_MASK |
+                               BQ76952_FET_CONTROL_CHG_OFF_MASK |
+                               BQ76952_FET_CONTROL_PDSG_OFF_MASK | BQ76952_FET_CONTROL_DSG_OFF_MASK;
+    uint8_t command_data[1];
+    uint8_t status_data;
+    Int_BQ76952_StatusTypeDef ret;
+
+    if ((observed_status == NULL) || ((off_mask & (uint8_t)(~valid_mask)) != 0u))
+    {
+        return INT_BQ76952_ERROR_PARAM;
+    }
+    if (!Int_BQ76952_TransactionBegin(INT_BQ76952_INDIRECT_DEADLINE_MS))
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+
+    command_data[0] = off_mask;
+    ret = Int_BQ76952_WriteSubcommandData(BQ76952_SUBCMD_FET_CONTROL, command_data, 1u);
+    if (ret == INT_BQ76952_OK)
+    {
+        ret = Int_BQ76952_ReadDirect(BQ76952_CMD_FET_STATUS, &status_data, 1u);
+    }
+    if (ret == INT_BQ76952_OK)
+    {
+        *observed_status = status_data;
+    }
+
+    Int_BQ76952_TransactionEnd();
+    return ret;
 }
 
 /**
@@ -743,30 +1106,42 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_EnterConfigUpdate(void)
 {
     Int_BQ76952_StatusTypeDef ret;
 
+    if (!Int_BQ76952_TransactionBegin(INT_BQ76952_CFG_DEADLINE_MS))
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+
     ret = Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_SET_CFGUPDATE);
     if (ret != INT_BQ76952_OK)
     {
+        Int_BQ76952_TransactionEnd();
         return ret;
     }
 
-    for (uint16_t poll = 0u; poll < INT_BQ76952_CFG_POLL_COUNT; poll++)
+    while (Int_BQ76952_RemainingMs() > 0u)
     {
         bool is_cfg_update;
 
         ret = Int_BQ76952_ReadCfgUpdateBit(&is_cfg_update);
         if (ret != INT_BQ76952_OK)
         {
+            Int_BQ76952_TransactionEnd();
             return ret;
         }
 
         if (is_cfg_update)
         {
+            Int_BQ76952_TransactionEnd();
             return INT_BQ76952_OK;
         }
 
-        HAL_Delay(INT_BQ76952_POLL_DELAY_MS);
+        if (!Int_BQ76952_DelayMs(INT_BQ76952_POLL_DELAY_MS))
+        {
+            break;
+        }
     }
 
+    Int_BQ76952_TransactionEnd();
     return INT_BQ76952_ERROR_TIMEOUT;
 }
 
@@ -780,29 +1155,41 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ExitConfigUpdate(void)
 {
     Int_BQ76952_StatusTypeDef ret;
 
+    if (!Int_BQ76952_TransactionBegin(INT_BQ76952_CFG_DEADLINE_MS))
+    {
+        return INT_BQ76952_ERROR_TIMEOUT;
+    }
+
     ret = Int_BQ76952_SendSubcommand(BQ76952_SUBCMD_EXIT_CFGUPDATE);
     if (ret != INT_BQ76952_OK)
     {
+        Int_BQ76952_TransactionEnd();
         return ret;
     }
 
-    for (uint16_t poll = 0u; poll < INT_BQ76952_CFG_POLL_COUNT; poll++)
+    while (Int_BQ76952_RemainingMs() > 0u)
     {
         bool is_cfg_update;
 
         ret = Int_BQ76952_ReadCfgUpdateBit(&is_cfg_update);
         if (ret != INT_BQ76952_OK)
         {
+            Int_BQ76952_TransactionEnd();
             return ret;
         }
 
         if (!is_cfg_update)
         {
+            Int_BQ76952_TransactionEnd();
             return INT_BQ76952_OK;
         }
 
-        HAL_Delay(INT_BQ76952_POLL_DELAY_MS);
+        if (!Int_BQ76952_DelayMs(INT_BQ76952_POLL_DELAY_MS))
+        {
+            break;
+        }
     }
 
+    Int_BQ76952_TransactionEnd();
     return INT_BQ76952_ERROR_TIMEOUT;
 }

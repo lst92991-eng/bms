@@ -14,7 +14,8 @@
  * 帧格式：
  * - 0x600 查询请求固定 3 B：[版本, 命令, 主机序号]。
  * - 0x580 查询应答公共头 4 B：[版本, 命令, 主机序号, 结果]。
- * - 0x180 周期状态 32 B：[版本, 0x01, 设备序号, 保留] + 状态摘要。
+ * - 0x180 周期状态 32 B：[版本, 0x01, 设备序号, 保留] + 状态摘要；
+ *   byte31 由保留位兼容扩展为 Power stop reason。
  * - 0x100 事件 20 B：[版本, 事件码, 设备序号, 保留] + 触发瞬间快照。
  *
  * 电压、电流、容量和温度单位分别为 mV、mA、mAh、摄氏度；有符号电流正值
@@ -34,6 +35,8 @@ enum
     APP_CAN_BMS_QUERY_CELL_VOLTAGES = 0x02u,
     APP_CAN_BMS_QUERY_SOH_STATISTICS = 0x03u,
     APP_CAN_BMS_QUERY_PROTECTION_STATUS = 0x04u,
+    /* V1 追加只读命令，不改变既有命令长度和字段位置。 */
+    APP_CAN_BMS_QUERY_SOC_DIAGNOSTICS = 0x05u,
 
     APP_CAN_BMS_EVENT_LOW_SOC = 0x01u,
     APP_CAN_BMS_EVENT_CRITICAL_SOC = 0x02u,

@@ -1,71 +1,160 @@
 #include "App_BatMan_Internal.h"
 
+#include <stddef.h>
+
 #include "Com_BQ76952.h"
 #include "Int_BQ76952.h"
 #include "Int_BQ76952_BSP.h"
-
-static bool s_temp_ts1_sample_valid = false;
-static bool s_temp_ts3_sample_valid = false;
-
-void App_BatMan_ResetSampleState(void)
-{
-    s_cells_sample_valid = false;
-    s_current_sample_valid = false;
-    s_temp_ts1_sample_valid = false;
-    s_temp_ts3_sample_valid = false;
-    s_temp_cell_sample_valid = false;
-}
+#include "main.h"
 
 /**
- * @brief 读取 BQ direct command 的 1 字节数据。
+ * @file App_BatMan_Sample.c
+ * @brief BQ76952 有预算、失败即停、整帧提交的遥测采样。
  *
- * 单次失败只标记当前采样周期通信异常，下一次任务周期会重新尝试。
+ * 所有读数先进入栈上 frame。任一 transport/protocol/deadline 错误都会立即中止，
+ * 旧公开快照保持不变，只更新帧错误状态和有效性门禁。
  */
-static bool App_BatMan_ReadDirectU8(uint8_t command, uint8_t *value)
-{
-    if (Int_BQ76952_ReadDirect(command, value, 1u) == INT_BQ76952_OK)
-    {
-        return true;
-    }
 
-    s_comm_fault = true;
-    return false;
+enum
+{
+    APP_BATMAN_SAMPLE_BUDGET_MS = 100u,
+    APP_BATMAN_TEMP_VALID_MIN_C = -40,
+    APP_BATMAN_TEMP_VALID_MAX_C = 100
+};
+
+typedef struct
+{
+    uint32_t start_ms;
+    Int_BQ76952_StatusTypeDef error;
+} App_BatMan_FrameContextTypeDef;
+
+typedef struct
+{
+    uint16_t cell_mv[APP_BATMAN_CELL_COUNT];
+    uint32_t stack_mv;
+    uint32_t pack_mv;
+    int32_t current_ma;
+    float current_a;
+    uint16_t cell_min_mv;
+    uint16_t cell_max_mv;
+    uint16_t cell_avg_mv;
+    uint16_t cell_delta_mv;
+    int16_t temp_ic_c;
+    int16_t temp_ts1_c;
+    int16_t temp_ts3_c;
+    int16_t temp_cell_c;
+    int16_t temp_fet_c;
+    bool temp_ts1_valid;
+    bool temp_ts3_valid;
+    bool temp_cell_valid;
+    uint16_t alarm_status;
+    uint16_t alarm_raw;
+    uint16_t battery_status;
+    uint16_t manufacturing_status;
+    uint8_t fet_status;
+    uint8_t safety_alert_a;
+    uint8_t safety_alert_b;
+    uint8_t safety_alert_c;
+    uint8_t safety_status_a;
+    uint8_t safety_status_b;
+    uint8_t safety_status_c;
+    uint8_t pf_status_a;
+    uint8_t pf_status_b;
+    uint8_t pf_status_c;
+    uint8_t pf_status_d;
+} App_BatMan_SampleFrameTypeDef;
+
+static App_BatMan_FrameStatusTypeDef s_frame_status;
+
+static uint32_t App_BatMan_FrameElapsedMs(const App_BatMan_FrameContextTypeDef *context)
+{
+    return HAL_GetTick() - context->start_ms;
+}
+static bool App_BatMan_FrameHasBudget(App_BatMan_FrameContextTypeDef *context)
+{
+    if (App_BatMan_FrameElapsedMs(context) >= APP_BATMAN_SAMPLE_BUDGET_MS)
+    {
+        context->error = INT_BQ76952_ERROR_TIMEOUT;
+        return false;
+    }
+    return true;
 }
 
-/**
- * @brief 读取 BQ direct command 的 2 字节 little-endian 数据。
- */
-static bool App_BatMan_ReadDirectU16(uint8_t command, uint16_t *value)
+static bool
+App_BatMan_ReadDirectU8(App_BatMan_FrameContextTypeDef *context, uint8_t command, uint8_t *value)
+{
+    Int_BQ76952_StatusTypeDef ret;
+
+    if (!App_BatMan_FrameHasBudget(context))
+    {
+        return false;
+    }
+    ret = Int_BQ76952_ReadDirect(command, value, 1u);
+    if (ret != INT_BQ76952_OK)
+    {
+        context->error = ret;
+        return false;
+    }
+    return App_BatMan_FrameHasBudget(context);
+}
+
+static bool
+App_BatMan_ReadDirectU16(App_BatMan_FrameContextTypeDef *context, uint8_t command, uint16_t *value)
 {
     uint8_t data[2];
+    Int_BQ76952_StatusTypeDef ret;
 
-    if (Int_BQ76952_ReadDirect(command, data, 2u) == INT_BQ76952_OK)
+    if (!App_BatMan_FrameHasBudget(context))
     {
-        *value = App_BatMan_ReadU16Le(data);
-        return true;
+        return false;
     }
-
-    s_comm_fault = true;
-    return false;
+    ret = Int_BQ76952_ReadDirect(command, data, 2u);
+    if (ret != INT_BQ76952_OK)
+    {
+        context->error = ret;
+        return false;
+    }
+    if (!App_BatMan_FrameHasBudget(context))
+    {
+        return false;
+    }
+    *value = App_BatMan_ReadU16Le(data);
+    return true;
 }
 
-/**
- * @brief 判断温度值是否适合作为 APP 层温度输入。
- *
- * TS 通道未接或未正确配置时可能读到极端值。这里过滤掉明显异常值，
- * 后续用 IC 温度兜底，避免 SOC/SOH 或日志出现 -273C 一类假数据。
- */
+static bool App_BatMan_ReadManufacturingStatus(App_BatMan_FrameContextTypeDef *context,
+                                               uint16_t *value)
+{
+    uint8_t data[2];
+    Int_BQ76952_StatusTypeDef ret;
+
+    if (!App_BatMan_FrameHasBudget(context))
+    {
+        return false;
+    }
+    ret = Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_MANUFACTURING_STATUS, data, 2u);
+    if (ret != INT_BQ76952_OK)
+    {
+        context->error = ret;
+        return false;
+    }
+    if (!App_BatMan_FrameHasBudget(context))
+    {
+        return false;
+    }
+    *value = App_BatMan_ReadU16Le(data);
+    return true;
+}
+
 static bool App_BatMan_IsTempValid(int16_t temp_c)
 {
-    return (temp_c >= -40) && (temp_c <= 100);
+    return ((temp_c >= APP_BATMAN_TEMP_VALID_MIN_C) && (temp_c <= APP_BATMAN_TEMP_VALID_MAX_C));
 }
 
-/* BQ CC Gain 已按 5mΩ 实板采样电阻配置；APP 层只保留方向/比例兜底。 */
 static int32_t App_BatMan_ScaleCc2CurrentMa(int32_t raw_current_ma)
 {
-    int32_t scaled;
+    int32_t scaled = raw_current_ma * APP_BATMAN_CC2_RAW_NUMERATOR;
 
-    scaled = raw_current_ma * APP_BATMAN_CC2_RAW_NUMERATOR;
     if (scaled >= 0)
     {
         scaled += (int32_t)(APP_BATMAN_CC2_RAW_DENOMINATOR / 2u);
@@ -74,286 +163,368 @@ static int32_t App_BatMan_ScaleCc2CurrentMa(int32_t raw_current_ma)
     {
         scaled -= (int32_t)(APP_BATMAN_CC2_RAW_DENOMINATOR / 2u);
     }
-
     return scaled / (int32_t)APP_BATMAN_CC2_RAW_DENOMINATOR;
 }
 
-/**
- * @brief 读取 6 串实际电芯电压并计算 min/max/avg/delta。
- *
- * 命令表体现了本硬件的稀疏采样映射；维护时不要按连续 Cell1..Cell6
- * 直觉改写。
- */
-static void App_BatMan_LoadCellsVoltage(void)
+static bool App_BatMan_LoadCells(App_BatMan_FrameContextTypeDef *context,
+                                 App_BatMan_SampleFrameTypeDef *frame)
 {
-    static const uint8_t commands[APP_BATMAN_CELL_COUNT] =
-    {
-        BQ76952_CMD_CELL1_VOLTAGE,
-        BQ76952_CMD_CELL2_VOLTAGE,
-        BQ76952_CMD_CELL6_VOLTAGE,
-        BQ76952_CMD_CELL9_VOLTAGE,
-        BQ76952_CMD_CELL12_VOLTAGE,
-        BQ76952_CMD_CELL16_VOLTAGE
-    };
+    static const uint8_t commands[APP_BATMAN_CELL_COUNT] = {BQ76952_CMD_CELL1_VOLTAGE,
+                                                            BQ76952_CMD_CELL2_VOLTAGE,
+                                                            BQ76952_CMD_CELL6_VOLTAGE,
+                                                            BQ76952_CMD_CELL9_VOLTAGE,
+                                                            BQ76952_CMD_CELL12_VOLTAGE,
+                                                            BQ76952_CMD_CELL16_VOLTAGE};
     uint8_t i;
-    uint16_t mv;
     uint32_t sum_mv = 0u;
-    uint8_t valid_count = 0u;
 
-    s_cells_sample_valid = false;
-    cell_min_mv = 0xFFFFu;
-    cell_max_mv = 0u;
-
+    frame->cell_min_mv = 0xFFFFu;
+    frame->cell_max_mv = 0u;
     for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
     {
-        if (!App_BatMan_ReadDirectU16(commands[i], &mv))
+        if (!App_BatMan_ReadDirectU16(context, commands[i], &frame->cell_mv[i]))
         {
-            cell_mv[i] = 0u;
-            continue;
+            return false;
         }
-
-        cell_mv[i] = mv;
-        sum_mv += mv;
-        valid_count++;
-        cell_min_mv = (mv < cell_min_mv) ? mv : cell_min_mv;
-        cell_max_mv = (mv > cell_max_mv) ? mv : cell_max_mv;
+        sum_mv += frame->cell_mv[i];
+        if (frame->cell_mv[i] < frame->cell_min_mv)
+        {
+            frame->cell_min_mv = frame->cell_mv[i];
+        }
+        if (frame->cell_mv[i] > frame->cell_max_mv)
+        {
+            frame->cell_max_mv = frame->cell_mv[i];
+        }
     }
 
-    if (cell_min_mv == 0xFFFFu)
-    {
-        cell_min_mv = 0u;
-    }
-
-    if (valid_count == APP_BATMAN_CELL_COUNT)
-    {
-        cell_avg_mv = (uint16_t)(sum_mv / valid_count);
-        s_cells_sample_valid = true;
-    }
-    else
-    {
-        cell_avg_mv = 0u;
-    }
-    cell_delta_mv = (uint16_t)(cell_max_mv - cell_min_mv);
+    frame->cell_avg_mv = (uint16_t)(sum_mv / APP_BATMAN_CELL_COUNT);
+    frame->cell_delta_mv = (uint16_t)(frame->cell_max_mv - frame->cell_min_mv);
+    return true;
 }
 
-/**
- * @brief 读取电池总压快照。
- *
- * 当前 `pack_mv` 暂时镜像 `stack_mv`。若后续需要 PACK/LD pin 电压，
- * 应新增独立字段，避免复用 `stack_mv` 造成语义混淆。
- */
-static void App_BatMan_LoadBatVoltage(void)
+static bool App_BatMan_LoadMeasurements(App_BatMan_FrameContextTypeDef *context,
+                                        App_BatMan_SampleFrameTypeDef *frame)
 {
     uint16_t raw;
-
-    if (App_BatMan_ReadDirectU16(BQ76952_CMD_STACK_VOLTAGE, &raw))
-    {
-        stack_mv = (uint32_t)raw * APP_BATMAN_STACK_RAW_TO_MV;
-        pack_mv = stack_mv;
-    }
-}
-
-/**
- * @brief 读取 CC2 电流并转换为 APP 约定方向。
- *
- * 当前约定：`current_ma > 0` 表示充电，`current_ma < 0` 表示放电。
- * 若实测方向相反，只改 `APP_BATMAN_CC2_RAW_POLARITY`。
- */
-static void App_BatMan_LoadCurrent(void)
-{
-    uint16_t raw_u16;
     int32_t raw_current_ma;
 
-    s_current_sample_valid = false;
-    if (App_BatMan_ReadDirectU16(BQ76952_CMD_CC2_CURRENT, &raw_u16))
+    if (!App_BatMan_ReadDirectU16(context, BQ76952_CMD_STACK_VOLTAGE, &raw))
     {
-        raw_current_ma = (int32_t)((int16_t)raw_u16) * APP_BATMAN_CC2_RAW_POLARITY;
-        current_ma = App_BatMan_ScaleCc2CurrentMa(raw_current_ma);
-        current_a = (float)current_ma / 1000.0f;
-        s_current_sample_valid = true;
+        return false;
     }
+    frame->stack_mv = (uint32_t)raw * APP_BATMAN_STACK_RAW_TO_MV;
+    frame->pack_mv = frame->stack_mv;
+
+    if (!App_BatMan_ReadDirectU16(context, BQ76952_CMD_CC2_CURRENT, &raw))
+    {
+        return false;
+    }
+    raw_current_ma = (int32_t)((int16_t)raw) * APP_BATMAN_CC2_RAW_POLARITY;
+    frame->current_ma = App_BatMan_ScaleCc2CurrentMa(raw_current_ma);
+    frame->current_a = (float)frame->current_ma / 1000.0f;
+    return true;
 }
 
-/**
- * @brief 读取 IC/TS 温度并生成 APP 层温度快照。
- *
- * TS1/TS3 有效时用于估算 cell temperature；无效时降级为 IC 温度，
- * 这样 SOH 和日志仍保持可读。
- */
-static void App_BatMan_LoadTemperature(void)
+static bool App_BatMan_LoadTemperatures(App_BatMan_FrameContextTypeDef *context,
+                                        App_BatMan_SampleFrameTypeDef *frame)
 {
     uint16_t raw;
     int16_t temp;
 
-    s_temp_ts1_sample_valid = false;
-    s_temp_ts3_sample_valid = false;
-    s_temp_cell_sample_valid = false;
+    if (!App_BatMan_ReadDirectU16(context, BQ76952_CMD_INT_TEMPERATURE, &raw))
+    {
+        return false;
+    }
+    frame->temp_ic_c = Com_BQ76952_Temp0p1KToC((int16_t)raw);
+    frame->temp_fet_c = frame->temp_ic_c;
 
-    if (App_BatMan_ReadDirectU16(BQ76952_CMD_INT_TEMPERATURE, &raw))
+    if (!App_BatMan_ReadDirectU16(context, BQ76952_CMD_TS1_TEMPERATURE, &raw))
     {
-        temp_ic_c = Com_BQ76952_Temp0p1KToC((int16_t)raw);
+        return false;
     }
-    if (App_BatMan_ReadDirectU16(BQ76952_CMD_TS1_TEMPERATURE, &raw))
-    {
-        temp = Com_BQ76952_Temp0p1KToC((int16_t)raw);
-        if (App_BatMan_IsTempValid(temp))
-        {
-            temp_ts1_c = temp;
-            s_temp_ts1_sample_valid = true;
-        }
-        else
-        {
-            temp_ts1_c = temp_ic_c;
-        }
-    }
-    if (App_BatMan_ReadDirectU16(BQ76952_CMD_TS3_TEMPERATURE, &raw))
-    {
-        temp = Com_BQ76952_Temp0p1KToC((int16_t)raw);
-        if (App_BatMan_IsTempValid(temp))
-        {
-            temp_ts3_c = temp;
-            s_temp_ts3_sample_valid = true;
-        }
-        else
-        {
-            temp_ts3_c = temp_ic_c;
-        }
-    }
+    temp = Com_BQ76952_Temp0p1KToC((int16_t)raw);
+    frame->temp_ts1_valid = App_BatMan_IsTempValid(temp);
+    /* 保留探头原始换算结果用于诊断；不得用 IC 温度伪装成有效 TS1。 */
+    frame->temp_ts1_c = temp;
 
-    if (s_temp_ts1_sample_valid && s_temp_ts3_sample_valid)
+    /*
+     * TS3 manifest 当前明确为 disabled：实装 NTC/位置/模型尚未闭环，禁止读取
+     * 未配置通道并把随机值当成第二个有效保护温度。
+     */
+    frame->temp_ts3_valid = false;
+    frame->temp_ts3_c = 0;
+
+    if (frame->temp_ts1_valid && frame->temp_ts3_valid)
     {
-        temp_cell_c = (int16_t)((temp_ts1_c + temp_ts3_c) / 2);
-        s_temp_cell_sample_valid = true;
+        frame->temp_cell_c =
+            (frame->temp_ts1_c > frame->temp_ts3_c) ? frame->temp_ts1_c : frame->temp_ts3_c;
+        frame->temp_cell_valid = true;
     }
-    else if (s_temp_ts1_sample_valid)
+    else if (frame->temp_ts1_valid)
     {
-        temp_cell_c = temp_ts1_c;
-        s_temp_cell_sample_valid = true;
+        frame->temp_cell_c = frame->temp_ts1_c;
+        frame->temp_cell_valid = true;
     }
-    else if (s_temp_ts3_sample_valid)
+    else if (frame->temp_ts3_valid)
     {
-        temp_cell_c = temp_ts3_c;
-        s_temp_cell_sample_valid = true;
+        frame->temp_cell_c = frame->temp_ts3_c;
+        frame->temp_cell_valid = true;
     }
     else
     {
-        temp_cell_c = temp_ic_c;
+        frame->temp_cell_c = frame->temp_ic_c;
+        frame->temp_cell_valid = false;
     }
-    temp_fet_c = temp_ic_c;
+    return true;
 }
 
-/**
- * @brief 读取 BQ 告警、FET 和 safety 状态。
- *
- * 这些字段用于解释 BQ 为什么打开或关闭 MOS。APP 只记录状态，
- * 不覆盖 BQ 的保护决策。
- */
-static void App_BatMan_LoadBqStatus(void)
+static bool App_BatMan_LoadStatus(App_BatMan_FrameContextTypeDef *context,
+                                  App_BatMan_SampleFrameTypeDef *frame)
 {
-    uint8_t data[2];
-    uint16_t value16;
-    uint8_t value8;
-
-    if (App_BatMan_ReadDirectU16(BQ76952_CMD_ALARM_STATUS, &value16))
-    {
-        alarm_status = value16;
-    }
-    if (App_BatMan_ReadDirectU16(BQ76952_CMD_ALARM_RAW_STATUS, &value16))
-    {
-        alarm_raw = value16;
-    }
-    if (App_BatMan_ReadDirectU16(BQ76952_CMD_BATTERY_STATUS, &value16))
-    {
-        battery_status = value16;
-    }
-    if (Int_BQ76952_ReadSubcommand(BQ76952_SUBCMD_MANUFACTURING_STATUS, data, 2u) == INT_BQ76952_OK)
-    {
-        manufacturing_status = App_BatMan_ReadU16Le(data);
-    }
-    if (App_BatMan_ReadDirectU8(BQ76952_CMD_FET_STATUS, &value8))
-    {
-        fet_status = value8;
-    }
-    if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_ALERT_A, &value8))
-    {
-        safety_alert_a = value8;
-    }
-    if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_ALERT_B, &value8))
-    {
-        safety_alert_b = value8;
-    }
-    if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_ALERT_C, &value8))
-    {
-        safety_alert_c = value8;
-    }
-    if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_STATUS_A, &value8))
-    {
-        safety_status_a = value8;
-    }
-    if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_STATUS_B, &value8))
-    {
-        safety_status_b = value8;
-    }
-    if (App_BatMan_ReadDirectU8(BQ76952_CMD_SAFETY_STATUS_C, &value8))
-    {
-        safety_status_c = value8;
-    }
-    if (App_BatMan_ReadDirectU8(BQ76952_CMD_PF_STATUS_A, &value8))
-    {
-        pf_status_a = value8;
-    }
-    if (App_BatMan_ReadDirectU8(BQ76952_CMD_PF_STATUS_B, &value8))
-    {
-        pf_status_b = value8;
-    }
-    if (App_BatMan_ReadDirectU8(BQ76952_CMD_PF_STATUS_C, &value8))
-    {
-        pf_status_c = value8;
-    }
-    if (App_BatMan_ReadDirectU8(BQ76952_CMD_PF_STATUS_D, &value8))
-    {
-        pf_status_d = value8;
-    }
+    return App_BatMan_ReadDirectU16(context, BQ76952_CMD_ALARM_STATUS, &frame->alarm_status) &&
+           App_BatMan_ReadDirectU16(context, BQ76952_CMD_ALARM_RAW_STATUS, &frame->alarm_raw) &&
+           App_BatMan_ReadDirectU16(context, BQ76952_CMD_BATTERY_STATUS, &frame->battery_status) &&
+           App_BatMan_ReadManufacturingStatus(context, &frame->manufacturing_status) &&
+           App_BatMan_ReadDirectU8(context, BQ76952_CMD_FET_STATUS, &frame->fet_status) &&
+           App_BatMan_ReadDirectU8(context, BQ76952_CMD_SAFETY_ALERT_A, &frame->safety_alert_a) &&
+           App_BatMan_ReadDirectU8(context, BQ76952_CMD_SAFETY_ALERT_B, &frame->safety_alert_b) &&
+           App_BatMan_ReadDirectU8(context, BQ76952_CMD_SAFETY_ALERT_C, &frame->safety_alert_c) &&
+           App_BatMan_ReadDirectU8(context, BQ76952_CMD_SAFETY_STATUS_A, &frame->safety_status_a) &&
+           App_BatMan_ReadDirectU8(context, BQ76952_CMD_SAFETY_STATUS_B, &frame->safety_status_b) &&
+           App_BatMan_ReadDirectU8(context, BQ76952_CMD_SAFETY_STATUS_C, &frame->safety_status_c) &&
+           App_BatMan_ReadDirectU8(context, BQ76952_CMD_PF_STATUS_A, &frame->pf_status_a) &&
+           App_BatMan_ReadDirectU8(context, BQ76952_CMD_PF_STATUS_B, &frame->pf_status_b) &&
+           App_BatMan_ReadDirectU8(context, BQ76952_CMD_PF_STATUS_C, &frame->pf_status_c) &&
+           App_BatMan_ReadDirectU8(context, BQ76952_CMD_PF_STATUS_D, &frame->pf_status_d);
 }
 
-/**
- * @brief 更新 APP 层故障摘要。
- *
- * 这是显示/日志用的软件摘要，不是硬件保护动作。通信失败、明显异常
- * 电芯电压或 safety status 非零都会让 `fault_active` 置位。
- */
-static void App_BatMan_UpdateFaultState(void)
+static uint32_t App_BatMan_MakeFaultFlags(const App_BatMan_SampleFrameTypeDef *frame)
 {
     uint8_t i;
-    bool cell_fault = false;
-    bool safety_fault;
+    uint32_t flags = APP_BATMAN_FAULT_NONE;
 
     for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
     {
-        if ((cell_mv[i] < APP_BATMAN_CELL_VALID_MIN_MV) ||
-            (cell_mv[i] > APP_BATMAN_CELL_VALID_MAX_MV))
+        if ((frame->cell_mv[i] < APP_BATMAN_CELL_VALID_MIN_MV) ||
+            (frame->cell_mv[i] > APP_BATMAN_CELL_VALID_MAX_MV))
         {
-            cell_fault = true;
+            flags |= APP_BATMAN_FAULT_CELL_RANGE;
         }
     }
-
-    safety_fault = ((safety_status_a != 0u) ||
-                    (safety_status_b != 0u) ||
-                    (safety_status_c != 0u));
-    fault_active = s_comm_fault || cell_fault || safety_fault;
+    if ((frame->safety_status_a != 0u) || (frame->safety_status_b != 0u) ||
+        (frame->safety_status_c != 0u))
+    {
+        flags |= APP_BATMAN_FAULT_SAFETY;
+    }
+    if ((frame->pf_status_a != 0u) || (frame->pf_status_b != 0u) || (frame->pf_status_c != 0u) ||
+        (frame->pf_status_d != 0u))
+    {
+        flags |= APP_BATMAN_FAULT_PERMANENT_FAILURE;
+    }
+    if (!frame->temp_cell_valid)
+    {
+        flags |= APP_BATMAN_FAULT_CELL_TEMPERATURE_INVALID;
+    }
+    if (!App_BatMan_IsConfigValid())
+    {
+        flags |= APP_BATMAN_FAULT_CONFIG_INVALID;
+    }
+    if (!App_BatMan_ObserveFetStatus(frame->fet_status))
+    {
+        flags |= APP_BATMAN_FAULT_FET_CONTROL_INVALID;
+    }
+    return flags;
 }
 
-/**
- * @brief 执行一次完整 BQ 采样。
- *
- * 固定采样顺序便于对比不同固件版本的串口日志。
- */
-void App_BatMan_Sample(void)
+static App_BatMan_FrameStateTypeDef App_BatMan_FrameStateFromError(Int_BQ76952_StatusTypeDef error)
 {
-    App_BatMan_LoadCellsVoltage();
-    App_BatMan_LoadBatVoltage();
-    App_BatMan_LoadCurrent();
-    App_BatMan_LoadTemperature();
-    App_BatMan_LoadBqStatus();
-    App_BatMan_UpdateFaultState();
+    if (error == INT_BQ76952_ERROR_TIMEOUT)
+    {
+        return APP_BATMAN_FRAME_DEADLINE_EXCEEDED;
+    }
+    if (error == INT_BQ76952_ERROR_HAL)
+    {
+        return APP_BATMAN_FRAME_TRANSPORT_ERROR;
+    }
+    return APP_BATMAN_FRAME_PROTOCOL_ERROR;
+}
+
+static void App_BatMan_PublishFrame(const App_BatMan_SampleFrameTypeDef *frame,
+                                    const App_BatMan_FrameContextTypeDef *context)
+{
+    uint8_t i;
+    uint32_t flags;
+    uint32_t primask = __get_PRIMASK();
+
+    flags = App_BatMan_MakeFaultFlags(frame);
+
+    __disable_irq();
+    for (i = 0u; i < APP_BATMAN_CELL_COUNT; i++)
+    {
+        cell_mv[i] = frame->cell_mv[i];
+    }
+    stack_mv = frame->stack_mv;
+    pack_mv = frame->pack_mv;
+    current_ma = frame->current_ma;
+    current_a = frame->current_a;
+    cell_min_mv = frame->cell_min_mv;
+    cell_max_mv = frame->cell_max_mv;
+    cell_avg_mv = frame->cell_avg_mv;
+    cell_delta_mv = frame->cell_delta_mv;
+    temp_ic_c = frame->temp_ic_c;
+    temp_ts1_c = frame->temp_ts1_c;
+    temp_ts3_c = frame->temp_ts3_c;
+    temp_cell_c = frame->temp_cell_c;
+    temp_fet_c = frame->temp_fet_c;
+    alarm_status = frame->alarm_status;
+    alarm_raw = frame->alarm_raw;
+    battery_status = frame->battery_status;
+    manufacturing_status = frame->manufacturing_status;
+    fet_status = frame->fet_status;
+    safety_alert_a = frame->safety_alert_a;
+    safety_alert_b = frame->safety_alert_b;
+    safety_alert_c = frame->safety_alert_c;
+    safety_status_a = frame->safety_status_a;
+    safety_status_b = frame->safety_status_b;
+    safety_status_c = frame->safety_status_c;
+    pf_status_a = frame->pf_status_a;
+    pf_status_b = frame->pf_status_b;
+    pf_status_c = frame->pf_status_c;
+    pf_status_d = frame->pf_status_d;
+    s_cells_sample_valid = true;
+    s_current_sample_valid = true;
+    s_temp_cell_sample_valid = frame->temp_cell_valid;
+    s_comm_fault = false;
+    s_fault_flags = flags;
+    fault_active = (flags != APP_BATMAN_FAULT_NONE);
+    s_frame_status.state = APP_BATMAN_FRAME_VALID;
+    s_frame_status.driver_status = (uint8_t)INT_BQ76952_OK;
+    s_frame_status.sequence++;
+    s_frame_status.last_valid_tick_ms = HAL_GetTick();
+    s_frame_status.elapsed_ms = App_BatMan_FrameElapsedMs(context);
+    if (primask == 0u)
+    {
+        __enable_irq();
+    }
+}
+
+static void App_BatMan_RejectFrame(const App_BatMan_FrameContextTypeDef *context)
+{
+    uint32_t primask = __get_PRIMASK();
+
+    __disable_irq();
+    s_cells_sample_valid = false;
+    s_current_sample_valid = false;
+    s_temp_cell_sample_valid = false;
+    s_comm_fault = true;
+    s_fault_flags |= APP_BATMAN_FAULT_COMMUNICATION;
+    fault_active = true;
+    s_frame_status.state = App_BatMan_FrameStateFromError(context->error);
+    s_frame_status.driver_status = (uint8_t)context->error;
+    s_frame_status.elapsed_ms = App_BatMan_FrameElapsedMs(context);
+    if (primask == 0u)
+    {
+        __enable_irq();
+    }
+}
+
+void App_BatMan_ResetSampleState(void)
+{
+    s_cells_sample_valid = false;
+    s_current_sample_valid = false;
+    s_temp_cell_sample_valid = false;
+    s_frame_status.state = APP_BATMAN_FRAME_NEVER;
+    s_frame_status.driver_status = (uint8_t)INT_BQ76952_OK;
+    s_frame_status.sequence = 0u;
+    s_frame_status.last_valid_tick_ms = 0u;
+    s_frame_status.age_ms = 0xFFFFFFFFu;
+    s_frame_status.elapsed_ms = 0u;
+}
+
+bool App_BatMan_Sample(void)
+{
+    App_BatMan_FrameContextTypeDef context;
+    App_BatMan_SampleFrameTypeDef frame = {0};
+    bool frame_complete;
+
+    context.start_ms = HAL_GetTick();
+    context.error = Int_BQ76952_BeginTransaction(APP_BATMAN_SAMPLE_BUDGET_MS);
+    if (context.error != INT_BQ76952_OK)
+    {
+        App_BatMan_RejectFrame(&context);
+        return false;
+    }
+
+    /* 内层所有 direct/subcommand 访问继承本帧同一个绝对 deadline。 */
+    frame_complete = App_BatMan_LoadCells(&context, &frame) &&
+                     App_BatMan_LoadMeasurements(&context, &frame) &&
+                     App_BatMan_LoadTemperatures(&context, &frame) &&
+                     App_BatMan_LoadStatus(&context, &frame) && App_BatMan_FrameHasBudget(&context);
+    Int_BQ76952_EndTransaction();
+
+    if (!frame_complete)
+    {
+        App_BatMan_RejectFrame(&context);
+        return false;
+    }
+
+    App_BatMan_PublishFrame(&frame, &context);
+    return true;
+}
+
+bool App_BatMan_IsCellTemperatureValid(void)
+{
+    return s_temp_cell_sample_valid;
+}
+
+uint32_t App_BatMan_GetFaultFlags(void)
+{
+    uint32_t flags = s_fault_flags;
+    App_BatMan_FetControlStateTypeDef fet_control;
+
+    if (s_comm_fault)
+    {
+        flags |= APP_BATMAN_FAULT_COMMUNICATION;
+    }
+    if (!s_temp_cell_sample_valid)
+    {
+        flags |= APP_BATMAN_FAULT_CELL_TEMPERATURE_INVALID;
+    }
+    if (!App_BatMan_IsConfigValid())
+    {
+        flags |= APP_BATMAN_FAULT_CONFIG_INVALID;
+    }
+    App_BatMan_GetFetControlState(&fet_control);
+    if (!fet_control.request_valid)
+    {
+        flags |= APP_BATMAN_FAULT_FET_CONTROL_INVALID;
+    }
+    return flags;
+}
+
+void App_BatMan_GetFrameStatus(App_BatMan_FrameStatusTypeDef *status)
+{
+    uint32_t primask;
+
+    if (status == NULL)
+    {
+        return;
+    }
+
+    primask = __get_PRIMASK();
+    __disable_irq();
+    *status = s_frame_status;
+    if (primask == 0u)
+    {
+        __enable_irq();
+    }
+
+    if (status->sequence == 0u)
+    {
+        status->age_ms = 0xFFFFFFFFu;
+    }
+    else
+    {
+        status->age_ms = HAL_GetTick() - status->last_valid_tick_ms;
+    }
 }

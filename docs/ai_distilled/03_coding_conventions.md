@@ -1,127 +1,121 @@
-# Coding Conventions
+# 03 Coding Conventions
 
-These conventions are inferred from the current repository plus the local embedded corpus skill. Current repository evidence wins over generic rules.
+更新日期：2026-08-22
 
-## Naming
+这些规则来自当前仓库的重复实现和安全约束；不是仅凭通用嵌入式经验生成。若局部旧代码与本规范冲突，以新的安全架构与同层多数写法为准。
 
-| Item | Rule | Evidence | Confidence |
+## Coding Convention Inference
+
+### 1. 分层与命名
+
+| 规则 | 证据 | 信心 | 人工确认 |
 | --- | --- | --- | --- |
-| Application modules | Use `App_<Feature>.c/.h` and public functions prefixed `App_<Feature>_` | `App/App_BatMan.h:24-32`; `App/App_SC8815.h:31-51`; `App/App_OLED.h:7-9` | High |
-| Interface/driver modules | Use `Int_<Device>.c/.h` and public functions prefixed `Int_<Device>_` | `Int/Int_BQ76952.h:20-122`; `Int/Int_SC8815.h:49-109`; `Int/Int_CanFd.h:39-75` | High |
-| BSP/register headers | Put chip register addresses, masks, hardware constants, and project safe masks in `Int_<Device>_BSP.h` | `Int/Int_BQ76952_BSP.h:210-313`; `Int/Int_SC8815_BSP.h:497-566` | High |
-| Common helpers | Use `Com_<Domain>_` for pure conversion/lookups | `Com/Com_BQ76952.h:56-67`; `Com/Com_BQ76952.c:32-80` | High |
-| Static helpers | Prefix static helpers with the owning module name | `App/App_BatMan.c:129-149,206-243`; `Int/Int_CanFd.c:9-91`; `Int/Int_SC8815.c:49-235` | High |
-| Local static state | Use `s_` prefix for file-scope state | `App/App_SC8815.c:29`; `Int/Int_BQ76952.c:49-50`; `Int/Int_SC8815.c:47` | High |
-| Types | Use `typedef enum/struct` with module-specific `TypeDef` suffix | `Int/Int_BQ76952.h:7-17`; `App/App_SC8815.h:12-28`; `Int/Int_CanFd.h:20-36` | High |
-| Macros | Use uppercase module prefixes and explicit units when possible | `App/App_BatMan.h:11-21`; `Int/Int_EEPROM.h:7-9`; `Int/Int_SC8815_BSP.h:459-499` | High |
+| 业务行为放 `App_*`，芯片/板级访问放 `Int_*`，纯算法放 `Com_*` | `CMakeLists.txt:39-118`；`App/App_Main.c:215-267` | High | Not needed |
+| 模块使用配对 `.c/.h`，公开符号以模块名作前缀 | `App/App_Safety.c` + `.h`；`Int/Int_BQ76952.c` + `.h` | High | Not needed |
+| 生成文件只做初始化/IRQ 转发，不放策略状态机 | `bms24v_platform/Core/Src/main.c:83-114`；`bms24v_platform/Core/Src/stm32g0xx_it.c:204-212` | High | Not needed |
+| 类型优先 `stdint.h` 固定宽度、`bool`、具名 enum/struct；物理量在名称标单位 | `App/App_Power.h:7-69`；`App/App_Safety.h:12-65`；`Com/Com_SOC.h:92-119` | High | Not needed |
 
-## File And Directory Organization
+### 2. 文件与函数结构
 
-1. New product behavior belongs in `App/`.
-   Evidence: `App/App_BatMan.c:807-928`, `App/App_SC8815.c:72-144`.
+- 每个模块只拥有一类状态；模块内部状态 `static`，通过窄 API 或 snapshot 暴露。证据：`App/App_SC8815.c:20-47`；`Int/Int_Log.c:11-24`。
+- `main.c` 只做生成初始化、早期安全序列和 `App_Main(early_safe_evidence)` 入口；HAL 前先直接建立 SC safe GPIO，时钟后固定 GPIO→SC standby→I2C1→BQ all-off，且 BQ 序列必须早于日志/其余外设。证据：`bms24v_platform/Core/Src/main.c:83-128`；`Int/Int_SC8815.c:21-46`。
+- 复杂模块按 facade/config/sample/NVM/debug 拆分，避免 BQ 单文件承载全部业务。证据：`App/App_BatMan.c:12-18`；`App/App_BatMan_Config.c`；`App/App_BatMan_Sample.c`；`App/App_BatMan_Nvm.c`。
+- 安全相关函数应早返回、失败即安全态；所有 enable 路径需要显式授权，disable 路径不得依赖缓存命中。证据：`App/App_Power.c:208-255`；`App/App_SC8815.c:512-583`。
 
-2. New chip/peripheral low-level access belongs in `Int/`, with a paired `.h`.
-   Evidence: `Int/Int_BQ76952.h:20-122`, `Int/Int_SC8815.h:49-109`, `Int/Int_EEPROM.h:22-65`.
+信心：High。人工确认：Not needed。
 
-3. Register maps and safety-critical bit definitions belong in `*_BSP.h`.
-   Evidence: `Int/Int_BQ76952_BSP.h:210-313`, `Int/Int_SC8815_BSP.h:497-566`.
+### 3. 注释规范
 
-4. Pure lookup/conversion code belongs in `Com/`.
-   Evidence: `Com/Com_BQ76952.c:10-80`.
+注释解释“为什么、硬件语义、时序/并发/单位、安全意图”，不复述语句本身。
 
-5. Generated HAL/CubeMX files should stay focused on initialization and MSP wiring.
-   Evidence: `bms24v_platform/Core/Src/gpio.c:42-118`, `bms24v_platform/Core/Src/i2c.c:31-179`, `bms24v_platform/Core/Src/fdcan.c:40-101`.
+推荐：
 
-## Include Style
+```c
+/* PSTOP 必须先进入安全态，再修改限流寄存器，避免中间配置驱动功率级。 */
+```
 
-- `main.c` includes generated peripheral headers first, then local app/int headers.
-  Evidence: `bms24v_platform/Core/Src/main.c:20-38`.
+公共 API 使用 Doxygen 风格，至少说明：
 
-- APP modules include their own header, then needed lower-layer headers.
-  Evidence: `App/App_SC8815.c:1-6`, `App/App_BatMan.c:1-8`.
+- `@brief`：动作与安全语义；
+- `@param`：单位、范围、active level、所有权；
+- `@return`：失败含义和调用者必须采取的动作；
+- 并发约束：task-only/ISR-safe、是否需要 transaction、有效期/epoch；
+- 硬件约束：寄存器字段、换算、等待时间来自何处。
 
-- INT modules include their own header and BSP/header dependencies.
-  Evidence: `Int/Int_SC8815.c:1-3`, `Int/Int_BQ76952.c:1-6`.
+证据：`App/App_BatMan.h:151-177`；`App/App_Safety.h:21-35,85-94`；`Int/Int_Fault.h:49-63`。
+信心：High。人工确认：Not needed。
 
-Confidence: High.
+禁止：
 
-## Error Handling
+- 把 FreeRTOS 任务写成“主循环”；
+- 把 active-high PSTOP 写成“拉低急停”；
+- 把候选寄存器值写成“已标定”；
+- 用注释承诺测试未证明的 HIL 行为；
+- 保留失效、与代码相反或只描述历史实现的注释。
 
-1. INT modules should return explicit module status enums, not raw HAL statuses.
-   Evidence: `Int/Int_BQ76952.h:7-17`, `Int/Int_SC8815.h:7-17`, `Int/Int_CanFd.h:14-20`, `Int/Int_EEPROM.h:13-19`.
+### 4. 错误处理与安全态
 
-2. Parameter, range, state, CRC/checksum, timeout, busy, and length failures should be distinct when meaningful.
-   Evidence: `Int/Int_BQ76952.h:9-16`, `Int/Int_SC8815.h:9-16`, `Int/Int_CanFd.h:14-19`.
-
-3. APP may convert lower-level status to boolean state or fault flags, but should preserve logs for bring-up.
-   Evidence: `App/App_SC8815.c:52-60`, `App/App_BatMan.c:827-847`.
-
-4. Do not ignore safety-critical init returns without an explicit decision.
-   Current exceptions: `main.c` ignores CAN FD and EEPROM init returns (`bms24v_platform/Core/Src/main.c:135-136`), listed as conflicts C-007/C-008.
-
-## Logging And Diagnostics
-
-- Current bring-up style uses direct `printf`.
-  Evidence: `App/App_SC8815.c:244`, `App/App_BatMan.c:827-847,776-797`, `bms24v_platform/Core/Src/main.c:131`.
-
-- OLED is used as a compact bring-up status page for BQ I2C/Power Config, not a full UI.
-  Evidence: `App/App_OLED.c:6-13,56-75`.
-
-- No general logging abstraction or assert policy was found.
-  Evidence: absence in scanned modules; `Error_Handler()` loops forever at `bms24v_platform/Core/Src/main.c:254-259`.
-
-Confidence: Medium for absence until a full repository-wide audit.
-
-## Memory And Allocation
-
-- The current code uses static/global state and stack locals; no heap allocation pattern was identified in scanned active modules.
-  Evidence: `App/App_SC8815.c:29`, `Int/Int_BQ76952.c:49-50`, `Int/Int_OLED.c:4`, `Com/Com_BQ76952.c:16`, startup heap exists at `bms24v_platform/MDK-ARM/startup_stm32g0b1xx.s:42`.
-
-- For protocols/register transfers, use fixed-size bounded buffers and length checks.
-  Evidence: `Int/Int_BQ76952.c:44-45,104-116,144-230`, `Int/Int_CanFd.c:29-91,232-320`, `Int/Int_EEPROM.c:27-45,166-207`.
-
-Confidence: High for current scanned code.
-
-## Concurrency
-
-- Current project is bare-metal and task-like functions are called from the main loop.
-  Evidence: `bms24v_platform/Core/Src/main.c:148-169`.
-
-- Interrupt handlers should stay short. Current BQ EXTI handler only calls HAL GPIO EXTI handler.
-  Evidence: `bms24v_platform/Core/Src/stm32g0xx_it.c:107-112`.
-
-- Hardware docs require ISR-to-task handoff for BQ/SC interrupts.
-  Evidence: `docs/rules/hardware_rules.md:41`, `docs/logic/hardware_interface_reservation.md:133`.
-
-## State Machine Rules
-
-1. Safety defaults should be explicit and conservative.
-   Evidence: SC8815 enters standby monitor and keeps PSTOP high (`App/App_SC8815.c:33-42,209-244`).
-
-2. Leaving a safe state should happen through a single public request API.
-   Evidence: `App_SC8815_RequestCharge()` is documented as the only public path to leave standby (`App/App_SC8815.c:266-274`).
-
-3. BQ Data Memory writes must be inside ConfigUpdate and followed by exit/readback where needed.
-   Evidence: `App/App_BatMan.c:857-884`, `Int/Int_BQ76952.c:639-698`.
-
-4. FET enable/request must distinguish "allow BQ logic" from "force MOS on".
-   Evidence: `App/App_BatMan.c:321-345`.
-
-## Comments
-
-- Use concise Chinese comments for hardware behavior, timing, safety, protocol/register meanings, and bring-up assumptions.
-  Evidence: `App/App_BatMan.c:16-23,237-243,321-345,797-805`, `App/App_SC8815.c:33-42,64-70,103-139`, `Int/Int_BQ76952_BSP.h:210-237`, `Int/Int_SC8815_BSP.h:497-566`.
-
-- Avoid comments that only restate trivial assignments; prefer comments that explain why a sequence is safe or required.
-  Evidence: BQ and SC APP comments focus on FET ownership, ConfigUpdate ordering, PSTOP safety, guarded register writes.
-
-## Forbidden Or High-Risk Patterns
-
-| Pattern | Reason | Evidence |
+| 场景 | 规则 | 证据 |
 | --- | --- | --- |
-| Using hardware I2C3 for SC8815 | Hardware notes say IIC3 lines are reversed/unusable; current code bit-bangs PA6/PA7 | `official_chip_docs_files/README.md:1`; `docs/rules/hardware_rules.md:35-37`; `Int/Int_SC8815.c:49-153` |
-| APP directly forcing BQ CHG/DSG MOS on | Current APP delegates decisions to BQ FET logic after FET_ENABLE | `App/App_BatMan.c:16-23,321-345` |
-| Writing SC8815 power-loop registers outside guarded path | `Int_SC8815_GuardWrite` blocks readonly/reserved/forbidden/state-sensitive writes | `Int/Int_SC8815.c:235-402` |
-| Reusing old BQ76930 register maps/formulas | Migration doc forbids old BQ76930 register/formula inheritance | `official_chip_docs_files/BQ76930_to_BQ76952_逻辑替换设计说明.md:17-22,66-78` |
-| Adding behavior to vendor HAL driver files | Local project separates generated Core/Drivers from App/Com/Int | `bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:395-710` |
-| Silent source/config/doc conflict resolution | `AGENTS.md` requires `Conflict` and separate sources | `AGENTS.md:9-17` |
+| HAL/I2C/寄存器访问 | 检查返回值；使用有限 timeout；剩余预算不足立即失败 | `Int/Int_BQ76952.c:87-240`；`Int/Int_SC8815.c:545-617` |
+| 多步采样 | staging；任一步失败拒绝整帧；保留错误与 age，不混合新旧字段；采样层不先修改配置证明 | `App/App_BatMan_Sample.c:352-530` |
+| 多步配置 | manifest 写入后逐项读回；首错停止；mismatch 置 config invalid | `App/App_BatMan_Config.c:204-295` |
+| 运行期 BQ 证明 | 采样只发布原始指纹；Safety facade 先停 SC，再置 recovery required、撤 ready，最后 best-effort BQ 全关；恢复必须在 1500 ms 整体 transaction 内完成重认证且等下一完整帧 | `App/App_BatMan_Sample.c:281-336,411-472`；`App/App_BatMan.c:294-346,673-684`；`App/App_Safety.c:67-93`；`App/App_BatMan_Config.c:75-78,666-811`；`App/App_Power.c:586-657` |
+| 使能功率 | BQ 主 FET 与 SC start 携带同一 epoch；BQ owner 前/中/后、SC PSTOP release 前及 Power 总提交后均复验；SC start 失败同周期回滚 BQ 全关 | `App/App_Power.c:206-290`；`App/App_BatMan_Config.c:463-547`；`App/App_SC8815.c:106-312` |
+| 致命异常 | 先 ForceStandby，再记录 fault，最后 reset | `Int/Int_Fault.c:176-215` |
+| 日志拥塞 | 应用只用 `Int_Log_Printf`；固定 384 B 栈缓冲由无堆 `Com_FormatV` 限界格式化后投递静态 ring；截断或容量不足可计数，不等待 UART | `Com/Com_Format.c:13-269`；`Int/Int_Log.h:16-41`；`Int/Int_Log.c:11-24,47-173,175-231` |
+
+信心：High。人工确认：Needed，故障注入验证。
+
+### 5. 并发规则
+
+- 任务必须静态创建；禁止运行期 `pvPortMalloc`/`xTaskCreate`。证据：`App/App_Main.c:51-78,269-377`；`bms24v_platform/MDK-ARM/FreeRTOS/include/FreeRTOSConfig.h:40-49`。
+- 周期任务使用绝对唤醒时刻和 catch-up 上限；所有时间统一通过 `pdMS_TO_TICKS()` 或明确 tick 类型。证据：`App/App_Main.c:25-49,86-105`。
+- ISR 只做确定性安全动作、latch/sequence/event；禁止 I2C、`Int_Log_Printf`、长循环和阻塞等待。证据：`bms24v_platform/Core/Src/stm32g0xx_it.c:204-212`；`Int/Int_BQ76952.c:585-631`；`Int/Int_SC8815.c:743-770`。
+- 跨任务外设共享使用静态 mutex 和有界锁等待；BQ 多步操作使用递归 transaction + 不可延长的绝对截止时间。证据：`Int/Int_BQ76952.c:48-61,131-240,644-659`；`Int/Int_I2C2Bus.c:7-61`。
+- snapshot 更新放在短临界区；总线传输不能由全局 PRIMASK/暂停调度包围。SC_EVENT 的 sequence 复验、inhibit clear 与 owner 状态转换必须共用一个 IRQ-disabled 短临界区；sequence 变化则保持急停。NVM 可短暂停止任务切换抓取 SOC+SOH 内存快照，但恢复调度后才能做 EEPROM I/O。证据：`App/App_SC8815.c:313-505`；`Int/Int_SC8815.c:107-187,557-637,743-770`；`App/App_BatMan_Nvm.c:128-175,726-894`。
+- Runtime 单写者必须清楚：Power 是业务授权者，BatMan 是 BQ owner，SC task 是 SC runtime 写者，Safety 是 IWDG 刷新者。critical BQ ALERT 必须在同一 BatMan owner 周期锁 Safety 并全关 BQ FET；清除 inhibit 前必须在关中断区复验单调 ALERT sequence 与 active-low pin。证据：`App/App_BatMan.c:191-293`；`Int/Int_BQ76952.c:585-635`；`App/App_SC8815.c:10-13`；`App/App_Safety.c:469-560`。
+
+### 6. 状态与可观测性
+
+关键控制必须区分：
+
+- `desired`：策略希望的状态；
+- `commanded`：已发给硬件的状态；
+- `observed`：寄存器/引脚回读状态；
+- `provenance`：谁、基于何种证据发起；
+- `sequence/age/valid`：数据是否完整、新鲜、可消费。
+
+证据：`App/App_BatMan.h:57-73`；`App/App_SC8815.h:7-36`；`App/App_Power.h:45-69`；`App/App_BatMan_Sample.c:505-530`。
+信心：High。人工确认：Not needed。
+
+### 7. 常量与单位
+
+- 阈值和 timeout 使用 `enum`/`static const`/模块宏集中定义，不散落 magic number。
+- 名称携带 `_MV`、`_MA`、`_MS`、`_CDEG`、`_TICKS` 等单位；换算使用足够宽的中间类型并检查饱和/范围。
+- 硬件配置常量必须有数据表/BOM/实测来源；无法确认写 `Unknown`，不得把候选默认值升级为事实。
+
+证据：`App/App_Power.c:30-60`；`Int/Int_BQ76952.c:24-38`；`Int/Int_SC8815_BSP.h:21-31,132-161`。
+信心：High。人工确认：Needed，参数评审。
+
+### 8. 构建与提交
+
+- GCC 使用 `-Wall -Wextra -Werror`；Release 关闭工程 CLI，Engineering 明确开启。证据：`CMakeLists.txt:9-15,119-138`。
+- 所有构建必须经过 Flash/RAM 预算；当前阈值 120 KiB Flash、132 KiB RAM。证据：`CMakeLists.txt:9-15,140-176`。
+- 修改 App/Com/Int 后同步 CMake 与 Keil 文件清单并运行 host tests；不能只验证一个工具链元数据。
+- 禁止提交 `logs/`、build、map、axf/elf/hex/bin、对象、pack/cache、`.log.lock` 或临时测试产物；tracked path 必须通过 fail-closed repo hygiene CTest。证据：`.gitignore:1-41`；`tests/host/check_repo_hygiene.py:11-105`；`AGENTS.md`。
+
+## Forbidden Patterns
+
+1. `HAL_Delay()` 出现在周期业务任务或 ISR；驱动内芯片规定等待也必须消耗同一绝对预算。
+2. enable 动作由 CLI、CAN 或显示模块直接调用底层 actuator。
+3. 使用“读旧缓存相同则返回”跳过安全关闭命令。
+4. 分步更新共享采样结构，让消费者看到混合帧。
+5. 整笔软件 I2C 事务关闭全局中断。
+6. 未读回就宣布配置成功。
+7. 由任意任务直接刷新 IWDG。
+8. 为消除告警而清除锁存硬件保护。
+9. 在 Release 中保留写功率路径的调试命令。
+10. 把主机测试当作实板保护、波形、温升和 EMC 证据。
+11. 在 BQ 通信恢复后沿用启动期 `config valid` 缓存，或把一次 ACK 当作 POR 后配置仍有效的证明。
+12. 应用模块直接调用 libc `printf/fprintf/snprintf`；格式化日志统一走 `Int_Log_Printf + Com_FormatV`，`retarget` 只作源码兼容层，Release 链接后必须通过 heap/stdio symbol gate。

@@ -4,6 +4,12 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+enum
+{
+    /* 与 SOC 使用同一产品级上界，防止异常配置放大整数与浮点累计误差。 */
+    COM_SOH_CAPACITY_MAX_MAH = 200000u
+};
+
 /**
  * @file Com_SOH.h
  * @brief 容量 SOH 学习与寿命统计纯算法层。

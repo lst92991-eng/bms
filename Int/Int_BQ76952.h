@@ -53,6 +53,42 @@ bool Int_BQ76952_IsCrcEnabled(void);
 uint32_t Int_BQ76952_GetLastHalError(void);
 
 /**
+ * @brief 在 BQ ALERT GPIO 回调中锁存待处理事件。
+ * @note ISR 安全；只写内存，不允许在中断中发起 I2C。
+ */
+void Int_BQ76952_NotifyAlertFromISR(void);
+
+/**
+ * @brief 取出并清除一次 BQ ALERT 待处理事件。
+ * @note 若处理期间可能再次进中断，应使用带序号的 AcknowledgeAlert。
+ */
+bool Int_BQ76952_TakeAlertPending(void);
+
+/**
+ * @brief 仅在 ALERT 序号未变化时确认已处理事件。
+ * @param sequence 处理状态帧前取得的 ALERT 序号。
+ * @return true 表示已清除对应 pending；false 表示期间又来了新事件。
+ */
+bool Int_BQ76952_AcknowledgeAlert(uint32_t sequence);
+
+/**
+ * @brief 查询 BQ ALERT 是否仍有待处理事件，不清除锁存。
+ */
+bool Int_BQ76952_IsAlertPending(void);
+
+/**
+ * @brief 返回自 MCU 启动以来锁存的 ALERT 次数，允许自然回卷。
+ */
+uint32_t Int_BQ76952_GetAlertSequence(void);
+
+/**
+ * @brief 建立一个跨多次公开访问的总线事务和统一绝对截止时间。
+ * @note 只能在任务/调度前上下文调用；成功后必须成对调用 EndTransaction。
+ */
+Int_BQ76952_StatusTypeDef Int_BQ76952_BeginTransaction(uint32_t budget_ms);
+void Int_BQ76952_EndTransaction(void);
+
+/**
  * @brief 读取 direct command。
  * @param command BQ76952 direct command 地址。
  * @param data 输出数据缓冲区。
@@ -63,7 +99,8 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDirect(uint8_t command, uint8_t *data,
 /**
  * @brief 写 direct command。
  */
-Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDirect(uint8_t command, const uint8_t *data, uint8_t len);
+Int_BQ76952_StatusTypeDef
+Int_BQ76952_WriteDirect(uint8_t command, const uint8_t *data, uint8_t len);
 
 /**
  * @brief 发送 command-only subcommand。
@@ -74,14 +111,14 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_SendSubcommand(uint16_t subcommand);
 /**
  * @brief 读取带回读数据的 subcommand。
  */
-Int_BQ76952_StatusTypeDef Int_BQ76952_ReadSubcommand(uint16_t subcommand, uint8_t *data, uint8_t len);
+Int_BQ76952_StatusTypeDef
+Int_BQ76952_ReadSubcommand(uint16_t subcommand, uint8_t *data, uint8_t len);
 
 /**
  * @brief 写带 data 的 subcommand。
  */
-Int_BQ76952_StatusTypeDef Int_BQ76952_WriteSubcommandData(uint16_t subcommand,
-                                                          const uint8_t *data,
-                                                          uint8_t len);
+Int_BQ76952_StatusTypeDef
+Int_BQ76952_WriteSubcommandData(uint16_t subcommand, const uint8_t *data, uint8_t len);
 
 /**
  * @brief 读取 Data Memory。
@@ -93,7 +130,8 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ReadDataMemory(uint16_t address, uint8_t *
  * @brief 写 Data Memory。
  * @note 调用前应由上层确认设备已进入 CONFIG_UPDATE。
  */
-Int_BQ76952_StatusTypeDef Int_BQ76952_WriteDataMemory(uint16_t address, const uint8_t *data, uint8_t len);
+Int_BQ76952_StatusTypeDef
+Int_BQ76952_WriteDataMemory(uint16_t address, const uint8_t *data, uint8_t len);
 
 /**
  * @brief 发送 SET_CFGUPDATE 并轮询 Battery Status[CFGUPDATE]。
@@ -112,5 +150,12 @@ Int_BQ76952_StatusTypeDef Int_BQ76952_ExitConfigUpdate(void);
  * BQ76952_CELL_MASK_6S_HW_CELLx，不能按物理 cell0..5 直接移位。
  */
 Int_BQ76952_StatusTypeDef Int_BQ76952_SetBalanceMask(uint16_t mask);
+
+/**
+ * @brief 在一个完整的互斥事务中写 FET_CONTROL 并读取 FET_STATUS。
+ * @param off_mask FET_CONTROL 的四路关断位完整镜像。
+ * @param observed_status 成功时返回 FET_STATUS；失败时保持调用前内容。
+ */
+Int_BQ76952_StatusTypeDef Int_BQ76952_ApplyFetControl(uint8_t off_mask, uint8_t *observed_status);
 
 #endif /* INT_BQ76952_H */

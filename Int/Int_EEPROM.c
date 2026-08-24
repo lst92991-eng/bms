@@ -2,7 +2,13 @@
 
 #include <string.h>
 
+#include "Int_I2C2Bus.h"
 #include "i2c.h"
+
+enum
+{
+    INT_EEPROM_BUS_LOCK_TIMEOUT_MS = 250u
+};
 
 static bool s_eeprom_online = false;
 
@@ -23,8 +29,7 @@ static bool Int_EEPROM_RangeValid(uint16_t address, uint16_t len)
 
 static uint16_t Int_EEPROM_PageRemaining(uint16_t address)
 {
-    return (uint16_t)(INT_EEPROM_PAGE_SIZE_BYTES -
-                      (address % INT_EEPROM_PAGE_SIZE_BYTES));
+    return (uint16_t)(INT_EEPROM_PAGE_SIZE_BYTES - (address % INT_EEPROM_PAGE_SIZE_BYTES));
 }
 
 static Int_EEPROM_StatusTypeDef Int_EEPROM_FromHalStatus(HAL_StatusTypeDef status)
@@ -47,10 +52,7 @@ static Int_EEPROM_StatusTypeDef Int_EEPROM_WaitReady(uint32_t timeout_ms)
     /* 写周期内器件会 NACK，轮询 ACK 可避免固定延时过短或无谓等待。 */
     do
     {
-        if (HAL_I2C_IsDeviceReady(&hi2c2,
-                                  INT_EEPROM_DEV_ADDR,
-                                  1u,
-                                  1u) == HAL_OK)
+        if (HAL_I2C_IsDeviceReady(&hi2c2, INT_EEPROM_DEV_ADDR, 1u, 1u) == HAL_OK)
         {
             s_eeprom_online = true;
             return INT_EEPROM_OK;
@@ -63,8 +65,16 @@ static Int_EEPROM_StatusTypeDef Int_EEPROM_WaitReady(uint32_t timeout_ms)
 
 Int_EEPROM_StatusTypeDef Int_EEPROM_Init(void)
 {
+    Int_EEPROM_StatusTypeDef status;
+
+    if (!Int_I2C2Bus_Lock(INT_EEPROM_BUS_LOCK_TIMEOUT_MS))
+    {
+        return INT_EEPROM_TIMEOUT;
+    }
     /* 启动阶段只探测 ACK，不写 EEPROM，也不重复初始化 CubeMX 的 I2C2。 */
-    return Int_EEPROM_WaitReady(INT_EEPROM_READY_TIMEOUT_MS);
+    status = Int_EEPROM_WaitReady(INT_EEPROM_READY_TIMEOUT_MS);
+    Int_I2C2Bus_Unlock();
+    return status;
 }
 
 bool Int_EEPROM_IsOnline(void)
@@ -74,12 +84,18 @@ bool Int_EEPROM_IsOnline(void)
 
 bool Int_EEPROM_IsReady(uint32_t timeout_ms)
 {
-    return Int_EEPROM_WaitReady(timeout_ms) == INT_EEPROM_OK;
+    bool ready;
+
+    if (!Int_I2C2Bus_Lock(INT_EEPROM_BUS_LOCK_TIMEOUT_MS))
+    {
+        return false;
+    }
+    ready = Int_EEPROM_WaitReady(timeout_ms) == INT_EEPROM_OK;
+    Int_I2C2Bus_Unlock();
+    return ready;
 }
 
-Int_EEPROM_StatusTypeDef Int_EEPROM_Read(uint16_t address,
-                                         uint8_t *data,
-                                         uint16_t len)
+Int_EEPROM_StatusTypeDef Int_EEPROM_Read(uint16_t address, uint8_t *data, uint16_t len)
 {
     uint16_t offset = 0u;
 
@@ -90,6 +106,10 @@ Int_EEPROM_StatusTypeDef Int_EEPROM_Read(uint16_t address,
     if (len == 0u)
     {
         return INT_EEPROM_OK;
+    }
+    if (!Int_I2C2Bus_Lock(INT_EEPROM_BUS_LOCK_TIMEOUT_MS))
+    {
+        return INT_EEPROM_TIMEOUT;
     }
 
     while (offset < len)
@@ -104,17 +124,17 @@ Int_EEPROM_StatusTypeDef Int_EEPROM_Read(uint16_t address,
         }
 
         /* 分段读取可跨任意页，同时避免大块读取耗尽单次 HAL 超时窗口。 */
-        status = Int_EEPROM_FromHalStatus(
-            HAL_I2C_Mem_Read(&hi2c2,
-                             INT_EEPROM_DEV_ADDR,
-                             current_address,
-                             I2C_MEMADD_SIZE_16BIT,
-                             &data[offset],
-                             chunk,
-                             INT_EEPROM_READ_TIMEOUT_MS));
+        status = Int_EEPROM_FromHalStatus(HAL_I2C_Mem_Read(&hi2c2,
+                                                           INT_EEPROM_DEV_ADDR,
+                                                           current_address,
+                                                           I2C_MEMADD_SIZE_16BIT,
+                                                           &data[offset],
+                                                           chunk,
+                                                           INT_EEPROM_READ_TIMEOUT_MS));
         if (status != INT_EEPROM_OK)
         {
             s_eeprom_online = false;
+            Int_I2C2Bus_Unlock();
             return status;
         }
 
@@ -122,18 +142,21 @@ Int_EEPROM_StatusTypeDef Int_EEPROM_Read(uint16_t address,
     }
 
     s_eeprom_online = true;
+    Int_I2C2Bus_Unlock();
     return INT_EEPROM_OK;
 }
 
-Int_EEPROM_StatusTypeDef Int_EEPROM_Write(uint16_t address,
-                                          const uint8_t *data,
-                                          uint16_t len)
+Int_EEPROM_StatusTypeDef Int_EEPROM_Write(uint16_t address, const uint8_t *data, uint16_t len)
 {
     uint16_t offset = 0u;
 
     if (((data == 0) && (len > 0u)) || !Int_EEPROM_RangeValid(address, len))
     {
         return INT_EEPROM_ERROR;
+    }
+    if (!Int_I2C2Bus_Lock(INT_EEPROM_BUS_LOCK_TIMEOUT_MS))
+    {
+        return INT_EEPROM_TIMEOUT;
     }
 
     while (offset < len)
@@ -148,43 +171,49 @@ Int_EEPROM_StatusTypeDef Int_EEPROM_Write(uint16_t address,
         }
 
         /* 页写越界会在当前页内回卷，因此每次事务都限制在同一页。 */
-        status = Int_EEPROM_FromHalStatus(
-            HAL_I2C_Mem_Write(&hi2c2,
-                              INT_EEPROM_DEV_ADDR,
-                              current_address,
-                              I2C_MEMADD_SIZE_16BIT,
-                              (uint8_t *)&data[offset],
-                              chunk,
-                              INT_EEPROM_WRITE_TIMEOUT_MS));
+        status = Int_EEPROM_FromHalStatus(HAL_I2C_Mem_Write(&hi2c2,
+                                                            INT_EEPROM_DEV_ADDR,
+                                                            current_address,
+                                                            I2C_MEMADD_SIZE_16BIT,
+                                                            (uint8_t *)&data[offset],
+                                                            chunk,
+                                                            INT_EEPROM_WRITE_TIMEOUT_MS));
         if (status != INT_EEPROM_OK)
         {
             s_eeprom_online = false;
+            Int_I2C2Bus_Unlock();
             return status;
         }
 
         status = Int_EEPROM_WaitReady(INT_EEPROM_READY_TIMEOUT_MS);
         if (status != INT_EEPROM_OK)
         {
+            Int_I2C2Bus_Unlock();
             return status;
         }
 
         offset = (uint16_t)(offset + chunk);
     }
 
+    Int_I2C2Bus_Unlock();
     return INT_EEPROM_OK;
 }
 
-Int_EEPROM_StatusTypeDef Int_EEPROM_WriteReadback(uint16_t address,
-                                                  const uint8_t *data,
-                                                  uint16_t len)
+Int_EEPROM_StatusTypeDef
+Int_EEPROM_WriteReadback(uint16_t address, const uint8_t *data, uint16_t len)
 {
     uint8_t verify[INT_EEPROM_PAGE_SIZE_BYTES];
     uint16_t offset = 0u;
     Int_EEPROM_StatusTypeDef status;
 
+    if (!Int_I2C2Bus_Lock(INT_EEPROM_BUS_LOCK_TIMEOUT_MS))
+    {
+        return INT_EEPROM_TIMEOUT;
+    }
     status = Int_EEPROM_Write(address, data, len);
     if (status != INT_EEPROM_OK)
     {
+        Int_I2C2Bus_Unlock();
         return status;
     }
 
@@ -200,15 +229,18 @@ Int_EEPROM_StatusTypeDef Int_EEPROM_WriteReadback(uint16_t address,
         status = Int_EEPROM_Read((uint16_t)(address + offset), verify, chunk);
         if (status != INT_EEPROM_OK)
         {
+            Int_I2C2Bus_Unlock();
             return status;
         }
         if (memcmp(verify, &data[offset], chunk) != 0)
         {
+            Int_I2C2Bus_Unlock();
             return INT_EEPROM_ERROR;
         }
 
         offset = (uint16_t)(offset + chunk);
     }
 
+    Int_I2C2Bus_Unlock();
     return INT_EEPROM_OK;
 }

@@ -22,6 +22,11 @@
 #include "stm32g0xx_it.h"
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "App_DebugCli.h"
+#include "App_BatMan.h"
+#include "App_Safety.h"
+#include "Int_Fault.h"
+#include "Int_Log.h"
 #include "Int_SC8815.h"
 #include "usart.h"
 /* USER CODE END Includes */
@@ -49,10 +54,36 @@
 /* Private function prototypes -----------------------------------------------*/
 /* USER CODE BEGIN PFP */
 
+#if defined(__GNUC__)
+void HardFault_Handler(void) __attribute__((naked));
+#endif
+
 /* USER CODE END PFP */
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
+
+#if defined(__CC_ARM)
+__asm void HardFault_Handler(void)
+{
+  IMPORT Int_Fault_HandleHardFault
+  MOV r1, lr
+  MOVS r2, #4
+  TST r1, r2
+  BEQ hard_fault_use_msp
+  MRS r0, PSP
+  B hard_fault_dispatch
+hard_fault_use_msp
+  MRS r0, MSP
+hard_fault_dispatch
+  LDR r3, =Int_Fault_HandleHardFault
+  BX r3
+  ALIGN
+}
+
+/* CubeMX 生成的 C 壳仅保留作未引用后备，向量表使用上面的裸汇编强符号。 */
+#define HardFault_Handler HardFault_Handler_GeneratedUnused
+#endif
 
 /* USER CODE END 0 */
 
@@ -72,7 +103,7 @@ extern TIM_HandleTypeDef htim14;
 void NMI_Handler(void)
 {
   /* USER CODE BEGIN NonMaskableInt_IRQn 0 */
-
+  Int_Fault_Panic(INT_FAULT_NMI, __get_MSP());
   /* USER CODE END NonMaskableInt_IRQn 0 */
   /* USER CODE BEGIN NonMaskableInt_IRQn 1 */
    while (1)
@@ -87,7 +118,24 @@ void NMI_Handler(void)
 void HardFault_Handler(void)
 {
   /* USER CODE BEGIN HardFault_IRQn 0 */
-
+#if defined(__GNUC__)
+  __asm volatile (
+      "mov r1, lr\n"
+      "movs r2, #4\n"
+      "tst r1, r2\n"
+      "beq 1f\n"
+      "mrs r0, psp\n"
+      "b 2f\n"
+      "1:\n"
+      "mrs r0, msp\n"
+      "2:\n"
+      "ldr r3, =Int_Fault_HandleHardFault\n"
+      "bx r3\n");
+#elif defined(__CC_ARM)
+  Int_Fault_Panic(INT_FAULT_HARDFAULT, __get_MSP());
+#else
+  Int_Fault_HandleHardFault((const uint32_t *)__get_MSP(), 0u);
+#endif
   /* USER CODE END HardFault_IRQn 0 */
   while (1)
   {
@@ -152,8 +200,27 @@ void HAL_GPIO_EXTI_Falling_Callback(uint16_t GPIO_Pin)
 {
   if (GPIO_Pin == SC8815_INT_Pin)
   {
-    /* SC8815 INT 为低脉冲；ISR 只锁存事件，软件 I2C 留给任务处理。 */
+    /* INT 原因未判定前先撤销功率，再把寄存器判因留给 SC 任务。 */
+    Int_SC8815_ForceStandby();
+    App_Safety_OnScInterruptFromISR();
     Int_SC8815_NotifyInterruptFromISR();
+  }
+  else if (GPIO_Pin == BQ_INT_Pin)
+  {
+    /* ALERT 先撤销功率与令牌，只锁存事件；完整 Safety/PF/Alarm 帧在任务中判因。 */
+    Int_SC8815_ForceStandby();
+    App_Safety_OnBqAlertFromISR();
+    App_BatMan_NotifyAlertFromISR();
+  }
+}
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  /* 唯一 UART error 汇聚点：先释放 TX 环形缓冲状态，再恢复工程 RX。 */
+  Int_Log_OnUartError(huart);
+  if ((huart != NULL) && (huart->Instance == USART1))
+  {
+    App_DebugCli_OnUartError();
   }
 }
 

@@ -1106,7 +1106,7 @@ OCC/OCD1/OCD2所有“安培值”同样按比例变化；必须从最终Rshunt�
 | 外设 | FDCAN1、I2C1、I2C2、RTC、TIM3、USART1及GPIO | `bms24v_platform/bms24v_platform.ioc:32-74,90-177` | Fact |
 | FreeRTOS | 抢占式、1kHz tick、5优先级、heap_4 32KiB、mutex开启、软件timer关闭 | `bms24v_platform/MDK-ARM/FreeRTOS/include/FreeRTOSConfig.h:19-44`；`bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:721-771` | Fact |
 | HAL/RTOS关系 | HAL配置 `USE_RTOS=0U`，应用实际运行FreeRTOS | `bms24v_platform/Core/Inc/stm32g0xx_hal_conf.h:180`；`App/App_Main.c:110-124` | **Fact/constraint**；两者可共存，但HAL不会自动提供RTOS互斥 |
-| Flash/RAM | GCC链接脚本：Flash 128KiB、RAM 144KiB；Keil scatter使用相同地址/容量 | `bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:3-9,108-113`；`bms24v_platform/MDK-ARM/bms24v_platform/bms24v_platform.sct:5-14` | Fact |
+| Flash/RAM | GCC链接脚本：Flash 128KiB、RAM 144KiB；Keil target memory 声明相同 IROM/IRAM，但 `ScatterFile` 为空 | `bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:3-9,108-113`；`bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:247-255,366-375` | Fact（配置）；Keil 最终 map 为 Unknown |
 | 启动文件 | Keil与GCC各有STM32G0B1启动文件 | `bms24v_platform/MDK-ARM/startup_stm32g0b1xx.s:31-46,53-123`；`bms24v_platform/gcc/startup_stm32g0b1xx_gcc.s:14-56,105-156` | Fact；当前发布使用哪一个取决于工具链Conflict |
 | Keil启动栈/堆保留 | startup为MSP保留0x400 byte（1024 B / 1 KiB）、为C库heap保留0x200 byte（512 B）；FreeRTOS `heap_4` 另配置32KiB。三者不能互相替代；链接期保留量通常累加（以最终map为准），实际峰值需分别测量MSP高水位、C库heap使用量和FreeRTOS minimum-ever-free | `bms24v_platform/MDK-ARM/startup_stm32g0b1xx.s:31-46`；`bms24v_platform/MDK-ARM/FreeRTOS/include/FreeRTOSConfig.h:24-44` | Fact（配置）；最终占用与峰值Unknown |
 | 构建验证 | 本文未发现受控CI命令、固件版本注入、map容量门限或可复现构建记录 | 仓库构建元数据检索；缺CI/发布记录 | **Unknown** |
@@ -1154,7 +1154,7 @@ OCC/OCD1/OCD2所有“安培值”同样按比例变化；必须从最终Rshunt�
 | S07 | `App/App_Power.c:12-546`；`App/App_DebugCli.c:10-624` | 产品门控、故障锁存、CLI旁路 | `cell_ok`语义和CLI绕过风险 |
 | S08 | `Int/Int_OLED.c:9-117`；`App/App_OLED.c:13-153`；`Int/Int_EEPROM.c:5-24`；`Int/Int_CanFd.c:24-46` | HMI、EEPROM、CAN当前实现 | 功能覆盖与未闭环项 |
 | S09 | `bms24v_platform/MDK-ARM/FreeRTOS/include/FreeRTOSConfig.h:19-61` | 调度、堆、互斥、断言 | RTOS配置事实 |
-| S10 | `bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:3-113`；`bms24v_platform/MDK-ARM/bms24v_platform/bms24v_platform.sct:5-14` | Flash/RAM布局 | 两工具链内存边界 |
+| S10 | `bms24v_platform/gcc/STM32G0B1CBTx_FLASH.ld:3-113`；`bms24v_platform/MDK-ARM/bms24v_platform.uvprojx:247-255,366-375` | Flash/RAM布局配置 | GCC 链接边界与 Keil target memory；Keil 最终 map 待实构建 |
 
 ### 21.4 关键结论到证据的反向索引
 

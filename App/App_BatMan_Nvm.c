@@ -1,10 +1,16 @@
 #include "App_BatMan_Internal.h"
 
+#include "FreeRTOS.h"
+#include "semphr.h"
+#include "task.h"
+
 #include <stddef.h>
-#include <stdio.h>
 
 #include "Com_SOH.h"
+#include "Com_SOC.h"
 #include "Int_EEPROM.h"
+#include "Int_Log.h"
+#include "main.h"
 
 enum
 {
@@ -18,11 +24,31 @@ enum
     APP_BATMAN_NVM_RECONNECT_PERIOD_MS = 10000u,
     APP_BATMAN_NVM_STARTUP_RESTORE_WINDOW_MS = 60000u,
     APP_BATMAN_NVM_READ_RETRY_COUNT = 3u,
-    APP_BATMAN_NVM_FLUSH_RETRY_COUNT = 3u
+    APP_BATMAN_NVM_FLUSH_RETRY_COUNT = 3u,
+    APP_BATMAN_NVM_LOCK_TIMEOUT_MS = 250u,
+    APP_BATMAN_SOC_NVM_SLOT_A_ADDR = 0x0080u,
+    APP_BATMAN_SOC_NVM_SLOT_B_ADDR = 0x00C0u,
+    APP_BATMAN_SOC_NVM_USED_SIZE = 24u,
+    APP_BATMAN_SOC_NVM_CRC_OFFSET = 20u,
+    APP_BATMAN_SOC_NVM_FORMAT_VERSION = 1u,
+    APP_BATMAN_SOC_NVM_PERIODIC_SAVE_MS = 300000u
 };
 
-#define APP_BATMAN_NVM_MAGIC (0x32484F53u) /* little-endian "SOH2" */
+#define APP_BATMAN_NVM_MAGIC (0x32484F53u)     /* little-endian "SOH2" */
+#define APP_BATMAN_SOC_NVM_MAGIC (0x33434F53u) /* little-endian "SOC3" */
 
+typedef struct
+{
+    Com_SOH_PersistentTypeDef soh;
+    Com_SOC_PersistentTypeDef soc;
+    bool soc_valid;
+    bool soc_full_anchor_used;
+    bool soc_empty_anchor_used;
+} App_BatMan_NvmSnapshotTypeDef;
+
+static StaticSemaphore_t s_nvm_mutex_buffer;
+static SemaphoreHandle_t s_nvm_mutex = NULL;
+static uint8_t s_nvm_pre_scheduler_lock_depth = 0u;
 static bool s_nvm_ready = false;
 static bool s_have_saved_state = false;
 static uint8_t s_active_slot = 0u;
@@ -33,6 +59,122 @@ static uint32_t s_startup_restore_elapsed_ms = 0u;
 static bool s_force_save = false;
 static bool s_startup_restore_pending = false;
 static Com_SOH_PersistentTypeDef s_last_saved_state;
+static bool s_soc_have_saved_state = false;
+static uint8_t s_soc_active_slot = 0u;
+static uint32_t s_soc_sequence = 0u;
+static uint32_t s_soc_save_elapsed_ms = 0u;
+static bool s_soc_force_save = false;
+static Com_SOC_PersistentTypeDef s_soc_last_saved_state;
+
+static bool App_BatMan_NvmCreateMutex(void)
+{
+    if (s_nvm_mutex == NULL)
+    {
+        s_nvm_mutex = xSemaphoreCreateRecursiveMutexStatic(&s_nvm_mutex_buffer);
+    }
+    return s_nvm_mutex != NULL;
+}
+
+static bool App_BatMan_NvmLock(uint32_t timeout_ms)
+{
+    TickType_t timeout_ticks;
+    BaseType_t scheduler_state;
+
+    if ((s_nvm_mutex == NULL) || (__get_IPSR() != 0u))
+    {
+        return false;
+    }
+
+    scheduler_state = xTaskGetSchedulerState();
+    if (scheduler_state == taskSCHEDULER_NOT_STARTED)
+    {
+        if (s_nvm_pre_scheduler_lock_depth == UINT8_MAX)
+        {
+            return false;
+        }
+        s_nvm_pre_scheduler_lock_depth++;
+        return true;
+    }
+    if (scheduler_state != taskSCHEDULER_RUNNING)
+    {
+        return false;
+    }
+
+    timeout_ticks = pdMS_TO_TICKS(timeout_ms);
+    if ((timeout_ms != 0u) && (timeout_ticks == 0u))
+    {
+        timeout_ticks = 1u;
+    }
+    return xSemaphoreTakeRecursive(s_nvm_mutex, timeout_ticks) == pdTRUE;
+}
+
+static void App_BatMan_NvmUnlock(void)
+{
+    if ((s_nvm_mutex == NULL) || (__get_IPSR() != 0u))
+    {
+        return;
+    }
+    if (xTaskGetSchedulerState() == taskSCHEDULER_NOT_STARTED)
+    {
+        if (s_nvm_pre_scheduler_lock_depth > 0u)
+        {
+            s_nvm_pre_scheduler_lock_depth--;
+        }
+        return;
+    }
+    (void)xSemaphoreGiveRecursive(s_nvm_mutex);
+}
+
+static bool App_BatMan_NvmSuspendScheduler(void)
+{
+    if (xTaskGetSchedulerState() != taskSCHEDULER_RUNNING)
+    {
+        return false;
+    }
+    vTaskSuspendAll();
+    return true;
+}
+
+static void App_BatMan_NvmResumeScheduler(bool suspended_here)
+{
+    if (suspended_here)
+    {
+        (void)xTaskResumeAll();
+    }
+}
+
+static void App_BatMan_NvmCaptureSnapshot(App_BatMan_NvmSnapshotTypeDef *snapshot)
+{
+    Com_SOC_ResultTypeDef soc_result;
+    bool suspended_here = App_BatMan_NvmSuspendScheduler();
+
+    /* SOC/SOH 仅由 BatMan/Power 任务修改；暂停任务切换即可得到同一时刻的完整副本。 */
+    Com_SOH_ExportPersistent(&snapshot->soh);
+    Com_SOC_GetResult(&soc_result);
+    Com_SOC_ExportPersistent(&snapshot->soc);
+    snapshot->soc_valid = soc_result.valid;
+    snapshot->soc_full_anchor_used = soc_result.full_anchor_used;
+    snapshot->soc_empty_anchor_used = soc_result.empty_anchor_used;
+    App_BatMan_NvmResumeScheduler(suspended_here);
+}
+
+static bool App_BatMan_NvmRestoreSoc(const Com_SOC_PersistentTypeDef *state)
+{
+    bool suspended_here = App_BatMan_NvmSuspendScheduler();
+    bool restored = Com_SOC_RestorePersistent(state);
+
+    App_BatMan_NvmResumeScheduler(suspended_here);
+    return restored;
+}
+
+static bool App_BatMan_NvmRestoreSoh(const Com_SOH_PersistentTypeDef *state)
+{
+    bool suspended_here = App_BatMan_NvmSuspendScheduler();
+    bool restored = Com_SOH_RestorePersistent(state);
+
+    App_BatMan_NvmResumeScheduler(suspended_here);
+    return restored;
+}
 
 static uint16_t App_BatMan_NvmReadU16(const uint8_t *data)
 {
@@ -41,9 +183,7 @@ static uint16_t App_BatMan_NvmReadU16(const uint8_t *data)
 
 static uint32_t App_BatMan_NvmReadU32(const uint8_t *data)
 {
-    return ((uint32_t)data[0]) |
-           ((uint32_t)data[1] << 8u) |
-           ((uint32_t)data[2] << 16u) |
+    return ((uint32_t)data[0]) | ((uint32_t)data[1] << 8u) | ((uint32_t)data[2] << 16u) |
            ((uint32_t)data[3] << 24u);
 }
 
@@ -70,9 +210,7 @@ static uint32_t App_BatMan_NvmCrc32(const uint8_t *data, uint16_t len)
         crc ^= data[i];
         for (uint8_t bit = 0u; bit < 8u; bit++)
         {
-            crc = ((crc & 1u) != 0u) ?
-                  ((crc >> 1u) ^ 0xEDB88320u) :
-                  (crc >> 1u);
+            crc = ((crc & 1u) != 0u) ? ((crc >> 1u) ^ 0xEDB88320u) : (crc >> 1u);
         }
     }
 
@@ -156,8 +294,7 @@ static bool App_BatMan_NvmStateEqual(const Com_SOH_PersistentTypeDef *left,
            (left->cycle_remainder_mah == right->cycle_remainder_mah) &&
            (left->learned_capacity_mah == right->learned_capacity_mah) &&
            (left->capacity_learning_count == right->capacity_learning_count) &&
-           (left->max_delta_mv == right->max_delta_mv) &&
-           (left->max_temp_c == right->max_temp_c);
+           (left->max_delta_mv == right->max_delta_mv) && (left->max_temp_c == right->max_temp_c);
 }
 
 static bool App_BatMan_NvmSequenceNewer(uint32_t left, uint32_t right)
@@ -165,6 +302,158 @@ static bool App_BatMan_NvmSequenceNewer(uint32_t left, uint32_t right)
     uint32_t delta = left - right;
 
     return (left != right) && (delta < 0x80000000u);
+}
+
+static bool App_BatMan_SocNvmStateEqual(const Com_SOC_PersistentTypeDef *left,
+                                        const Com_SOC_PersistentTypeDef *right)
+{
+    return (left->soc_0p01_percent == right->soc_0p01_percent) &&
+           (left->display_0p01_percent == right->display_0p01_percent) &&
+           (left->covariance_1e6 == right->covariance_1e6);
+}
+
+static void App_BatMan_SocNvmEncode(uint8_t record[APP_BATMAN_NVM_RECORD_SIZE],
+                                    const Com_SOC_PersistentTypeDef *state,
+                                    uint32_t sequence)
+{
+    for (uint8_t i = 0u; i < APP_BATMAN_NVM_RECORD_SIZE; i++)
+    {
+        record[i] = 0u;
+    }
+    App_BatMan_NvmWriteU32(&record[0], APP_BATMAN_SOC_NVM_MAGIC);
+    App_BatMan_NvmWriteU16(&record[4], APP_BATMAN_SOC_NVM_FORMAT_VERSION);
+    App_BatMan_NvmWriteU16(&record[6], APP_BATMAN_SOC_NVM_USED_SIZE);
+    App_BatMan_NvmWriteU32(&record[8], sequence);
+    App_BatMan_NvmWriteU16(&record[12], state->soc_0p01_percent);
+    App_BatMan_NvmWriteU16(&record[14], state->display_0p01_percent);
+    App_BatMan_NvmWriteU32(&record[16], state->covariance_1e6);
+    App_BatMan_NvmWriteU32(&record[APP_BATMAN_SOC_NVM_CRC_OFFSET],
+                           App_BatMan_NvmCrc32(record, APP_BATMAN_SOC_NVM_CRC_OFFSET));
+}
+
+static bool App_BatMan_SocNvmDecode(const uint8_t record[APP_BATMAN_NVM_RECORD_SIZE],
+                                    Com_SOC_PersistentTypeDef *state,
+                                    uint32_t *sequence)
+{
+    if ((App_BatMan_NvmReadU32(&record[0]) != APP_BATMAN_SOC_NVM_MAGIC) ||
+        (App_BatMan_NvmReadU16(&record[4]) != APP_BATMAN_SOC_NVM_FORMAT_VERSION) ||
+        (App_BatMan_NvmReadU16(&record[6]) != APP_BATMAN_SOC_NVM_USED_SIZE) ||
+        (App_BatMan_NvmReadU32(&record[APP_BATMAN_SOC_NVM_CRC_OFFSET]) !=
+         App_BatMan_NvmCrc32(record, APP_BATMAN_SOC_NVM_CRC_OFFSET)))
+    {
+        return false;
+    }
+
+    *sequence = App_BatMan_NvmReadU32(&record[8]);
+    state->soc_0p01_percent = App_BatMan_NvmReadU16(&record[12]);
+    state->display_0p01_percent = App_BatMan_NvmReadU16(&record[14]);
+    state->covariance_1e6 = App_BatMan_NvmReadU32(&record[16]);
+    return Com_SOC_ValidatePersistent(state);
+}
+
+static bool App_BatMan_SocNvmReadSlot(uint16_t address,
+                                      Com_SOC_PersistentTypeDef *state,
+                                      uint32_t *sequence,
+                                      bool *read_ok)
+{
+    uint8_t record[APP_BATMAN_NVM_RECORD_SIZE];
+
+    *read_ok = false;
+    for (uint8_t retry = 0u; retry < APP_BATMAN_NVM_READ_RETRY_COUNT; retry++)
+    {
+        if (Int_EEPROM_Read(address, record, sizeof(record)) == INT_EEPROM_OK)
+        {
+            *read_ok = true;
+            return App_BatMan_SocNvmDecode(record, state, sequence);
+        }
+        (void)Int_EEPROM_IsReady(INT_EEPROM_READY_TIMEOUT_MS);
+    }
+    return false;
+}
+
+static bool App_BatMan_SocNvmLoad(bool restore_allowed)
+{
+    Com_SOC_PersistentTypeDef slot_a;
+    Com_SOC_PersistentTypeDef slot_b;
+    uint32_t sequence_a = 0u;
+    uint32_t sequence_b = 0u;
+    bool read_a_ok;
+    bool read_b_ok;
+    bool valid_a =
+        App_BatMan_SocNvmReadSlot(APP_BATMAN_SOC_NVM_SLOT_A_ADDR, &slot_a, &sequence_a, &read_a_ok);
+    bool valid_b =
+        App_BatMan_SocNvmReadSlot(APP_BATMAN_SOC_NVM_SLOT_B_ADDR, &slot_b, &sequence_b, &read_b_ok);
+
+    s_soc_have_saved_state = valid_a || valid_b;
+    if (valid_a && (!valid_b || App_BatMan_NvmSequenceNewer(sequence_a, sequence_b)))
+    {
+        s_soc_active_slot = 0u;
+        s_soc_sequence = sequence_a;
+        s_soc_last_saved_state = slot_a;
+    }
+    else if (valid_b)
+    {
+        s_soc_active_slot = 1u;
+        s_soc_sequence = sequence_b;
+        s_soc_last_saved_state = slot_b;
+    }
+    else
+    {
+        s_soc_active_slot = 0u;
+        s_soc_sequence = 0u;
+    }
+
+    if (restore_allowed && s_soc_have_saved_state)
+    {
+        if (!App_BatMan_NvmRestoreSoc(&s_soc_last_saved_state))
+        {
+            return false;
+        }
+    }
+    /* 单槽读取失败仍可恢复另一份 CRC 有效记录，但保持只读等待重连。 */
+    return read_a_ok && read_b_ok;
+}
+
+static bool App_BatMan_SocNvmSave(const Com_SOC_PersistentTypeDef *state, bool state_valid)
+{
+    uint8_t record[APP_BATMAN_NVM_RECORD_SIZE];
+    uint8_t verify_record[APP_BATMAN_NVM_RECORD_SIZE];
+    Com_SOC_PersistentTypeDef verify_state;
+    uint32_t next_sequence;
+    uint32_t verify_sequence;
+    uint8_t next_slot;
+    uint16_t address;
+
+    if (!state_valid)
+    {
+        return true;
+    }
+    if (!s_soc_force_save && s_soc_have_saved_state &&
+        App_BatMan_SocNvmStateEqual(state, &s_soc_last_saved_state))
+    {
+        s_soc_save_elapsed_ms = 0u;
+        return true;
+    }
+
+    next_sequence = s_soc_sequence + 1u;
+    next_slot = s_soc_have_saved_state ? (uint8_t)(s_soc_active_slot ^ 1u) : 0u;
+    address = (next_slot == 0u) ? APP_BATMAN_SOC_NVM_SLOT_A_ADDR : APP_BATMAN_SOC_NVM_SLOT_B_ADDR;
+    App_BatMan_SocNvmEncode(record, state, next_sequence);
+    if ((Int_EEPROM_Write(address, record, sizeof(record)) != INT_EEPROM_OK) ||
+        (Int_EEPROM_Read(address, verify_record, sizeof(verify_record)) != INT_EEPROM_OK) ||
+        !App_BatMan_SocNvmDecode(verify_record, &verify_state, &verify_sequence) ||
+        (verify_sequence != next_sequence) || !App_BatMan_SocNvmStateEqual(state, &verify_state))
+    {
+        return false;
+    }
+
+    s_soc_active_slot = next_slot;
+    s_soc_sequence = next_sequence;
+    s_soc_last_saved_state = *state;
+    s_soc_have_saved_state = true;
+    s_soc_save_elapsed_ms = 0u;
+    s_soc_force_save = false;
+    return true;
 }
 
 static bool App_BatMan_NvmReadSlot(uint16_t address,
@@ -192,11 +481,10 @@ static bool App_BatMan_NvmReadSlot(uint16_t address,
     return false;
 }
 
-static bool App_BatMan_NvmRestoreSlot(uint8_t slot,
-                                      const Com_SOH_PersistentTypeDef *state,
-                                      uint32_t sequence)
+static bool
+App_BatMan_NvmRestoreSlot(uint8_t slot, const Com_SOH_PersistentTypeDef *state, uint32_t sequence)
 {
-    if (!Com_SOH_RestorePersistent(state))
+    if (!App_BatMan_NvmRestoreSoh(state))
     {
         return false;
     }
@@ -208,29 +496,23 @@ static bool App_BatMan_NvmRestoreSlot(uint8_t slot,
     return true;
 }
 
-static bool App_BatMan_NvmSave(void)
+static bool App_BatMan_NvmSave(const Com_SOH_PersistentTypeDef *state)
 {
     uint8_t record[APP_BATMAN_NVM_RECORD_SIZE];
     uint8_t verify_record[APP_BATMAN_NVM_RECORD_SIZE];
-    Com_SOH_PersistentTypeDef state;
     Com_SOH_PersistentTypeDef verify_state;
     uint32_t next_sequence = s_sequence + 1u;
     uint32_t verify_sequence;
     uint8_t next_slot = s_have_saved_state ? (uint8_t)(s_active_slot ^ 1u) : 0u;
-    uint16_t address = (next_slot == 0u) ?
-                       APP_BATMAN_NVM_SLOT_A_ADDR :
-                       APP_BATMAN_NVM_SLOT_B_ADDR;
+    uint16_t address = (next_slot == 0u) ? APP_BATMAN_NVM_SLOT_A_ADDR : APP_BATMAN_NVM_SLOT_B_ADDR;
 
-    Com_SOH_ExportPersistent(&state);
-    if (!s_force_save &&
-        s_have_saved_state &&
-        App_BatMan_NvmStateEqual(&state, &s_last_saved_state))
+    if (!s_force_save && s_have_saved_state && App_BatMan_NvmStateEqual(state, &s_last_saved_state))
     {
         s_save_elapsed_ms = 0u;
         return true;
     }
 
-    App_BatMan_NvmEncode(record, &state, next_sequence);
+    App_BatMan_NvmEncode(record, state, next_sequence);
     if (Int_EEPROM_Write(address, record, sizeof(record)) != INT_EEPROM_OK)
     {
         return false;
@@ -240,16 +522,15 @@ static bool App_BatMan_NvmSave(void)
         return false;
     }
     if (!App_BatMan_NvmDecode(verify_record, &verify_state, &verify_sequence) ||
-        !Com_SOH_ValidatePersistent(&verify_state) ||
-        (verify_sequence != next_sequence) ||
-        !App_BatMan_NvmStateEqual(&state, &verify_state))
+        !Com_SOH_ValidatePersistent(&verify_state) || (verify_sequence != next_sequence) ||
+        !App_BatMan_NvmStateEqual(state, &verify_state))
     {
         return false;
     }
 
     s_active_slot = next_slot;
     s_sequence = next_sequence;
-    s_last_saved_state = state;
+    s_last_saved_state = *state;
     s_have_saved_state = true;
     s_save_elapsed_ms = 0u;
     s_force_save = false;
@@ -258,6 +539,7 @@ static bool App_BatMan_NvmSave(void)
 
 static bool App_BatMan_NvmReconnect(void)
 {
+    App_BatMan_NvmSnapshotTypeDef snapshot;
     Com_SOH_PersistentTypeDef slot_a;
     Com_SOH_PersistentTypeDef slot_b;
     uint32_t sequence_a = 0u;
@@ -266,20 +548,19 @@ static bool App_BatMan_NvmReconnect(void)
     bool read_b_ok;
     bool valid_a;
     bool valid_b;
+    bool restore_soc_allowed = s_startup_restore_pending;
 
     if (Int_EEPROM_Init() != INT_EEPROM_OK)
     {
         return false;
     }
+    if (!App_BatMan_SocNvmLoad(restore_soc_allowed))
+    {
+        return false;
+    }
 
-    valid_a = App_BatMan_NvmReadSlot(APP_BATMAN_NVM_SLOT_A_ADDR,
-                                     &slot_a,
-                                     &sequence_a,
-                                     &read_a_ok);
-    valid_b = App_BatMan_NvmReadSlot(APP_BATMAN_NVM_SLOT_B_ADDR,
-                                     &slot_b,
-                                     &sequence_b,
-                                     &read_b_ok);
+    valid_a = App_BatMan_NvmReadSlot(APP_BATMAN_NVM_SLOT_A_ADDR, &slot_a, &sequence_a, &read_a_ok);
+    valid_b = App_BatMan_NvmReadSlot(APP_BATMAN_NVM_SLOT_B_ADDR, &slot_b, &sequence_b, &read_b_ok);
     if (!read_a_ok || !read_b_ok)
     {
         return false;
@@ -307,7 +588,8 @@ static bool App_BatMan_NvmReconnect(void)
             s_startup_restore_pending = false;
             s_nvm_ready = true;
             s_force_save = false;
-            printf("SOH持久化: 启动重连已恢复历史记录\r\n");
+            s_soc_force_save = false;
+            Int_Log_Printf("SOH持久化: 启动重连已恢复历史记录\r\n");
             return true;
         }
     }
@@ -335,7 +617,14 @@ static bool App_BatMan_NvmReconnect(void)
     /* 运行中重连不能用旧 EEPROM 覆盖当前 RAM，只把当前状态写成下一序号。 */
     s_nvm_ready = true;
     s_force_save = true;
-    if (!App_BatMan_NvmSave())
+    App_BatMan_NvmCaptureSnapshot(&snapshot);
+    if (!App_BatMan_NvmSave(&snapshot.soh))
+    {
+        s_nvm_ready = false;
+        return false;
+    }
+    s_soc_force_save = true;
+    if (!App_BatMan_SocNvmSave(&snapshot.soc, snapshot.soc_valid))
     {
         s_nvm_ready = false;
         return false;
@@ -343,7 +632,7 @@ static bool App_BatMan_NvmReconnect(void)
     return true;
 }
 
-bool App_BatMan_NvmInit(void)
+static bool App_BatMan_NvmInitLocked(void)
 {
     Com_SOH_PersistentTypeDef slot_a;
     Com_SOH_PersistentTypeDef slot_b;
@@ -353,6 +642,7 @@ bool App_BatMan_NvmInit(void)
     bool valid_b;
     bool read_a_ok;
     bool read_b_ok;
+    bool soc_read_ok;
 
     s_nvm_ready = (Int_EEPROM_Init() == INT_EEPROM_OK);
     s_have_saved_state = false;
@@ -363,22 +653,23 @@ bool App_BatMan_NvmInit(void)
     s_startup_restore_elapsed_ms = 0u;
     s_force_save = false;
     s_startup_restore_pending = false;
+    s_soc_have_saved_state = false;
+    s_soc_active_slot = 0u;
+    s_soc_sequence = 0u;
+    s_soc_save_elapsed_ms = 0u;
+    s_soc_force_save = false;
     if (!s_nvm_ready)
     {
         s_startup_restore_pending = true;
         return false;
     }
 
-    valid_a = App_BatMan_NvmReadSlot(APP_BATMAN_NVM_SLOT_A_ADDR,
-                                     &slot_a,
-                                     &sequence_a,
-                                     &read_a_ok);
-    valid_b = App_BatMan_NvmReadSlot(APP_BATMAN_NVM_SLOT_B_ADDR,
-                                     &slot_b,
-                                     &sequence_b,
-                                     &read_b_ok);
+    soc_read_ok = App_BatMan_SocNvmLoad(true);
+
+    valid_a = App_BatMan_NvmReadSlot(APP_BATMAN_NVM_SLOT_A_ADDR, &slot_a, &sequence_a, &read_a_ok);
+    valid_b = App_BatMan_NvmReadSlot(APP_BATMAN_NVM_SLOT_B_ADDR, &slot_b, &sequence_b, &read_b_ok);
     /* 单槽读取失败时仍允许从另一份已验证记录恢复，但暂不开放写入。 */
-    s_nvm_ready = read_a_ok && read_b_ok;
+    s_nvm_ready = read_a_ok && read_b_ok && soc_read_ok;
 
     if (valid_a && valid_b)
     {
@@ -411,7 +702,7 @@ bool App_BatMan_NvmInit(void)
      * 任一槽启动读取失败时都保留恢复窗口：未读到的槽可能比当前已恢复槽更新，
      * 完整重连后再按序号选最新记录，避免用较旧 RAM 覆盖较新历史。
      */
-    if (!read_a_ok || !read_b_ok)
+    if (!read_a_ok || !read_b_ok || !soc_read_ok)
     {
         s_startup_restore_pending = true;
     }
@@ -419,9 +710,22 @@ bool App_BatMan_NvmInit(void)
     return s_nvm_ready;
 }
 
-void App_BatMan_NvmTask(uint32_t interval_ms)
+bool App_BatMan_NvmInit(void)
 {
-    Com_SOH_PersistentTypeDef current;
+    bool initialized;
+
+    if (!App_BatMan_NvmCreateMutex() || !App_BatMan_NvmLock(APP_BATMAN_NVM_LOCK_TIMEOUT_MS))
+    {
+        return false;
+    }
+    initialized = App_BatMan_NvmInitLocked();
+    App_BatMan_NvmUnlock();
+    return initialized;
+}
+
+static void App_BatMan_NvmTaskLocked(uint32_t interval_ms)
+{
+    App_BatMan_NvmSnapshotTypeDef snapshot;
     bool important_change = false;
 
     if (!s_nvm_ready)
@@ -452,7 +756,7 @@ void App_BatMan_NvmTask(uint32_t interval_ms)
             s_reconnect_elapsed_ms = 0u;
             if (!App_BatMan_NvmReconnect())
             {
-                printf("SOH持久化重连失败\r\n");
+                Int_Log_Printf("SOH持久化重连失败\r\n");
             }
         }
 
@@ -464,7 +768,7 @@ void App_BatMan_NvmTask(uint32_t interval_ms)
             (s_startup_restore_elapsed_ms >= APP_BATMAN_NVM_STARTUP_RESTORE_WINDOW_MS))
         {
             s_startup_restore_pending = false;
-            printf("SOH持久化: 启动恢复窗口超时，后续以 RAM 状态为准\r\n");
+            Int_Log_Printf("SOH持久化: 启动恢复窗口超时，后续以 RAM 状态为准\r\n");
         }
         return;
     }
@@ -477,38 +781,74 @@ void App_BatMan_NvmTask(uint32_t interval_ms)
     {
         s_save_elapsed_ms += interval_ms;
     }
+    if (s_soc_save_elapsed_ms > (UINT32_MAX - interval_ms))
+    {
+        s_soc_save_elapsed_ms = UINT32_MAX;
+    }
+    else
+    {
+        s_soc_save_elapsed_ms += interval_ms;
+    }
 
-    Com_SOH_ExportPersistent(&current);
+    App_BatMan_NvmCaptureSnapshot(&snapshot);
     if (s_have_saved_state)
     {
-        important_change = (current.cycle_count != s_last_saved_state.cycle_count) ||
-                           (current.safety_fault_count != s_last_saved_state.safety_fault_count) ||
-                           (current.learned_capacity_mah != s_last_saved_state.learned_capacity_mah) ||
-                           (current.capacity_learning_count != s_last_saved_state.capacity_learning_count);
+        important_change =
+            (snapshot.soh.cycle_count != s_last_saved_state.cycle_count) ||
+            (snapshot.soh.safety_fault_count != s_last_saved_state.safety_fault_count) ||
+            (snapshot.soh.learned_capacity_mah != s_last_saved_state.learned_capacity_mah) ||
+            (snapshot.soh.capacity_learning_count != s_last_saved_state.capacity_learning_count);
     }
     else
     {
         /* 首个已完成学习或累计事件立即建立有效槽，避免等到 30 分钟周期保存。 */
-        important_change = (current.capacity_learning_count > 0u) ||
-                           (current.cycle_count > 0u) ||
-                           (current.safety_fault_count > 0u);
+        important_change = (snapshot.soh.capacity_learning_count > 0u) ||
+                           (snapshot.soh.cycle_count > 0u) ||
+                           (snapshot.soh.safety_fault_count > 0u);
     }
 
     if (s_force_save || s_soh_capacity_updated || important_change ||
         (s_save_elapsed_ms >= APP_BATMAN_NVM_PERIODIC_SAVE_MS))
     {
-        if (!App_BatMan_NvmSave())
+        if (!App_BatMan_NvmSave(&snapshot.soh))
         {
-            printf("SOH持久化写入失败\r\n");
+            Int_Log_Printf("SOH持久化写入失败\r\n");
             s_nvm_ready = false;
             s_reconnect_elapsed_ms = 0u;
             s_force_save = true;
+            s_soc_force_save = true;
+            return;
+        }
+    }
+
+    if (snapshot.soc_valid && (s_soc_force_save || !s_soc_have_saved_state ||
+                               snapshot.soc_full_anchor_used || snapshot.soc_empty_anchor_used ||
+                               (s_soc_save_elapsed_ms >= APP_BATMAN_SOC_NVM_PERIODIC_SAVE_MS)))
+    {
+        if (!App_BatMan_SocNvmSave(&snapshot.soc, snapshot.soc_valid))
+        {
+            Int_Log_Printf("SOC持久化写入失败\r\n");
+            s_nvm_ready = false;
+            s_reconnect_elapsed_ms = 0u;
+            s_force_save = true;
+            s_soc_force_save = true;
         }
     }
 }
 
-bool App_BatMan_NvmFlush(void)
+void App_BatMan_NvmTask(uint32_t interval_ms)
 {
+    if (!App_BatMan_NvmLock(APP_BATMAN_NVM_LOCK_TIMEOUT_MS))
+    {
+        return;
+    }
+    App_BatMan_NvmTaskLocked(interval_ms);
+    App_BatMan_NvmUnlock();
+}
+
+static bool App_BatMan_NvmFlushLocked(void)
+{
+    App_BatMan_NvmSnapshotTypeDef snapshot;
     uint8_t retry;
 
     if (!s_nvm_ready)
@@ -523,9 +863,11 @@ bool App_BatMan_NvmFlush(void)
         }
     }
 
+    App_BatMan_NvmCaptureSnapshot(&snapshot);
     for (retry = 0u; retry < APP_BATMAN_NVM_FLUSH_RETRY_COUNT; retry++)
     {
-        if (App_BatMan_NvmSave())
+        if (App_BatMan_NvmSave(&snapshot.soh) &&
+            App_BatMan_SocNvmSave(&snapshot.soc, snapshot.soc_valid))
         {
             return true;
         }
@@ -534,5 +876,19 @@ bool App_BatMan_NvmFlush(void)
 
     s_nvm_ready = false;
     s_force_save = true;
+    s_soc_force_save = true;
     return false;
+}
+
+bool App_BatMan_NvmFlush(void)
+{
+    bool flushed;
+
+    if (!App_BatMan_NvmLock(APP_BATMAN_NVM_LOCK_TIMEOUT_MS))
+    {
+        return false;
+    }
+    flushed = App_BatMan_NvmFlushLocked();
+    App_BatMan_NvmUnlock();
+    return flushed;
 }

@@ -6,12 +6,14 @@
 
 /**
  * @file Com_SOC.h
- * @brief SOC 教学算法层。
+ * @brief BMS 生产固件的 SOC 估算纯算法层。
  *
- * 当前版本保留三条主线：
+ * 当前实现由三条互相约束的估算路径组成：
  * 1. Ah 积分负责连续跟踪；
- * 2. OCV 查表负责上电播种和静置校正；
+ * 2. OCV 查表只在已证明静置后负责可信播种和有限校正；
  * 3. 一维 Kalman 负责把 OCV 校正“慢慢拉回来”。
+ * @note 当前 OCV-SOC 表的量产标定状态为 Unknown，冻结发布前必须用实包、
+ *       多温区静置数据完成标定与误差包络验证。
  */
 
 typedef enum
@@ -25,8 +27,24 @@ typedef enum
     COM_SOC_SEED_NONE = 0,
     COM_SOC_SEED_DEFAULT,
     COM_SOC_SEED_OCV,
-    COM_SOC_SEED_NVM
+    COM_SOC_SEED_NVM,
+    COM_SOC_SEED_FULL_ANCHOR,
+    COM_SOC_SEED_EMPTY_ANCHOR
 } Com_SOC_SeedSourceTypeDef;
+
+typedef enum
+{
+    COM_SOC_ANCHOR_NONE = 0,
+    COM_SOC_ANCHOR_FULL_COMPLETE,
+    COM_SOC_ANCHOR_EMPTY_CUTOFF
+} Com_SOC_AnchorEventTypeDef;
+
+typedef struct
+{
+    uint16_t soc_0p01_percent;
+    uint16_t display_0p01_percent;
+    uint32_t covariance_1e6;
+} Com_SOC_PersistentTypeDef;
 
 typedef struct
 {
@@ -77,7 +95,10 @@ typedef struct
     float display_percent;
     uint32_t remain_mah;
     bool seeded;
+    bool valid;
     Com_SOC_SeedSourceTypeDef seed_source;
+    uint32_t age_ms;
+    uint32_t anchor_event_sequence;
 
     bool rest_ready;
     bool voltage_update_used;
@@ -100,5 +121,9 @@ typedef struct
 void Com_SOC_Init(const Com_SOC_ConfigTypeDef *config);
 void Com_SOC_Update(const Com_SOC_SampleTypeDef *sample);
 void Com_SOC_GetResult(Com_SOC_ResultTypeDef *result);
+void Com_SOC_NotifyAnchorEvent(Com_SOC_AnchorEventTypeDef event);
+void Com_SOC_ExportPersistent(Com_SOC_PersistentTypeDef *state);
+bool Com_SOC_ValidatePersistent(const Com_SOC_PersistentTypeDef *state);
+bool Com_SOC_RestorePersistent(const Com_SOC_PersistentTypeDef *state);
 
 #endif /* COM_SOC_H */

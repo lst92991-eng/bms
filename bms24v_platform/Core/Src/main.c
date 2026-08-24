@@ -27,9 +27,11 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include <string.h>
-
+#include "App_BatMan.h"
 #include "App_Main.h"
+#include "Int_Fault.h"
+#include "Int_Log.h"
+#include "Int_SC8815.h"
 
 /* USER CODE END Includes */
 
@@ -40,7 +42,6 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
-#define BRINGUP_UART_TIMEOUT_MS           100u
 
 /* USER CODE END PD */
 
@@ -52,6 +53,7 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+static bool s_early_bq_safe = false;
 
 /* USER CODE END PV */
 
@@ -66,14 +68,7 @@ static void Bringup_UartPrint(const char *text);
 /* USER CODE BEGIN 0 */
 static void Bringup_UartPrint(const char *text)
 {
-  if (text == 0) {
-    return;
-  }
-
-  (void)HAL_UART_Transmit(&huart1,
-                          (uint8_t *)text,
-                          (uint16_t)strlen(text),
-                          BRINGUP_UART_TIMEOUT_MS);
+  Int_Log_TryWriteString(text);
 }
 
 /* USER CODE END 0 */
@@ -86,6 +81,8 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+  /* HAL 时基/IRQ 初始化前先建立 SC8815 硬件停机电平。 */
+  Int_SC8815_AssertBootSafeGpio();
 
   /* USER CODE END 1 */
 
@@ -102,6 +99,15 @@ int main(void)
   SystemClock_Config();
 
   /* USER CODE BEGIN SysInit */
+  /*
+   * Cube 生成的完整外设列表位于本区之后。先只建立安全 GPIO 和 BQ I2C，
+   * 使 watchdog reset 后的第一批板级动作固定为 PSTOP 与 ALL_FETS_OFF。
+   * 后续 Cube 重复初始化 GPIO/I2C1 是幂等的，不改变已建立的全关门禁。
+   */
+  MX_GPIO_Init();
+  Int_SC8815_ForceStandby();
+  MX_I2C1_Init();
+  s_early_bq_safe = App_BatMan_EarlySafeOutputs();
 
   /* USER CODE END SysInit */
 
@@ -114,11 +120,12 @@ int main(void)
   MX_I2C1_Init();
   MX_TIM3_Init();
   /* USER CODE BEGIN 2 */
+  Int_Log_Init();
   Bringup_UartPrint("\r\nBMS24V 平台安全启动\r\n");
   Bringup_UartPrint("SC8815 初始化后保持监控待机: CE_N=0 PSTOP=1 充电请求关闭\r\n");
   Bringup_UartPrint("串口 USART1 115200 8N1\r\n");
   Bringup_UartPrint("进入 App_Main 任务层\r\n");
-  App_Main();
+  App_Main(s_early_bq_safe);
 
   /* USER CODE END 2 */
 
@@ -216,11 +223,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 void Error_Handler(void)
 {
   /* USER CODE BEGIN Error_Handler_Debug */
-  /* User can add his own implementation to report the HAL error return state */
-  __disable_irq();
-  while (1)
-  {
-  }
+  Int_Fault_Panic(INT_FAULT_ERROR_HANDLER, 0u);
   /* USER CODE END Error_Handler_Debug */
 }
 #ifdef USE_FULL_ASSERT
@@ -234,8 +237,7 @@ void Error_Handler(void)
 void assert_failed(uint8_t *file, uint32_t line)
 {
   /* USER CODE BEGIN 6 */
-  /* User can add his own implementation to report the file name and line number,
-     ex: printf("Wrong parameters value: file %s on line %d\r\n", file, line) */
+  Int_Fault_ConfigAssert((const char *)file, line);
   /* USER CODE END 6 */
 }
 #endif /* USE_FULL_ASSERT */

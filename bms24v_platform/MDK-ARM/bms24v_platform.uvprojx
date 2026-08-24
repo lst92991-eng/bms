@@ -323,7 +323,7 @@
             <PlainCh>0</PlainCh>
             <Ropi>0</Ropi>
             <Rwpi>0</Rwpi>
-            <wLevel>2</wLevel>
+            <wLevel>3</wLevel>
             <uThumb>0</uThumb>
             <uSurpInc>0</uSurpInc>
             <uC99>1</uC99>
@@ -334,11 +334,11 @@
             <vShortEn>1</vShortEn>
             <vShortWch>1</vShortWch>
             <v6Lto>0</v6Lto>
-            <v6WtE>0</v6WtE>
+            <v6WtE>1</v6WtE>
             <v6Rtti>0</v6Rtti>
             <VariousControls>
               <MiscControls>--no_multibyte_chars</MiscControls>
-              <Define>USE_HAL_DRIVER,STM32G0B1xx</Define>
+              <Define>USE_HAL_DRIVER,STM32G0B1xx,BMS_ENGINEERING_BUILD=0</Define>
               <Undefine></Undefine>
               <IncludePath>../Core/Inc;../Drivers/STM32G0xx_HAL_Driver/Inc;../Drivers/STM32G0xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32G0xx/Include;../Drivers/CMSIS/Include;FreeRTOS/include;FreeRTOS/portable/RVDS/ARM_CM0;Int;../../App;../../Com;../../Int</IncludePath>
             </VariousControls>
@@ -349,7 +349,7 @@
             <Rwpi>0</Rwpi>
             <thumb>0</thumb>
             <SplitLS>0</SplitLS>
-            <SwStkChk>0</SwStkChk>
+            <SwStkChk>1</SwStkChk>
             <NoWarn>0</NoWarn>
             <uSurpInc>0</uSurpInc>
             <useXO>0</useXO>
@@ -516,6 +516,16 @@
               <FilePath>../../App/App_Main.h</FilePath>
             </File>
             <File>
+              <FileName>App_Safety.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../App/App_Safety.c</FilePath>
+            </File>
+            <File>
+              <FileName>App_Safety.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../App/App_Safety.h</FilePath>
+            </File>
+            <File>
               <FileName>App_DebugCli.c</FileName>
               <FileType>1</FileType>
               <FilePath>../../App/App_DebugCli.c</FilePath>
@@ -524,6 +534,16 @@
               <FileName>App_DebugCli.h</FileName>
               <FileType>5</FileType>
               <FilePath>../../App/App_DebugCli.h</FilePath>
+            </File>
+            <File>
+              <FileName>App_Buzzer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../App/App_Buzzer.c</FilePath>
+            </File>
+            <File>
+              <FileName>App_Buzzer.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../App/App_Buzzer.h</FilePath>
             </File>
             <File>
               <FileName>App_BatMan.c</FileName>
@@ -631,6 +651,16 @@
               <FilePath>../../Com/Com_BatteryParam.h</FilePath>
             </File>
             <File>
+              <FileName>Com_Format.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Com/Com_Format.c</FilePath>
+            </File>
+            <File>
+              <FileName>Com_Format.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../Com/Com_Format.h</FilePath>
+            </File>
+            <File>
               <FileName>Com_SOC.c</FileName>
               <FileType>1</FileType>
               <FilePath>../../Com/Com_SOC.c</FilePath>
@@ -669,6 +699,46 @@
               <FileName>Int_BQ76952_BSP.h</FileName>
               <FileType>5</FileType>
               <FilePath>../../Int/Int_BQ76952_BSP.h</FilePath>
+            </File>
+            <File>
+              <FileName>Int_Fault.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Int/Int_Fault.c</FilePath>
+            </File>
+            <File>
+              <FileName>Int_Fault.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../Int/Int_Fault.h</FilePath>
+            </File>
+            <File>
+              <FileName>Int_I2C2Bus.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Int/Int_I2C2Bus.c</FilePath>
+            </File>
+            <File>
+              <FileName>Int_I2C2Bus.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../Int/Int_I2C2Bus.h</FilePath>
+            </File>
+            <File>
+              <FileName>Int_Log.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Int/Int_Log.c</FilePath>
+            </File>
+            <File>
+              <FileName>Int_Log.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../Int/Int_Log.h</FilePath>
+            </File>
+            <File>
+              <FileName>Int_Watchdog.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Int/Int_Watchdog.c</FilePath>
+            </File>
+            <File>
+              <FileName>Int_Watchdog.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../Int/Int_Watchdog.h</FilePath>
             </File>
             <File>
               <FileName>Int_OLED.c</FileName>
@@ -719,6 +789,16 @@
               <FileName>Int_Led.h</FileName>
               <FileType>5</FileType>
               <FilePath>../../Int/Int_Led.h</FilePath>
+            </File>
+            <File>
+              <FileName>Int_Buzzer.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>../../Int/Int_Buzzer.c</FilePath>
+            </File>
+            <File>
+              <FileName>Int_Buzzer.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>../../Int/Int_Buzzer.h</FilePath>
             </File>
             <File>
               <FileName>Int_EEPROM.c</FileName>
@@ -774,11 +854,6 @@
               <FileName>port.c</FileName>
               <FileType>1</FileType>
               <FilePath>FreeRTOS/portable/RVDS/ARM_CM0/port.c</FilePath>
-            </File>
-            <File>
-              <FileName>heap_4.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>FreeRTOS/portable/MemMang/heap_4.c</FilePath>
             </File>
             <File>
               <FileName>FreeRTOSConfig.h</FileName>
